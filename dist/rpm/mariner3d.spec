@@ -1,3 +1,15 @@
+# The package ships its own virtualenv, built against a pinned interpreter.
+# Using the versioned python3.12 rather than plain python3 is what keeps the
+# venv working: on EL9 python3 is 3.9, and where python3 moves to a new minor
+# version a venv built against it stops finding its own site-packages.
+%global python /usr/bin/python3.12
+
+# Everything under /opt/venvs is third-party code bundled for runtime. rpm's
+# automatic bytecompile would compile it with the system python3 (3.9 on EL9),
+# and debuginfo extraction would split out symbols for wheels we did not build.
+%global __brp_python_bytecompile %{nil}
+%global debug_package %{nil}
+
 Name:           mariner3d
 Version:        %{_version}
 Release:        1%{?dist}
@@ -6,9 +18,9 @@ License:        MIT
 URL:            https://github.com/amd989/mariner
 Source0:        mariner-%{version}.tar.gz
 
-BuildRequires:  python3-devel
-BuildRequires:  python3-pip
-BuildRequires:  python3-setuptools
+BuildRequires:  python3.12-devel
+BuildRequires:  python3.12-pip
+BuildRequires:  python3.12-setuptools
 BuildRequires:  gcc
 BuildRequires:  make
 BuildRequires:  libffi-devel
@@ -18,7 +30,7 @@ BuildRequires:  libxslt-devel
 BuildRequires:  zlib-devel
 BuildRequires:  systemd-rpm-macros
 
-Requires:       python3 >= 3.11
+Requires:       python3.12
 Requires:       libxml2
 Requires:       libxslt
 Requires:       zlib
@@ -36,7 +48,7 @@ CTB, CBDDLP, FDG, and Photon files, with encrypted CTB support.
 
 %install
 # Create virtualenv and install the package from sdist
-python3 -m venv %{buildroot}/opt/venvs/mariner3d
+%{python} -m venv %{buildroot}/opt/venvs/mariner3d
 # Pin dependencies to the versions in poetry.lock first, so the shipped venv
 # matches what CI tested. pip would otherwise resolve them fresh from the
 # sdist metadata and pick up newer releases.

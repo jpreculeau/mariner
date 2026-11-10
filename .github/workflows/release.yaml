@@ -143,17 +143,24 @@ jobs:
         run: |
           docker run --rm --platform ${{ matrix.docker_platform }} \
             -v "$PWD":/build -w /build \
-            fedora:41 bash -c '
+            rockylinux:9 bash -c '
               set -e
               VERSION='"${{ steps.version.outputs.version }}"'
 
+              # EL9, like every other rpm on packages.alejandro.md. Two
+              # repositories need switching on first: libxslt-devel is in
+              # CRB, and the default nodejs (16) is too old for Vite 5.
+              dnf install -y dnf-plugins-core
+              dnf config-manager --set-enabled crb
+              dnf module enable -y nodejs:22
               dnf install -y \
-                gcc make python3-devel python3-pip python3-setuptools \
-                libffi-devel openssl-devel libxml2-devel libxslt-devel \
-                zlib-devel rpm-build systemd-rpm-macros nodejs npm curl git
+                gcc make python3.12 python3.12-devel python3.12-pip \
+                python3.12-setuptools libffi-devel openssl-devel \
+                libxml2-devel libxslt-devel zlib-devel rpm-build \
+                systemd-rpm-macros nodejs npm git
 
-              # Install Poetry
-              curl -sSL https://install.python-poetry.org | python3 -
+              # Poetry on the interpreter the package is built for.
+              curl -sSL https://install.python-poetry.org | python3.12 -
               export PATH="/root/.local/bin:$PATH"
 
               # Update version and build sdist
@@ -304,7 +311,10 @@ jobs:
           fi
           # -f rather than -F: -F converts values that look like numbers or
           # booleans, and the publisher expects the tag as a string.
-          gh api repos/amd989/packages/dispatches             -f event_type=publish             -f "client_payload[repo]=$REPO"             -f "client_payload[tag]=$TAG"
+          gh api repos/amd989/packages/dispatches \
+            -f event_type=publish \
+            -f "client_payload[repo]=$REPO" \
+            -f "client_payload[tag]=$TAG"
           {
             echo "### Asked packages.alejandro.md to publish \`$REPO\` \`$TAG\`"
             echo
