@@ -17,9 +17,16 @@
 
 # -- Project information -----------------------------------------------------
 
+import datetime
+
 project = "Mariner 2"
-copyright = "2026, Alejandro Mora"
-author = "Alejandro Mora"
+# Luiz Ribeiro started this project and its documentation in 2020;
+# Alejandro Mora has maintained it since. The end year follows the build.
+copyright = (
+    f"2020-{datetime.date.today().year}, "
+    "Luiz Ribeiro, Alejandro Mora and contributors"
+)
+author = "Luiz Ribeiro and Alejandro Mora"
 
 
 # -- General configuration ---------------------------------------------------
