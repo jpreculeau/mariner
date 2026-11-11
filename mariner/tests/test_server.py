@@ -841,6 +841,61 @@ class MarinerServerTest(TestCase):
         expect(os.path.isdir("/mnt/usb_share/batch.ctb")).to_equal(True)
         expect(self._leftovers()).to_equal([])
 
+    def _printer_answers_only_ok(self) -> None:
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE, answered=True
+        )
+
+    def test_an_unclear_answer_from_the_printer_has_its_own_explanation(
+        self,
+    ) -> None:
+        self._printer_answers_only_ok()
+        response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        body = response.get_json()
+        expect(body["code"]).to_equal("printer_answer_unclear")
+        expect(body["title"]).to_equal("Printer Answer Unclear")
+        expect(body["description"]).to_equal(
+            "The printer answered, but not clearly enough to tell whether "
+            "foobar.ctb is being printed, so it was left untouched. Try again "
+            "in a moment."
+        )
+        expect(body["can_be_overridden"]).to_equal(False)
+
+    def test_an_unclear_answer_from_the_printer_cannot_be_overridden(self) -> None:
+        self._printer_answers_only_ok()
+        response = self.client.post(
+            "/api/delete_file?filename=foobar.ctb&ignore_unreachable_printer=1"
+        )
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("printer_answer_unclear")
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        response = self.client.post(
+            "/api/upload_file?ignore_unreachable_printer=1", data=data
+        )
+        expect(response.status_code).to_equal(409)
+        expect(self._stored("foobar.ctb")).to_equal(self.ctb_file_contents)
+
+    def test_delete_file_that_someone_else_just_removed(self) -> None:
+        with patch(
+            "mariner.server.api.os.remove", side_effect=FileNotFoundError("gone")
+        ):
+            response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(404)
+
+    def test_upload_file_into_a_folder_that_was_just_removed(self) -> None:
+        self.fs.create_dir("/mnt/usb_share/batch")
+        data = {"file": (io.BytesIO(b"contents"), "new.ctb")}
+        with patch.object(
+            FileStorage, "save", side_effect=FileNotFoundError("folder gone")
+        ):
+            response = self.client.post("/api/upload_file?path=batch", data=data)
+        expect(response.status_code).to_equal(404)
+        expect(self._leftovers()).to_equal([])
+
     def test_delete_file_is_refused_when_the_printer_is_silent(self) -> None:
         self._printer_is_silent()
         response = self.client.post("/api/delete_file?filename=foobar.ctb")
@@ -848,9 +903,9 @@ class MarinerServerTest(TestCase):
         body = response.get_json()
         expect(body["code"]).to_equal("printer_not_answering")
         expect(body["description"]).to_equal(
-            "The printer did not say whether foobar.ctb is being printed, so it "
-            "was left untouched. Check that the printer is on and connected, "
-            "then try again."
+            "The printer did not answer, so there is no telling whether "
+            "foobar.ctb is being printed, and it was left untouched. Check that "
+            "the printer is on and connected, then try again."
         )
         expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
 

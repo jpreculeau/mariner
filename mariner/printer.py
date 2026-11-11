@@ -10,7 +10,7 @@ from typing import Match, Optional, Type
 import serial
 
 from mariner import config
-from mariner.exceptions import UnexpectedPrinterResponse
+from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -55,6 +55,10 @@ class PrintStatus:
     # field). An answer of nothing but "ok" also reads as IDLE, but says
     # nothing about a print; this tells the two apart.
     counters_seen: bool = False
+    # Whether anything at all came back from the printer. A printer that is
+    # switched off sends nothing; one that sent something, however unclear,
+    # is switched on.
+    answered: bool = False
 
 
 class ChiTuPrinter:
@@ -115,6 +119,8 @@ class ChiTuPrinter:
         if self._is_connected:
             match = None
             data = ""
+            # Whether any of the attempts brought something back.
+            answered = False
             try:
                 for _ in range(3):
                     data = self._send_and_read_until_contains(
@@ -123,6 +129,7 @@ class ChiTuPrinter:
                         max_readline_attempts=30,
                         read_timeout_secs=3.0,
                     )
+                    answered = answered or bool(data)
                     logger.debug("M4000 raw response: %r", data)
                     match = re.search("D:([0-9]+)/([0-9]+)/([0-9]+)", data)
                     if match is not None:
@@ -134,16 +141,16 @@ class ChiTuPrinter:
                     exception,
                 )
                 self._is_connected = False
-                return PrintStatus(state=PrinterState.CLOSED)
+                return PrintStatus(state=PrinterState.CLOSED, answered=answered)
             if match is None:
                 if "ok" in data:
-                    return PrintStatus(state=PrinterState.IDLE)
+                    return PrintStatus(state=PrinterState.IDLE, answered=True)
                 logger.warning(
                     "M4000 returned no parseable status payload; "
                     "treating printer as CLOSED. last_response=%r",
                     data,
                 )
-                return PrintStatus(state=PrinterState.CLOSED)
+                return PrintStatus(state=PrinterState.CLOSED, answered=answered)
 
             current_byte = int(match.group(1))
             total_bytes = int(match.group(2))
@@ -160,7 +167,9 @@ class ChiTuPrinter:
             )
 
             if total_bytes == 0:
-                return PrintStatus(state=PrinterState.IDLE, counters_seen=True)
+                return PrintStatus(
+                    state=PrinterState.IDLE, counters_seen=True, answered=True
+                )
 
             if current_byte == 0:
                 state = PrinterState.STARTING_PRINT
@@ -181,6 +190,7 @@ class ChiTuPrinter:
             total_bytes=total_bytes,
             z_pos_mm=z_pos_mm,
             counters_seen=True,
+            answered=True,
         )
 
     def get_z_pos(self) -> float:
@@ -213,10 +223,18 @@ class ChiTuPrinter:
             raise ValueError(f"unsafe filename for the printer: {filename!r}")
 
     def select_file(self, filename: str) -> None:
+        """Select *filename* on the printer.
+
+        Raises FileNotSelected if the printer does not confirm, whether it
+        answered something else or nothing at all.
+        """
         self._check_filename(filename)
-        response = self._send_and_read((f"M23 /{filename}").encode())
+        try:
+            response = self._send_and_read((f"M23 /{filename}").encode())
+        except UnexpectedPrinterResponse as error:
+            raise FileNotSelected(error.response) from error
         if "File opened" not in response and "File selected" not in response:
-            raise UnexpectedPrinterResponse(response)
+            raise FileNotSelected(response)
 
     def move_by(self, z_dist_mm: float, mm_per_min: int = 600) -> None:
         response = self._send_and_read(

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import Files from "./Files";
@@ -67,5 +67,79 @@ describe("Files", () => {
     );
     // Nothing changed on the server, so the list is not fetched again.
     expect(api.listFiles).toHaveBeenCalledTimes(1);
+  });
+
+  describe("when the printer does not answer", () => {
+    const refusal = new ApiError(
+      409,
+      "The printer is not answering.",
+      "printer_not_answering",
+      "Printer Not Answering",
+      true,
+    );
+
+    it("asks before replacing anyway", async () => {
+      vi.spyOn(api, "uploadFile").mockRejectedValue(refusal);
+      const input = renderFiles();
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+
+      pick(input, new File(["x"], "model.ctb"));
+
+      expect(await screen.findByText("Replace anyway")).toBeTruthy();
+      expect(screen.getByText("The printer is not answering.")).toBeTruthy();
+      expect(api.uploadFile).toHaveBeenCalledTimes(1);
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("sends the same file with the override once confirmed", async () => {
+      vi.spyOn(api, "uploadFile")
+        .mockRejectedValueOnce(refusal)
+        .mockResolvedValueOnce();
+      const input = renderFiles();
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+      const file = new File(["x"], "model.ctb");
+
+      pick(input, file);
+      fireEvent.click(await screen.findByText("Replace anyway"));
+
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(2));
+      expect(api.uploadFile).toHaveBeenLastCalledWith(file, ".", {
+        ignoreUnreachablePrinter: true,
+      });
+      expect(screen.queryByText("Replace anyway")).toBeNull();
+    });
+
+    it("sends nothing more when the user backs out", async () => {
+      vi.spyOn(api, "uploadFile").mockRejectedValue(refusal);
+      const input = renderFiles();
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+
+      pick(input, new File(["x"], "model.ctb"));
+      fireEvent.click(await screen.findByText("Cancel"));
+
+      await waitFor(() =>
+        expect(screen.queryByText("Replace anyway")).toBeNull(),
+      );
+      expect(api.uploadFile).toHaveBeenCalledTimes(1);
+      expect(api.listFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it("shows why the confirmed upload was refused after all", async () => {
+      vi.spyOn(api, "uploadFile")
+        .mockRejectedValueOnce(refusal)
+        .mockRejectedValueOnce(
+          new ApiError(409, "model.ctb is being printed.", "file_in_use"),
+        );
+      const input = renderFiles();
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+
+      pick(input, new File(["x"], "model.ctb"));
+      fireEvent.click(await screen.findByText("Replace anyway"));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("model.ctb is being printed."),
+      );
+      expect(screen.queryByText("Replace anyway")).toBeNull();
+    });
   });
 });

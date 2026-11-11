@@ -193,12 +193,18 @@ _IN_USE_ANSWERS: Dict[Usage, Tuple[str, str, str]] = {
         "so {name} was left untouched. Wait for the print to finish or cancel "
         "it first",
     ),
+    Usage.PRINTER_UNCLEAR: (
+        "printer_answer_unclear",
+        "Printer Answer Unclear",
+        "The printer answered, but not clearly enough to tell whether {name} "
+        "is being printed, so it was left untouched. Try again in a moment",
+    ),
     Usage.PRINTER_UNREACHABLE: (
         "printer_not_answering",
         "Printer Not Answering",
-        "The printer did not say whether {name} is being printed, so it was "
-        "left untouched. Check that the printer is on and connected, then "
-        "try again",
+        "The printer did not answer, so there is no telling whether {name} "
+        "is being printed, and it was left untouched. Check that the printer "
+        "is on and connected, then try again",
     ),
 }
 
@@ -210,8 +216,8 @@ def _abort_file_in_use(error: FileInUse, *, replacing_it: bool) -> NoReturn:
     deletion: storing the file under another name.
 
     ``can_be_overridden`` tells the client whether repeating the request
-    with ``ignore_unreachable_printer=1`` would go through, which is only
-    the case when the printer could not be asked.
+    with ``ignore_unreachable_printer=1`` can go through, which is only the
+    case when nothing at all came back from the printer.
     """
     code, title, sentence = _IN_USE_ANSWERS[error.usage]
     description = sentence.format(name=error.path.name)
@@ -455,6 +461,9 @@ def upload_file() -> Union[str, Response]:
             file.save(str(scratch))
     except FileInUse as error:
         _abort_file_in_use(error, replacing_it=True)
+    except FileNotFoundError:
+        # The folder was removed while the file was being written.
+        abort(404)
     os.sync()
     return jsonify({"success": True})
 
@@ -474,6 +483,9 @@ def delete_file() -> Union[str, Response]:
             os.remove(path)
     except FileInUse as error:
         _abort_file_in_use(error, replacing_it=False)
+    except FileNotFoundError:
+        # Someone else removed it in the meantime.
+        abort(404)
     return jsonify({"success": True})
 
 

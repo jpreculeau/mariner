@@ -243,6 +243,51 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(409)
         write_mock.assert_not_called()
 
+    def test_delete_of_a_file_someone_else_just_removed(self) -> None:
+        with patch(
+            "mariner.server.providers.uvtools.os.remove",
+            side_effect=FileNotFoundError("gone"),
+        ):
+            response = self.client.get("/uvtools/delete/foobar.ctb")
+        expect(response.status_code).to_equal(404)
+
+    def test_upload_whose_folder_was_just_removed(self) -> None:
+        with patch.object(
+            pathlib.Path, "write_bytes", side_effect=FileNotFoundError("gone")
+        ):
+            response = self.client.post(
+                "/uvtools/upload/new.ctb",
+                data=b"contents",
+                content_type="application/octet-stream",
+            )
+        expect(response.status_code).to_equal(404)
+
+    def test_a_refused_name_cannot_add_lines_to_the_log(self) -> None:
+        with self.assertLogs("mariner.server.providers.uvtools", "WARNING") as logs:
+            response = self.client.get("/uvtools/delete/a%5Cb%0AWARNING%20forged")
+        expect(response.status_code).to_equal(400)
+        expect(len(logs.records)).to_equal(1)
+        expect("\n" in logs.records[0].getMessage()).to_equal(False)
+
+    def test_a_refused_upload_name_cannot_add_lines_to_the_log(self) -> None:
+        with self.assertLogs("mariner.server.providers.uvtools", "WARNING") as logs:
+            response = self.client.post(
+                "/uvtools/upload/a%5Cb%0AWARNING%20forged.ctb",
+                data=b"contents",
+                content_type="application/octet-stream",
+            )
+        expect(response.status_code).to_equal(400)
+        expect(len(logs.records)).to_equal(1)
+        expect("\n" in logs.records[0].getMessage()).to_equal(False)
+
+    def test_a_refused_deletion_cannot_add_lines_to_the_log(self) -> None:
+        self.fs.create_file("/mnt/usb_share/x\nWARNING forged.ctb", contents=b"x")
+        self._printer_is_printing("x\nWARNING forged.ctb")
+        with self.assertLogs("mariner.server.providers.uvtools", "WARNING") as logs:
+            response = self.client.get("/uvtools/delete/x%0AWARNING%20forged.ctb")
+        expect(response.status_code).to_equal(409)
+        expect("\n" in logs.records[0].getMessage()).to_equal(False)
+
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(

@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock, call, patch
 import serial
 from pyexpect import expect
 
-from mariner.exceptions import UnexpectedPrinterResponse
+from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
 from mariner.printer import ChiTuPrinter, PrinterState, is_safe_for_printer
 
 
@@ -268,6 +268,56 @@ class ChiTuPrinterTest(TestCase):
         expect(self.printer.get_print_status().state).to_equal(PrinterState.CLOSED)
         expect(self.printer.get_print_status().counters_seen).to_equal(False)
 
+    def test_any_answer_at_all_shows_that_the_printer_is_on(self) -> None:
+        for line in (
+            b"ok B:0/0 X:0.000 Y:0.000 Z:1.000 F:0/0 D:10/100/0 ",
+            b"ok B:0/0 X:0.000 Y:0.000 Z:8.233 F:0/0 D:0/0/1 ",
+            b"ok\r\n",
+            b"\xff\xfe garbled\r\n",
+        ):
+            self.serial_port_mock.readline.return_value = line
+            self.printer.open()
+            status = self.printer.get_print_status()
+            self.printer.close()
+            expect(status.answered).to_equal(True)
+
+    def test_a_printer_that_sends_nothing_has_not_answered(self) -> None:
+        # Not connected at all.
+        expect(self.printer.get_print_status().answered).to_equal(False)
+
+        with patch.object(
+            self.printer, "_send_and_read_until_contains", side_effect=["", "", ""]
+        ):
+            self.printer.open()
+            silent = self.printer.get_print_status()
+            self.printer.close()
+        expect(silent.state).to_equal(PrinterState.CLOSED)
+        expect(silent.answered).to_equal(False)
+
+        with patch.object(
+            self.printer,
+            "_send_and_read_until_contains",
+            side_effect=serial.SerialException("device disconnected"),
+        ):
+            self.printer.open()
+            unplugged = self.printer.get_print_status()
+            self.printer.close()
+        expect(unplugged.answered).to_equal(False)
+
+    def test_an_answer_to_an_earlier_attempt_still_counts(self) -> None:
+        # Three attempts are made. The printer said something to the first
+        # one only: it is switched on all the same.
+        with patch.object(
+            self.printer,
+            "_send_and_read_until_contains",
+            side_effect=["wait\r\n", "", ""],
+        ):
+            self.printer.open()
+            status = self.printer.get_print_status()
+            self.printer.close()
+        expect(status.state).to_equal(PrinterState.CLOSED)
+        expect(status.answered).to_equal(True)
+
     def test_text_that_is_not_valid_unicode_is_not_safe_for_the_printer(self) -> None:
         expect(is_safe_for_printer("model.ctb")).to_equal(True)
         expect(is_safe_for_printer("sub/model.ctb")).to_equal(True)
@@ -351,6 +401,46 @@ class ChiTuPrinterTest(TestCase):
         self.printer.open()
         with self.assertRaises(UnexpectedPrinterResponse):
             self.printer.select_file("foobar.ctb")
+        self.printer.close()
+        self.serial_port_mock.write.assert_called_once_with(b"M23 /foobar.ctb\r\n")
+
+    def test_an_answer_before_the_cable_came_out_still_counts(self) -> None:
+        with patch.object(
+            self.printer,
+            "_send_and_read_until_contains",
+            side_effect=["wait\r\n", serial.SerialException("unplugged")],
+        ):
+            self.printer.open()
+            status = self.printer.get_print_status()
+            self.printer.close()
+        expect(status.state).to_equal(PrinterState.CLOSED)
+        expect(status.answered).to_equal(True)
+
+    def test_select_file_says_when_the_printer_did_not_select_it(self) -> None:
+        self.serial_port_mock.readline.return_value = (
+            b"//############Error!cann't open file foobar.ctb!\r\n"
+        )
+        self.printer.open()
+        with self.assertRaises(FileNotSelected):
+            self.printer.select_file("foobar.ctb")
+        self.printer.close()
+
+    def test_select_file_says_so_too_when_the_printer_sent_nothing(self) -> None:
+        self.printer.open()
+        with patch.object(
+            self.printer, "_send_and_read", side_effect=UnexpectedPrinterResponse("")
+        ):
+            with self.assertRaises(FileNotSelected):
+                self.printer.select_file("foobar.ctb")
+        self.printer.close()
+
+    def test_start_printing_sends_no_print_command_for_an_unselected_file(
+        self,
+    ) -> None:
+        self.serial_port_mock.readline.return_value = b"open failed\r\n"
+        self.printer.open()
+        with self.assertRaises(FileNotSelected):
+            self.printer.start_printing("foobar.ctb")
         self.printer.close()
         self.serial_port_mock.write.assert_called_once_with(b"M23 /foobar.ctb\r\n")
 

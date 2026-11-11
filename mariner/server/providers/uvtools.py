@@ -174,6 +174,9 @@ class UVToolsProvider(NetworkPrintProvider):
                 pass
             with replacing(dest, guard=unless_in_use) as scratch:
                 scratch.write_bytes(data)
+        except FileNotFoundError:
+            # The folder was removed while the file was being written.
+            abort(404)
         except FileInUse as error:
             logger.warning(
                 "UVTools: not replacing %s: %s", safe_name, error.usage.value
@@ -215,10 +218,13 @@ class UVToolsProvider(NetworkPrintProvider):
         try:
             with unless_in_use(path):
                 os.remove(path)
+        except FileNotFoundError:
+            # Someone else removed it in the meantime.
+            abort(404)
         except FileInUse as error:
-            logger.warning("UVTools: not deleting %s: %s", filename, error.usage.value)
+            logger.warning("UVTools: not deleting %r: %s", filename, error.usage.value)
             abort(409)
-        logger.info("UVTools delete: %s", filename)
+        logger.info("UVTools delete: %r", filename)
         return jsonify({"success": True})
 
     def _pause_print(self, filename: str = "") -> Union[str, Response]:

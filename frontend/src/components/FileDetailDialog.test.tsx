@@ -63,4 +63,74 @@ describe("FileDetailDialog", () => {
     );
     expect(onOpenChange).not.toHaveBeenCalled();
   });
+
+  describe("when the printer does not answer", () => {
+    const refusal = new ApiError(
+      409,
+      "The printer is not answering.",
+      "printer_not_answering",
+      "Printer Not Answering",
+      true,
+    );
+
+    it("asks before deleting anyway", async () => {
+      vi.spyOn(api, "deleteFile").mockRejectedValue(refusal);
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+
+      expect(await screen.findByText("Delete anyway")).toBeTruthy();
+      expect(screen.getByText("The printer is not answering.")).toBeTruthy();
+      expect(api.deleteFile).toHaveBeenCalledTimes(1);
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("deletes with the override once confirmed", async () => {
+      vi.spyOn(api, "deleteFile")
+        .mockRejectedValueOnce(refusal)
+        .mockResolvedValueOnce();
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(await screen.findByText("Delete anyway"));
+
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(api.deleteFile).toHaveBeenLastCalledWith("model.txt", {
+        ignoreUnreachablePrinter: true,
+      });
+    });
+
+    it("deletes nothing when the user backs out", async () => {
+      vi.spyOn(api, "deleteFile").mockRejectedValue(refusal);
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(await screen.findByText("Cancel"));
+
+      await waitFor(() =>
+        expect(screen.queryByText("Delete anyway")).toBeNull(),
+      );
+      expect(api.deleteFile).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("shows why the confirmed deletion was refused after all", async () => {
+      vi.spyOn(api, "deleteFile")
+        .mockRejectedValueOnce(refusal)
+        .mockRejectedValueOnce(
+          new ApiError(409, "model.txt is being printed.", "file_in_use"),
+        );
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(await screen.findByText("Delete anyway"));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("model.txt is being printed."),
+      );
+      expect(screen.queryByText("Delete anyway")).toBeNull();
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+  });
 });

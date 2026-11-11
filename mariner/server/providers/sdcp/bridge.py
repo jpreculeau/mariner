@@ -18,6 +18,7 @@ from mariner.printer import PrinterState
 from mariner.server.api import _layer_from_byte_offset
 from mariner.server.files import (
     NotPrintable,
+    holds_a_transfer_in_progress,
     printable_relative_path,
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
@@ -433,7 +434,12 @@ class PrinterBridge:
                 for entry in sorted(scan, key=lambda e: e.name):
                     if entry.name.startswith("."):
                         continue
-                    rel = Path(entry.path).resolve().relative_to(files_dir)
+                    try:
+                        rel = Path(entry.path).resolve().relative_to(files_dir)
+                    except ValueError:
+                        # A symbolic link leading out of the files
+                        # directory. Not something a client may be shown.
+                        continue
                     display = f"{constants.LOCAL_PREFIX}{rel.as_posix()}"
                     if entry.is_dir():
                         entries.append(
@@ -478,13 +484,18 @@ class PrinterBridge:
                 with unless_in_use(path):
                     os.remove(path)
             except (FileInUse, OSError) as exc:
-                logger.warning("SDCP: not deleting %s: %s", raw, exc)
+                logger.warning("SDCP: not deleting %r: %s", raw, exc)
                 failures.append(raw)
 
-        files_dir = config.get_files_directory().resolve()
         for raw in _as_list(folder_list):
             path = self._deletable(raw)
-            if path is None or not os.path.isdir(path) or path == files_dir:
+            if path is None or not os.path.isdir(path):
+                failures.append(raw)
+                continue
+            if holds_a_transfer_in_progress(path):
+                # An upload through another interface is being written in
+                # there. Removing the folder would take it away with it.
+                logger.warning("SDCP: not deleting %r: a transfer is in progress", raw)
                 failures.append(raw)
                 continue
             # Removing a large folder takes time, and the guard holds the
@@ -495,7 +506,7 @@ class PrinterBridge:
                 with unless_in_use(path):
                     os.rename(path, doomed)
             except (FileInUse, OSError) as exc:
-                logger.warning("SDCP: not deleting %s: %s", raw, exc)
+                logger.warning("SDCP: not deleting %r: %s", raw, exc)
                 failures.append(raw)
                 continue
             try:
@@ -504,7 +515,7 @@ class PrinterBridge:
                 # Part of it could not be removed. What is left goes back
                 # under its own name, so it stays visible and can be dealt
                 # with, instead of lingering under a hidden one.
-                logger.warning("SDCP: could not delete all of %s: %s", raw, exc)
+                logger.warning("SDCP: could not delete all of %r: %s", raw, exc)
                 failures.append(raw)
                 try:
                     os.rename(doomed, path)

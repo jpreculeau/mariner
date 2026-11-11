@@ -96,7 +96,7 @@ to files sent from a slicer.
 An upload is also refused with error 400 when the file is not in a format
 Mariner can print, when a folder already has that name, or when the name is
 one Mariner keeps for transfers in progress (``.upload-<random>.part`` and
-``.sdcp_uploads``).
+``.sdcp_uploads``, in upper or lower case).
 
 .. rubric:: Replacing a file
 
@@ -112,7 +112,7 @@ removed the next time Mariner starts.
 
 The printer reads its file layer by layer for the whole print. Mariner
 therefore changes an existing file only when the printer confirms it is not
-reading it, and refuses in three cases, in the web interface, from UVtools
+reading it, and refuses in four cases, in the web interface, from UVtools
 and from a slicer sending over the network alike:
 
 * **The file is being printed** (the print is starting, running or paused).
@@ -124,21 +124,51 @@ and from a slicer sending over the network alike:
   one started from the printer's own screen under a name Mariner does not
   find. Every existing file is then left alone until that print is over.
 
-* **The printer is not answering**, or not clearly: it is off, or the serial
-  cable is loose. Switch the printer on or check the cable, then try again;
-  opening the dashboard asks the printer again. If the printer is off on
-  purpose, this refusal alone can be overridden: a client of the web API
-  repeats the request with ``ignore_unreachable_printer=1``. Use it only when
-  certain that nothing is printing.
+* **The printer answered, but not clearly enough.** It is switched on, and
+  what it sent says nothing about a print, which happens now and then on a
+  busy serial line. Try again in a moment.
 
-In all three cases a file can still be stored under a **new name**, since
+* **The printer is not answering at all**: it is off, or the serial cable is
+  loose. Switch the printer on or check the cable, then try again; opening
+  the dashboard asks the printer again.
+
+In all four cases a file can still be stored under a **new name**, since
 nothing can be reading a file that does not exist yet.
 
+.. rubric:: Changing a file while the printer is switched off
+
+A printer that is switched off cannot say that it is not printing, so the
+last refusal above also applies when the printer is off on purpose. That
+refusal, and no other, can be lifted:
+
+* In the **web interface**, Mariner asks *Printer not answering: delete
+  anyway?* (or *replace anyway?*). Confirm only if the printer really is
+  switched off. A printer that is printing with its cable unplugged looks
+  exactly the same to Mariner, and its print would be ruined. The question
+  is asked each time.
+
+* A client of the **web API** repeats the request with
+  ``ignore_unreachable_printer=1``. Mariner then asks the printer once more
+  and goes ahead only if nothing at all comes back.
+
+* **UVtools and slicers sending over the network** have no way to confirm,
+  so for them the refusal stands. Use the web interface, or store the file
+  under a new name.
+
+.. rubric:: What clients receive
+
 The web interface shows the reason in a notification. The web API answers
-with status 409, a ``code`` of ``file_in_use``, ``print_file_unknown`` or
-``printer_not_answering``, and ``can_be_overridden``, which is true for the
-last one only. UVtools receives a 409, and a slicer using SDCP
-sees its transfer or deletion fail.
+with status 409 and a JSON body:
+
+* ``code``: ``file_in_use``, ``print_file_unknown``,
+  ``printer_answer_unclear`` or ``printer_not_answering``, for the four
+  cases above in that order;
+* ``title`` and ``description``: the explanation, ready to be shown;
+* ``can_be_overridden``: true for ``printer_not_answering`` only.
+
+UVtools receives a 409, and a slicer using SDCP sees its transfer or
+deletion fail. A slicer deleting a folder is also turned down while a file
+is being uploaded into that folder through another interface.
 
 .. note::
 

@@ -79,6 +79,27 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
     return name
 
 
+def _is_hidden(path: Path) -> bool:
+    """Whether *path* is a hidden entry, under whatever name it is reached.
+
+    The files directory is a FAT filesystem, where an entry also answers to
+    its name in another case and to a short alias such as ``SDCP_U~1``. So
+    besides the name, an existing entry is compared with the hidden entries
+    beside it: if it is one of them, it is hidden too.
+    """
+    if is_hidden_entry(path.name):
+        return True
+    try:
+        with os.scandir(path.parent) as siblings:
+            return any(
+                is_hidden_entry(sibling.name) and os.path.samefile(sibling.path, path)
+                for sibling in siblings
+            )
+    except OSError:
+        # The folder or the entry does not exist: nothing to be the same as.
+        return False
+
+
 def _is_inside_files_directory(candidate: Path, files_directory: Path) -> bool:
     """Whether *candidate* is the files directory or something clients may reach in it.
 
@@ -90,8 +111,10 @@ def _is_inside_files_directory(candidate: Path, files_directory: Path) -> bool:
         return True
     if files_directory not in candidate.parents:
         return False
+    below = candidate.relative_to(files_directory).parts
     return not any(
-        is_hidden_entry(part) for part in candidate.relative_to(files_directory).parts
+        _is_hidden(files_directory.joinpath(*below[: depth + 1]))
+        for depth in range(len(below))
     )
 
 
@@ -196,18 +219,44 @@ def modification_time(dir_entry: "os.DirEntry[str]") -> float:
 
 
 def is_scratch_file(name: str) -> bool:
-    """Whether *name* is something on its way in or out, not an entry to list."""
-    return name.startswith(_SCRATCH_PREFIX) and name.endswith(_SCRATCH_SUFFIX)
+    """Whether *name* is something on its way in or out, not an entry to list.
+
+    Case is ignored, as it is by the FAT filesystem the files are on.
+    """
+    folded = name.casefold()
+    return folded.startswith(_SCRATCH_PREFIX) and folded.endswith(_SCRATCH_SUFFIX)
 
 
 def is_hidden_entry(name: str) -> bool:
     """Whether a directory entry called *name* is kept out of listings.
 
     True for anything on its way in or out, and for the folder in which the
-    SDCP provider assembles its transfers. Such names cannot be given to a
-    file or folder either, since the entry would then vanish from view.
+    SDCP provider assembles its transfers, whatever the case of the name.
+    Such names cannot be given to a file or folder either, since the entry
+    would then vanish from view.
     """
-    return is_scratch_file(name) or name == SDCP_SCRATCH_DIRNAME
+    return is_scratch_file(name) or name.casefold() == SDCP_SCRATCH_DIRNAME
+
+
+def holds_a_transfer_in_progress(directory: Path) -> bool:
+    """Whether something is being uploaded somewhere under *directory*.
+
+    True as well when part of *directory* cannot be read: not knowing is no
+    ground for treating it as free of transfers.
+    """
+
+    def stop(error: OSError) -> None:
+        raise error
+
+    try:
+        # Folders are left out of the names: only a file is a transfer.
+        return any(
+            is_scratch_file(name)
+            for _, _, names in os.walk(directory, onerror=stop)
+            for name in names
+        )
+    except OSError:
+        return True
 
 
 def scratch_path_beside(path: Path) -> Path:

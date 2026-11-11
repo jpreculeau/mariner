@@ -2,7 +2,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 from unittest.mock import patch
 
 from pyexpect import expect
@@ -12,6 +12,7 @@ from pyfakefs.fake_filesystem_unittest import TestCase
 from mariner.config import _get_config
 from mariner.server.files import (
     NotPrintable,
+    holds_a_transfer_in_progress,
     is_hidden_entry,
     is_scratch_file,
     printable_relative_path,
@@ -69,6 +70,9 @@ class SafeFilenameTest(TestCase):
         # Listings hide them, so an entry created under one would vanish.
         expect(safe_filename(".upload-0123456789abcdef.part")).to_equal(None)
         expect(safe_filename(".sdcp_uploads")).to_equal(None)
+        # FAT ignores case: these would be the very same entries.
+        expect(safe_filename(".UPLOAD-0123456789ABCDEF.PART")).to_equal(None)
+        expect(safe_filename(".Sdcp_Uploads")).to_equal(None)
 
     def test_rejects_a_trailing_dot_which_fat_would_drop(self) -> None:
         expect(safe_filename("model.ctb.")).to_equal(None)
@@ -122,6 +126,8 @@ class ResolveInFilesDirectoryTest(TestCase):
             ".sdcp_uploads/abcd.part",
             "sub/.upload-0123abcd.part",
             "sub/../.sdcp_uploads",
+            ".SDCP_UPLOADS/abcd.part",
+            "sub/.Upload-0123ABCD.Part",
         ):
             expect(resolve_in_files_directory(relative)).to_equal(None)
 
@@ -186,6 +192,70 @@ class RealFilesystemResolveTest(TestCase):
                 expect(resolve_in_files_directory("fine.ctb")).to_equal(
                     Path(directory).resolve() / "fine.ctb"
                 )
+
+
+class RealFilesystemHiddenEntryTest(TestCase):
+    """A hidden entry reached under another name, as FAT aliases allow."""
+
+    def test_refuses_another_name_for_a_hidden_entry(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            scratch = Path(directory) / ".upload-0123456789abcdef.part"
+            scratch.write_bytes(b"half an upload")
+            # Stands for the short alias FAT gives the same entry.
+            os.link(scratch, Path(directory) / "UPLOAD~1.PAR")
+            (Path(directory) / "model.ctb").write_bytes(b"x")
+            with patch(
+                "mariner.server.files.config.get_files_directory",
+                return_value=Path(directory),
+            ):
+                expect(resolve_in_files_directory("UPLOAD~1.PAR")).to_equal(None)
+                expect(resolve_entry_in_files_directory("UPLOAD~1.PAR")).to_equal(None)
+                expect(resolve_in_files_directory("model.ctb")).to_equal(
+                    Path(directory).resolve() / "model.ctb"
+                )
+
+
+class TransferInProgressTest(TestCase):
+    fs: FakeFilesystem
+
+    def setUp(self) -> None:
+        _get_config.cache_clear()
+        self.setUpPyfakefs(additional_skip_names=["importlib.metadata"])
+        self.fs.create_file("/mnt/usb_share/batch/part.ctb", contents=b"x")
+
+    def test_a_folder_of_finished_files_holds_no_transfer(self) -> None:
+        expect(holds_a_transfer_in_progress(Path("/mnt/usb_share/batch"))).to_equal(
+            False
+        )
+
+    def test_a_scratch_file_at_any_depth_is_a_transfer(self) -> None:
+        self.fs.create_file(
+            "/mnt/usb_share/batch/deep/.UPLOAD-0123456789abcdef.part", contents=b"x"
+        )
+        expect(holds_a_transfer_in_progress(Path("/mnt/usb_share/batch"))).to_equal(
+            True
+        )
+
+    def test_a_folder_named_like_a_scratch_file_is_not_a_transfer(self) -> None:
+        self.fs.create_dir("/mnt/usb_share/batch/.upload-0123456789abcdef.part")
+        expect(holds_a_transfer_in_progress(Path("/mnt/usb_share/batch"))).to_equal(
+            False
+        )
+
+    def test_a_folder_that_cannot_be_read_is_taken_to_hold_one(self) -> None:
+        # Not knowing is no ground for removing it.
+        def walk_into_a_locked_folder(top: Any, onerror: Any = None) -> Any:
+            # What os.walk does with a folder it may not list.
+            if onerror is not None:
+                onerror(PermissionError("denied"))
+            return iter(())
+
+        with patch("mariner.server.files.os.walk", walk_into_a_locked_folder):
+            expect(holds_a_transfer_in_progress(Path("/mnt/usb_share/batch"))).to_equal(
+                True
+            )
 
 
 class PrintableRelativePathTest(TestCase):
@@ -360,6 +430,8 @@ class ScratchFilesTest(TestCase):
     def test_is_hidden_entry(self) -> None:
         expect(is_hidden_entry(".upload-0123456789abcdef.part")).to_equal(True)
         expect(is_hidden_entry(".sdcp_uploads")).to_equal(True)
+        expect(is_hidden_entry(".Upload-0123456789ABCDEF.Part")).to_equal(True)
+        expect(is_hidden_entry(".SDCP_UPLOADS")).to_equal(True)
         for name in ("model.ctb", ".hidden", "sdcp_uploads"):
             expect(is_hidden_entry(name)).to_equal(False)
 

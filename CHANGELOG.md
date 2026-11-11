@@ -16,6 +16,13 @@
 - Refuse to replace or delete the file being printed, however the print was started
 - Leave existing files alone while the printer does not answer; new names are still accepted
 - Let a web API client override that refusal when the user confirms the printer is switched off
+- Ask in the web interface before deleting or replacing a file while the printer does not answer
+- Tell a printer that answers unclearly from one that does not answer, and allow the override for the latter only
+- Do not protect a file whose print the printer refused to start
+- Refuse to delete a folder over SDCP while a file is being uploaded into it
+- Recognise the names reserved for transfers in progress whatever their case
+- Keep line breaks in client-supplied names out of the logs
+- Answer 404 when a file or folder disappears during a deletion or an upload
 - Refuse file names the printer's FAT filesystem cannot store
 - Give each upload its own temporary file and remove leftovers at startup
 - Send the printer the path it knows when a print is started with another form of it, from any interface

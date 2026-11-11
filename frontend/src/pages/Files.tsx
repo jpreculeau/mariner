@@ -2,11 +2,13 @@ import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   api,
+  ApiError,
   formatTime,
   type FileEntry,
   type DirectoryEntry,
 } from "@/lib/api";
 import { FileDetailDialog } from "@/components/FileDetailDialog";
+import { PrinterOffDialog } from "@/components/PrinterOffDialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,6 +41,12 @@ export default function Files() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  // An upload the server refused but that the user may still confirm.
+  const [refusedUpload, setRefusedUpload] = useState<{
+    file: File;
+    path: string;
+    reason: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -81,15 +89,39 @@ export default function Files() {
     setDialogOpen(true);
   };
 
+  const upload = async (
+    file: File,
+    path: string,
+    ignoreUnreachablePrinter: boolean,
+  ) => {
+    setRefusedUpload(null);
+    try {
+      if (ignoreUnreachablePrinter) {
+        await api.uploadFile(file, path, { ignoreUnreachablePrinter });
+      } else {
+        await api.uploadFile(file, path);
+      }
+      queryClient.invalidateQueries({ queryKey: ["files", path] });
+    } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.canBeOverridden &&
+        !ignoreUnreachablePrinter
+      ) {
+        // The printer sent nothing back: the user decides.
+        setRefusedUpload({ file, path, reason: err.message });
+        return;
+      }
+      // The server says why, e.g. the file is being printed.
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    }
+  };
+
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      await api.uploadFile(file, currentPath);
-      queryClient.invalidateQueries({ queryKey: ["files", currentPath] });
-    } catch (err) {
-      // The server says why, e.g. the file is being printed.
-      toast.error(err instanceof Error ? err.message : "Upload failed");
+      await upload(file, currentPath, false);
     } finally {
       // Lets the same file be picked again after a refusal.
       e.target.value = "";
@@ -216,6 +248,17 @@ export default function Files() {
         file={selectedFile}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
+      />
+
+      <PrinterOffDialog
+        reason={refusedUpload?.reason ?? null}
+        confirmLabel="Replace anyway"
+        onConfirm={() => {
+          if (refusedUpload) {
+            upload(refusedUpload.file, refusedUpload.path, true);
+          }
+        }}
+        onCancel={() => setRefusedUpload(null)}
       />
 
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>

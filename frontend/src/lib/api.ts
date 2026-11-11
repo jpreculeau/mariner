@@ -48,6 +48,9 @@ function getCsrfToken(): string | null {
  * `message` is the explanation the server gave when it gave one, written to
  * be shown to the user as is. `code` tells apart the cases a screen may want
  * to handle differently, such as `file_in_use` and `printer_not_answering`.
+ * `canBeOverridden` is true when repeating the request with
+ * `ignoreUnreachablePrinter` can go through: the printer sent nothing back,
+ * and the user may know that it is simply switched off.
  */
 export class ApiError extends Error {
   constructor(
@@ -55,6 +58,7 @@ export class ApiError extends Error {
     message: string,
     readonly code?: string,
     readonly title?: string,
+    readonly canBeOverridden: boolean = false,
   ) {
     super(message);
     this.name = "ApiError";
@@ -69,12 +73,26 @@ async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
   try {
     const body = await res.json();
     if (body && typeof body.description === "string") {
-      return new ApiError(res.status, body.description, body.code, body.title);
+      return new ApiError(
+        res.status,
+        body.description,
+        body.code,
+        body.title,
+        body.can_be_overridden === true,
+      );
     }
   } catch {
     // No JSON body: an error page, or nothing at all.
   }
   return new ApiError(res.status, fallback);
+}
+
+/**
+ * For changing an existing file. Set once the user, told that the printer
+ * does not answer, has confirmed that it is switched off.
+ */
+export interface FileChangeOptions {
+  ignoreUnreachablePrinter?: boolean;
 }
 
 async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -115,13 +133,20 @@ export const api = {
     return `/api/file_preview?filename=${encodeURIComponent(filename)}`;
   },
 
-  async uploadFile(file: File, path: string = "."): Promise<void> {
+  async uploadFile(
+    file: File,
+    path: string = ".",
+    options: FileChangeOptions = {},
+  ): Promise<void> {
     const formData = new FormData();
     formData.append("file", file);
     const csrf = getCsrfToken();
     const headers: Record<string, string> = {};
     if (csrf) headers["X-CSRFToken"] = csrf;
     const q = new URLSearchParams({ path });
+    if (options.ignoreUnreachablePrinter) {
+      q.set("ignore_unreachable_printer", "1");
+    }
     const res = await fetch(`/api/upload_file?${q.toString()}`, {
       method: "POST",
       headers,
@@ -130,13 +155,15 @@ export const api = {
     if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);
   },
 
-  async deleteFile(filename: string): Promise<void> {
-    await apiFetch(
-      `/api/delete_file?filename=${encodeURIComponent(filename)}`,
-      {
-        method: "POST",
-      },
-    );
+  async deleteFile(
+    filename: string,
+    options: FileChangeOptions = {},
+  ): Promise<void> {
+    const q = new URLSearchParams({ filename });
+    if (options.ignoreUnreachablePrinter) {
+      q.set("ignore_unreachable_printer", "1");
+    }
+    await apiFetch(`/api/delete_file?${q.toString()}`, { method: "POST" });
   },
 
   async createDirectory(parentPath: string, name: string): Promise<void> {

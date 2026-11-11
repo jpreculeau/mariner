@@ -22,6 +22,15 @@ class UnexpectedPrinterResponse(MarinerException):
         return f"The printer returned an unexpected response: {repr(self.response)}"
 
 
+class FileNotSelected(UnexpectedPrinterResponse):
+    """The printer did not confirm selecting a file.
+
+    Raised instead of the plain UnexpectedPrinterResponse so that callers can
+    tell a print that cannot have started (the file was never selected) from
+    one whose start command was sent.
+    """
+
+
 class UnexpectedResponseLineNumber(MarinerException):
     def __init__(self, response: str, expected: str) -> None:
         self.response = response

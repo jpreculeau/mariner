@@ -433,6 +433,17 @@ class SDCPBridgeTest(TestCase):
         # Unprintable files are filtered out by the mainboard per the spec.
         expect("/local/notes.txt" in names).to_equal(False)
 
+    def test_list_files_leaves_out_a_link_leading_elsewhere(self) -> None:
+        self.fs.create_file("/mnt/outside.ctb", contents=b"x")
+        self.fs.create_symlink("/mnt/usb_share/way-out.ctb", "/mnt/outside.ctb")
+        self.fs.create_dir("/mnt/elsewhere")
+        self.fs.create_symlink("/mnt/usb_share/way-out", "/mnt/elsewhere")
+
+        names = [entry["name"] for entry in self.bridge.list_files("/local/")]
+
+        expect("/local/foobar.ctb" in names).to_equal(True)
+        expect([name for name in names if "out" in name]).to_equal([])
+
     def test_list_files_rejects_escape(self) -> None:
         expect(self.bridge.list_files("/local/../../etc")).to_equal([])
 
@@ -471,6 +482,36 @@ class SDCPBridgeTest(TestCase):
         failures = self.bridge.delete(["/local/foobar.ctb"], [])
         expect(failures).to_equal(["/local/foobar.ctb"])
         expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(True)
+
+    def test_delete_refuses_a_folder_into_which_a_file_is_being_uploaded(
+        self,
+    ) -> None:
+        # The web interface and UVtools write their uploads beside the
+        # destination. Removing the folder would take the upload with it.
+        self.fs.create_file(
+            "/mnt/usb_share/batch/deep/.upload-0123456789abcdef.part", contents=b"x"
+        )
+        failures = self.bridge.delete([], ["/local/batch"])
+        expect(failures).to_equal(["/local/batch"])
+        expect(
+            pathlib.Path(
+                "/mnt/usb_share/batch/deep/.upload-0123456789abcdef.part"
+            ).exists()
+        ).to_equal(True)
+
+    def test_a_refused_deletion_cannot_add_lines_to_the_log(self) -> None:
+        self.fs.create_file("/mnt/usb_share/x\nWARNING forged.ctb", contents=b"x")
+        self.fs.create_dir("/mnt/usb_share/y\nWARNING forged")
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        with self.assertLogs("mariner.server.providers.sdcp.bridge", "WARNING") as logs:
+            self.bridge.delete(
+                ["/local/x\nWARNING forged.ctb"], ["/local/y\nWARNING forged"]
+            )
+        expect(len(logs.records)).to_equal(2)
+        for record in logs.records:
+            expect("\n" in record.getMessage()).to_equal(False)
 
     def test_delete_folders(self) -> None:
         self.fs.create_file("/mnt/usb_share/batch/a.ctb", contents=b"x")

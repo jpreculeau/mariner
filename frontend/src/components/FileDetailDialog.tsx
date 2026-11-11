@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -10,7 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Play, Layers, Clock, Ruler, Trash2 } from "lucide-react";
-import { api, formatTime, type FileEntry } from "@/lib/api";
+import { api, ApiError, formatTime, type FileEntry } from "@/lib/api";
+import { PrinterOffDialog } from "@/components/PrinterOffDialog";
 import { toast } from "@/components/ui/sonner";
 
 interface FileDetailDialogProps {
@@ -26,6 +28,8 @@ export function FileDetailDialog({
 }: FileDetailDialogProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  // Why the server refused a deletion that the user may still confirm.
+  const [printerOffReason, setPrinterOffReason] = useState<string | null>(null);
 
   const { data: details } = useQuery({
     queryKey: ["fileDetails", file?.path],
@@ -41,10 +45,24 @@ export function FileDetailDialog({
     navigate("/");
   };
 
-  const handleDelete = async () => {
+  const deleteFile = async (ignoreUnreachablePrinter: boolean) => {
+    setPrinterOffReason(null);
     try {
-      await api.deleteFile(file.path);
+      if (ignoreUnreachablePrinter) {
+        await api.deleteFile(file.path, { ignoreUnreachablePrinter });
+      } else {
+        await api.deleteFile(file.path);
+      }
     } catch (err) {
+      if (
+        err instanceof ApiError &&
+        err.canBeOverridden &&
+        !ignoreUnreachablePrinter
+      ) {
+        // The printer sent nothing back: the user decides.
+        setPrinterOffReason(err.message);
+        return;
+      }
       // The server says why, e.g. the file is being printed. The dialog
       // stays open so the user can read it and try again.
       toast.error(err instanceof Error ? err.message : "Could not delete file");
@@ -108,7 +126,7 @@ export function FileDetailDialog({
           <Button
             variant="ghost"
             className="gap-2 text-muted-foreground"
-            onClick={handleDelete}
+            onClick={() => deleteFile(false)}
           >
             <Trash2 className="h-4 w-4" />
             Delete
@@ -121,6 +139,12 @@ export function FileDetailDialog({
           )}
         </DialogFooter>
       </DialogContent>
+      <PrinterOffDialog
+        reason={printerOffReason}
+        confirmLabel="Delete anyway"
+        onConfirm={() => deleteFile(true)}
+        onCancel={() => setPrinterOffReason(null)}
+      />
     </Dialog>
   );
 }

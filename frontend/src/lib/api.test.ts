@@ -247,4 +247,80 @@ describe("api client", () => {
       expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
   });
+
+  it("says when a refusal can be overridden", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "CONFLICT",
+      json: () =>
+        Promise.resolve({
+          code: "printer_not_answering",
+          title: "Printer Not Answering",
+          description: "The printer is not answering.",
+          can_be_overridden: true,
+        }),
+    } as Response);
+
+    const error = await api.deleteFile("model.ctb").catch((e) => e);
+    expect(error.canBeOverridden).toBe(true);
+  });
+
+  it("takes a refusal as final unless the server says otherwise", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "CONFLICT",
+      json: () =>
+        Promise.resolve({
+          code: "file_in_use",
+          title: "File In Use",
+          description: "model.ctb is in use by the print in progress.",
+          can_be_overridden: "yes",
+        }),
+    } as Response);
+
+    const error = await api.deleteFile("model.ctb").catch((e) => e);
+    expect(error.canBeOverridden).toBe(false);
+  });
+
+  it("deletes without the override unless asked", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+    } as Response);
+
+    await api.deleteFile("a b.ctb");
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/delete_file?filename=a+b.ctb",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("deletes with the override when asked", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+    } as Response);
+
+    await api.deleteFile("model.ctb", { ignoreUnreachablePrinter: true });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/delete_file?filename=model.ctb&ignore_unreachable_printer=1",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("uploads with the override when asked", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ success: true }),
+    } as Response);
+
+    const file = new File(["content"], "test.ctb");
+    await api.uploadFile(file, ".", { ignoreUnreachablePrinter: true });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/upload_file?path=.&ignore_unreachable_printer=1",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });

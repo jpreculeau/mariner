@@ -9,7 +9,7 @@ from pyfakefs.fake_filesystem import FakeFilesystem
 from pyfakefs.fake_filesystem_unittest import TestCase
 
 from mariner.config import _get_config
-from mariner.exceptions import UnexpectedPrinterResponse
+from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
 from mariner.server import printer_access
 
@@ -47,6 +47,10 @@ class PrinterAccessTest(TestCase):
             state=state, current_byte=10, total_bytes=100, counters_seen=True
         )
         self.printer_mock.get_selected_file.return_value = selected
+
+    @staticmethod
+    def _in_use(path: Path) -> bool:
+        return printer_access.usage_of(path) is not printer_access.Usage.FREE
 
     # ---- one conversation with the printer at a time ----
 
@@ -230,21 +234,17 @@ class PrinterAccessTest(TestCase):
             PrinterState.PAUSED,
         ):
             self._printer_reports(state, "sub/part.ctb")
-            expect(
-                printer_access.is_in_use(Path("/mnt/usb_share/sub/part.ctb"))
-            ).to_equal(True)
+            expect(self._in_use(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(True)
 
     def test_other_files_are_not_in_use(self) -> None:
         self._printer_reports(PrinterState.PRINTING, "model.ctb")
-        expect(printer_access.is_in_use(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
-            False
-        )
+        expect(self._in_use(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(False)
 
     def test_a_folder_holding_the_file_being_printed_is_in_use(self) -> None:
         self._printer_reports(PrinterState.PAUSED, "sub/part.ctb")
         self.fs.create_dir("/mnt/usb_share/other")
-        expect(printer_access.is_in_use(Path("/mnt/usb_share/sub"))).to_equal(True)
-        expect(printer_access.is_in_use(Path("/mnt/usb_share/other"))).to_equal(False)
+        expect(self._in_use(Path("/mnt/usb_share/sub"))).to_equal(True)
+        expect(self._in_use(Path("/mnt/usb_share/other"))).to_equal(False)
 
     def test_nothing_is_in_use_when_idle(self) -> None:
         self._printer_reports(PrinterState.IDLE, "model.ctb")
@@ -259,9 +259,7 @@ class PrinterAccessTest(TestCase):
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
             printer_access.Usage.PRINTER_UNREACHABLE
         )
-        expect(printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            True
-        )
+        expect(self._in_use(Path("/mnt/usb_share/model.ctb"))).to_equal(True)
 
     def test_a_path_that_does_not_exist_is_always_free(self) -> None:
         # Nothing can be reading it, so a new file can always be stored.
@@ -299,16 +297,16 @@ class PrinterAccessTest(TestCase):
     def test_checks_in_quick_succession_share_one_status_read(self) -> None:
         self._printer_reports(PrinterState.PRINTING, "model.ctb")
         for _ in range(3):
-            printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
         expect(self.printer_mock.get_print_status.call_count).to_equal(1)
 
     def test_a_status_read_is_not_reused_once_it_is_old(self) -> None:
         self._printer_reports(PrinterState.PRINTING, "model.ctb")
         with patch("mariner.server.printer_access.time.monotonic") as clock:
             clock.return_value = 100.0
-            printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
             clock.return_value = 100.0 + printer_access._STATUS_MAX_AGE_SECS + 1
-            printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
         expect(self.printer_mock.get_print_status.call_count).to_equal(2)
 
     def test_a_silent_printer_is_remembered_for_longer(self) -> None:
@@ -317,12 +315,12 @@ class PrinterAccessTest(TestCase):
         self._printer_reports(PrinterState.CLOSED, "")
         with patch("mariner.server.printer_access.time.monotonic") as clock:
             clock.return_value = 100.0
-            printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
             clock.return_value = 100.0 + printer_access._STATUS_MAX_AGE_SECS + 1
-            printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
             expect(self.printer_mock.get_print_status.call_count).to_equal(1)
             clock.return_value = 100.0 + printer_access._CLOSED_STATUS_MAX_AGE_SECS + 1
-            printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
             expect(self.printer_mock.get_print_status.call_count).to_equal(2)
 
     def test_talking_to_the_printer_forgets_the_remembered_status(self) -> None:
@@ -330,13 +328,13 @@ class PrinterAccessTest(TestCase):
         # the remembered status expired. The fake printer is changed directly
         # here, not through a helper that forgets the status itself.
         self._printer_reports(PrinterState.IDLE, "")
-        printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+        self._in_use(Path("/mnt/usb_share/model.ctb"))
         expect(self.printer_mock.get_print_status.call_count).to_equal(1)
 
         with printer_access.printer_session() as printer:
             printer.pause_printing()
 
-        printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+        self._in_use(Path("/mnt/usb_share/model.ctb"))
         expect(self.printer_mock.get_print_status.call_count).to_equal(2)
 
     # ---- a print Mariner has just started ----
@@ -438,16 +436,91 @@ class PrinterAccessTest(TestCase):
             printer_access.Usage.FREE
         )
 
+    def test_a_file_the_printer_did_not_select_is_not_remembered(self) -> None:
+        # Selecting comes before the print command, which therefore never
+        # went out. That is also what a switched-off printer leads to.
+        self._printer_still_says_idle()
+        self.printer_mock.start_printing.side_effect = FileNotSelected("")
+        with self.assertRaises(FileNotSelected):
+            printer_access.start_print("model.ctb")
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.FREE
+        )
+
+    def test_a_failed_start_on_a_switched_off_printer_can_still_be_overridden(
+        self,
+    ) -> None:
+        self._printer_reports(PrinterState.CLOSED, "")
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        self.printer_mock.start_printing.side_effect = FileNotSelected("")
+        with self.assertRaises(FileNotSelected):
+            printer_access.start_print("model.ctb")
+
+        ran = []
+        with printer_access.unless_in_use(
+            Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+        ):
+            ran.append(True)
+        expect(ran).to_equal([True])
+
+    def test_a_started_print_is_forgotten_whoever_sees_the_printer_report_it(
+        self,
+    ) -> None:
+        # The status page polls the printer; no file operation is involved.
+        self._printer_still_says_idle()
+        with patch("mariner.server.printer_access.time.monotonic") as clock:
+            clock.return_value = 1000.0
+            printer_access.start_print("model.ctb")
+
+            clock.return_value = 1002.0
+            self.printer_mock.get_print_status.return_value = PrintStatus(
+                state=PrinterState.PRINTING,
+                current_byte=10,
+                total_bytes=100,
+                counters_seen=True,
+                answered=True,
+            )
+            self.printer_mock.get_selected_file.return_value = "model.ctb"
+            printer_access.read_status()
+
+            clock.return_value = 1004.0
+            self._printer_still_says_idle()
+            printer_access.forget_status()
+            expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+                printer_access.Usage.FREE
+            )
+
     # ---- answers that settle nothing ----
+
+    def _printer_answers_unclearly(self, state: PrinterState) -> None:
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=state, answered=True
+        )
+        self.printer_mock.get_selected_file.return_value = "model.ctb"
 
     def test_an_answer_without_the_print_counters_settles_nothing(self) -> None:
         # The printer answered "ok" and nothing else. That reads as IDLE but
         # says nothing about a print.
-        printer_access.forget_status()
-        self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+        self._printer_answers_unclearly(PrinterState.IDLE)
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.PRINTER_UNCLEAR
         )
-        self.printer_mock.get_selected_file.return_value = "model.ctb"
+
+    def test_an_answer_that_cannot_be_read_settles_nothing(self) -> None:
+        # Garbled text reads as CLOSED, yet something did come back.
+        self._printer_answers_unclearly(PrinterState.CLOSED)
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.PRINTER_UNCLEAR
+        )
+
+    def test_a_printer_that_sends_nothing_is_unreachable(self) -> None:
+        self._printer_reports(PrinterState.CLOSED, "")
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
             printer_access.Usage.PRINTER_UNREACHABLE
         )
@@ -501,7 +574,7 @@ class PrinterAccessTest(TestCase):
         # Remembered as silent a moment ago. Since then the printer was
         # switched on and a print started from its screen.
         self._printer_reports(PrinterState.CLOSED, "")
-        printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+        self._in_use(Path("/mnt/usb_share/model.ctb"))
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.PRINTING,
             current_byte=10,
@@ -515,6 +588,94 @@ class PrinterAccessTest(TestCase):
                 Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
             ):
                 pass
+        expect(raised.exception.usage).to_equal(printer_access.Usage.PRINTING)
+
+    def test_an_unclear_answer_cannot_be_overridden(self) -> None:
+        # The override is for a printer that is switched off. One that
+        # answers, however badly, is switched on.
+        for state in (PrinterState.IDLE, PrinterState.CLOSED):
+            self._printer_answers_unclearly(state)
+            with self.assertRaises(printer_access.FileInUse) as raised:
+                with printer_access.unless_in_use(
+                    Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+                ):
+                    pass
+            expect(raised.exception.usage).to_equal(
+                printer_access.Usage.PRINTER_UNCLEAR
+            )
+
+    def test_an_override_asks_the_printer_once_when_nothing_holds_it_up(
+        self,
+    ) -> None:
+        self._printer_reports(PrinterState.CLOSED, "")
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        with printer_access.unless_in_use(
+            Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+        ):
+            pass
+        expect(self.printer_mock.get_print_status.call_count).to_equal(1)
+
+    def test_an_override_does_not_hold_up_new_files_while_it_asks(self) -> None:
+        # A silent printer takes seconds to give up on. Meanwhile, storing
+        # a file under a new name must go through.
+        stored = threading.Event()
+
+        def store_a_new_file() -> None:
+            with printer_access.unless_in_use(Path("/mnt/usb_share/new.ctb")):
+                stored.set()
+
+        def silent_printer() -> PrintStatus:
+            other = threading.Thread(target=store_a_new_file)
+            other.start()
+            other.join(timeout=5)
+            return PrintStatus(state=PrinterState.CLOSED)
+
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.side_effect = silent_printer
+        with printer_access.unless_in_use(
+            Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+        ):
+            pass
+        expect(stored.is_set()).to_equal(True)
+
+    def test_an_override_asks_again_after_a_long_wait_for_its_turn(self) -> None:
+        # The printer was silent when asked. The request then waited behind
+        # another change, long enough for a print to be started from the
+        # printer's own screen.
+        self._printer_reports(PrinterState.CLOSED, "")
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        now = [1000.0]
+        change_lock = printer_access._change_lock
+        test = self
+
+        class SlowToGet:
+            def __enter__(self) -> None:
+                now[0] += printer_access._STATUS_MAX_AGE_SECS + 1
+                test.printer_mock.get_print_status.return_value = PrintStatus(
+                    state=PrinterState.PRINTING,
+                    current_byte=10,
+                    total_bytes=100,
+                    counters_seen=True,
+                    answered=True,
+                )
+                test.printer_mock.get_selected_file.return_value = "model.ctb"
+                change_lock.acquire()
+
+            def __exit__(self, *_: Any) -> None:
+                change_lock.release()
+
+        with patch(
+            "mariner.server.printer_access.time.monotonic", side_effect=lambda: now[0]
+        ), patch.object(printer_access, "_change_lock", SlowToGet()):
+            with self.assertRaises(printer_access.FileInUse) as raised:
+                with printer_access.unless_in_use(
+                    Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+                ):
+                    pass
         expect(raised.exception.usage).to_equal(printer_access.Usage.PRINTING)
 
     def test_a_reported_print_cannot_be_overridden(self) -> None:
