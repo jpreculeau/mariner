@@ -39,7 +39,11 @@ First, enable the repository:
 
 .. code-block:: shell-session
 
-   $ curl -fsSL https://amd989.github.io/mariner/setup.sh | sudo bash
+   $ curl -fsSL https://packages.alejandro.md/setup.sh | sudo sh
+
+The script installs a small ``alejandro-md-keyring`` package, which owns the
+signing key and the APT source from then on, so any future change to either
+arrives as a normal package upgrade.
 
 Then install mariner:
 
@@ -55,34 +59,44 @@ Or set up the repository manually (replace ``CODENAME`` with ``bookworm`` or
 
 .. code-block:: shell-session
 
-   $ curl -fsSL https://amd989.github.io/mariner/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/mariner3d.gpg
+   $ sudo curl -fsSL https://packages.alejandro.md/gpg.key -o /usr/share/keyrings/alejandro-md.asc
    $ CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-   $ echo "deb [signed-by=/usr/share/keyrings/mariner3d.gpg] https://amd989.github.io/mariner ${CODENAME} main" | sudo tee /etc/apt/sources.list.d/mariner3d.list
+   $ sudo tee /etc/apt/sources.list.d/alejandro-md.sources <<EOF
+   Types: deb
+   URIs: https://packages.alejandro.md/deb
+   Suites: ${CODENAME}
+   Components: main
+   Signed-By: /usr/share/keyrings/alejandro-md.asc
+   EOF
    $ sudo apt update
    $ sudo apt install mariner3d
 
-Rocky Linux / RHEL / Fedora (dnf)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Rocky Linux / RHEL / AlmaLinux 9 (dnf)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Quick install:
+RPM packages are built for EL9 and run on the ``python3.12`` that EL9 ships,
+which dnf installs as a dependency. Fedora is not a tested target.
+
+Quick install, using the same script as Debian:
 
 .. code-block:: shell-session
 
-   $ curl -fsSL https://amd989.github.io/mariner/setup-rpm.sh | sudo bash
+   $ curl -fsSL https://packages.alejandro.md/setup.sh | sudo sh
    $ sudo dnf install mariner3d
 
 Or set up the repository manually:
 
 .. code-block:: shell-session
 
-   $ sudo rpm --import https://amd989.github.io/mariner/gpg.key
-   $ sudo tee /etc/yum.repos.d/mariner3d.repo <<EOF
-   [mariner3d]
-   name=Mariner 2 - MSLA 3D Printer Controller
-   baseurl=https://amd989.github.io/mariner/rpm/
+   $ sudo rpm --import https://packages.alejandro.md/gpg.key
+   $ sudo tee /etc/yum.repos.d/alejandro-md.repo <<EOF
+   [alejandro-md]
+   name=Alejandro Mora Packages
+   baseurl=https://packages.alejandro.md/rpm/
    enabled=1
    gpgcheck=1
-   gpgkey=https://amd989.github.io/mariner/gpg.key
+   repo_gpgcheck=1
+   gpgkey=https://packages.alejandro.md/gpg.key
    EOF
    $ sudo dnf install mariner3d
 

@@ -7,7 +7,7 @@
 # run.
 #
 # Supported platforms: Raspberry Pi OS, Armbian.
-# See https://github.com/amd989/mariner for details.
+# See https://github.com/mariner3d/mariner for details.
 
 set -euo pipefail
 

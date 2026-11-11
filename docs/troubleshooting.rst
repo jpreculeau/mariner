@@ -35,7 +35,7 @@ Often, this can be one of these issues:
   USB cable works with other devices!
 * Your ``/etc/rc.local`` isn't setup correctly with the ``modprobe
   g_mass_storage`` line (see `Issue #412
-  <https://github.com/luizribeiro/mariner/issues/412>`_ for an example).
+  <https://github.com/mariner3d/mariner/issues/412>`_ for an example).
 * Make sure ``dtoverlay=dwc2`` is under the ``[all]`` section of your
   ``/boot/config.txt``.
 * Make sure your Raspberry Pi `supports USB OTG
@@ -46,7 +46,7 @@ Often, this can be one of these issues:
 
 If you are seeing the "Unexpected Printer Response" while printing from the web
 interface (but printing is working fine), then you are running into `Issue #180
-<https://github.com/luizribeiro/mariner/issues/180>`_, which is being worked on.
+<https://github.com/mariner3d/mariner/issues/180>`_, which is being worked on.
 
 This has no performance effect and won't cause issues with your prints. It
 should cause nothing but cosmetic issues on the user interface and can safely
@@ -63,14 +63,14 @@ to the :ref:`Setting up the serial port` section of the installation guide.
 If your printer is returning responses such as ``Error: File is not existed or
 empty``, make sure to upgrade to the latest version of mariner. This is an old
 issue which was fixed on ``v0.2.0``. See `Issue #311
-<https://github.com/luizribeiro/mariner/issues/311>`_.
+<https://github.com/mariner3d/mariner/issues/311>`_.
 
 .. rubric:: Printer stops during print
 
 If your printer is stopping during the print process, make sure to upgrade to
 the latest version of mariner. This is an old issue which was fixed on
 ``v0.2.0``. See `Issue #311
-<https://github.com/luizribeiro/mariner/issues/311>`_.
+<https://github.com/mariner3d/mariner/issues/311>`_.
 
 Other Issues
 ------------
@@ -89,4 +89,4 @@ Also check the message buffer of the Linux kernel for errors:
 
 Carefully read the :ref:`Installation Guide` once again and, if none of that
 helps, `file an issue on GitHub
-<https://github.com/amd989/mariner/issues/new/choose>`_!
+<https://github.com/mariner3d/mariner/issues/new/choose>`_!

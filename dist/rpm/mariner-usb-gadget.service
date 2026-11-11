@@ -1,6 +1,6 @@
 [Unit]
 Description=Mariner USB Mass Storage Gadget
-Documentation=https://github.com/amd989/mariner
+Documentation=https://github.com/mariner3d/mariner
 DefaultDependencies=no
 After=local-fs.target
 Before=mariner3d.service

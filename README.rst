@@ -57,12 +57,12 @@ post <https://l9o.dev/posts/controlling-an-elegoo-mars-pro-remotely/>`__
 explains the setup end to end with pictures of the modifications done to an
 Elegoo Mars Pro.
 
-.. |CI| image:: https://github.com/amd989/mariner/workflows/CI/badge.svg
-   :target: https://github.com/amd989/mariner/actions/workflows/ci.yaml
+.. |CI| image:: https://github.com/mariner3d/mariner/workflows/CI/badge.svg
+   :target: https://github.com/mariner3d/mariner/actions/workflows/ci.yaml
 .. |docs| image:: https://readthedocs.org/projects/mariner/badge/?version=latest
    :target: https://mariner2.readthedocs.io/en/latest/?badge=latest
-.. |codecov| image:: https://codecov.io/gh/amd989/mariner/branch/master/graph/badge.svg
-   :target: https://codecov.io/gh/amd989/mariner
+.. |codecov| image:: https://codecov.io/gh/mariner3d/mariner/branch/master/graph/badge.svg
+   :target: https://codecov.io/gh/mariner3d/mariner
 .. |Python| image:: https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue
    :target: https://www.python.org/downloads/
 .. |MIT license| image:: https://img.shields.io/badge/License-MIT-blue.svg

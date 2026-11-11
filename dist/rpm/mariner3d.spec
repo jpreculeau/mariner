@@ -15,7 +15,7 @@ Version:        %{_version}
 Release:        1%{?dist}
 Summary:        Web application for controlling MSLA 3D Printers
 License:        MIT
-URL:            https://github.com/amd989/mariner
+URL:            https://github.com/mariner3d/mariner
 Source0:        mariner-%{version}.tar.gz
 
 BuildRequires:  python3.12-devel

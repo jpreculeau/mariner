@@ -4,7 +4,7 @@ Priority: optional
 Maintainer: Alejandro Mora <mail@alejandro.md>
 Build-Depends: debhelper-compat (= 13), python3 (>= 3.11), dh-virtualenv (>= 1.1), python3-virtualenv, libxslt1-dev, libxml2-dev, zlib1g-dev
 Standards-Version: 4.6.0
-Homepage: https://github.com/amd989/mariner
+Homepage: https://github.com/mariner3d/mariner
 
 Package: mariner3d
 Architecture: any
