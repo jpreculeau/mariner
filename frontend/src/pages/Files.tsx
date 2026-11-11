@@ -47,7 +47,7 @@ export default function Files() {
     path: string;
     reason: string;
   } | null>(null);
-  // One upload at a time: see handleUpload.
+  // One upload at a time: see upload.
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
@@ -96,6 +96,10 @@ export default function Files() {
     path: string,
     ignoreUnreachablePrinter: boolean,
   ) => {
+    // A second upload while one is under way is not taken: if both were
+    // refused, the question about the second would replace the first's.
+    if (uploading) return;
+    setUploading(true);
     setRefusedUpload(null);
     try {
       await api.uploadFile(file, path, { ignoreUnreachablePrinter });
@@ -112,19 +116,17 @@ export default function Files() {
       }
       // The server says why, e.g. the file is being printed.
       toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setUploading(false);
     }
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    // A second upload while one is under way is not taken: if both were
-    // refused, the question about the second would replace the first's.
-    if (!file || uploading) return;
-    setUploading(true);
+    if (!file) return;
     try {
       await upload(file, currentPath, false);
     } finally {
-      setUploading(false);
       // Lets the same file be picked again after a refusal.
       e.target.value = "";
     }

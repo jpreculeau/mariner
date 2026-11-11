@@ -559,17 +559,33 @@ class SDCPBridgeTest(TestCase):
             ).exists()
         ).to_equal(True)
 
-    def test_a_name_with_a_line_break_is_refused_and_not_logged(self) -> None:
+    def test_a_leftover_with_a_line_break_in_its_name_can_be_deleted(self) -> None:
+        # Mariner never stores such a name, but a stick prepared elsewhere
+        # can carry one. It must not be stuck there, with or without the
+        # storage prefix, as it is not from the other interfaces.
+        self.fs.create_file("/mnt/usb_share/x\nold.ctb", contents=b"x")
+        self.fs.create_file("/mnt/usb_share/y.ctb\x85", contents=b"x")
+        self.fs.create_dir("/mnt/usb_share/z\u2028old")
+        failures = self.bridge.delete(
+            ["/local/x\nold.ctb", "y.ctb\x85"], ["/local/z\u2028old"]
+        )
+        expect(failures).to_equal([])
+        expect(os.listdir("/mnt/usb_share")).to_equal(["foobar.ctb"])
+
+    def test_a_refused_deletion_cannot_add_lines_to_the_log(self) -> None:
         self.fs.create_file("/mnt/usb_share/x\nWARNING forged.ctb", contents=b"x")
         self.fs.create_dir("/mnt/usb_share/y\nWARNING forged")
-        with self.assertNoLogs("mariner.server.providers.sdcp.bridge", "WARNING"):
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED, silent=True
+        )
+        with self.assertLogs("mariner.server.providers.sdcp.bridge", "WARNING") as logs:
             failures = self.bridge.delete(
                 ["/local/x\nWARNING forged.ctb"], ["/local/y\nWARNING forged"]
             )
-        expect(failures).to_equal(
-            ["/local/x\nWARNING forged.ctb", "/local/y\nWARNING forged"]
-        )
-        expect(os.path.exists("/mnt/usb_share/x\nWARNING forged.ctb")).to_equal(True)
+        expect(len(failures)).to_equal(2)
+        expect(len(logs.records)).to_equal(2)
+        for record in logs.records:
+            expect("\n" in record.getMessage()).to_equal(False)
 
     def test_a_line_break_at_the_end_of_a_name_is_not_trimmed_away(self) -> None:
         # The other interfaces refuse such a name; so does this one.
@@ -582,6 +598,7 @@ class SDCPBridgeTest(TestCase):
             expect(self.bridge.start_print(name)).to_equal(
                 int(constants.PrintCtrlAck.NOT_FOUND)
             )
+            # Nothing answers to the untrimmed name.
             expect(self.bridge.delete([name], [])).to_equal([name])
             expect(self.bridge.list_files(name)).to_equal([])
         expect(self.bridge.delete([], ["/local/sub\r\n"])).to_equal(["/local/sub\r\n"])

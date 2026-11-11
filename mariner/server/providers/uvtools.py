@@ -151,7 +151,7 @@ class UVToolsProvider(NetworkPrintProvider):
         Handled here so that it is not left to be logged as an unhandled
         error, with the request path, client text, as it came.
         """
-        logger.warning("UVTools: printer command failed: %s", error)
+        logger.warning("UVTools: printer command failed: %r", error)
         return jsonify({"success": False}), 500
 
     def _upload_file(self, filename: str) -> Union[str, Response]:

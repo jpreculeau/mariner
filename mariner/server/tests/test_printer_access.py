@@ -10,6 +10,7 @@ from pyfakefs.fake_filesystem_unittest import TestCase
 
 from mariner.config import _get_config
 from mariner.exceptions import (
+    CommandNotSent,
     FileNotSelected,
     PrintAlreadyRunning,
     PrintJustStarted,
@@ -464,6 +465,17 @@ class PrinterAccessTest(TestCase):
         self._printer_still_says_idle()
         self.printer_mock.start_printing.side_effect = ValueError("unsafe name")
         with self.assertRaises(ValueError):
+            printer_access.start_print("model.ctb")
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.FREE
+        )
+
+    def test_a_print_command_that_was_never_written_is_not_remembered(self) -> None:
+        # The file was selected, then the line failed before the print
+        # command went out: no print can be starting.
+        self._printer_still_says_idle()
+        self.printer_mock.start_printing.side_effect = CommandNotSent("")
+        with self.assertRaises(CommandNotSent):
             printer_access.start_print("model.ctb")
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
             printer_access.Usage.FREE

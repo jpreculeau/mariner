@@ -42,6 +42,7 @@ from typing import Iterator, Optional, Tuple, Type
 import serial
 
 from mariner.exceptions import (
+    CommandNotSent,
     FileNotSelected,
     PrintAlreadyRunning,
     PrintJustStarted,
@@ -190,9 +191,10 @@ def start_print(name: str) -> str:
     starting, and wrongly protecting a file for a moment is harmless.
 
     Nothing is remembered when the print cannot have started: the name was
-    refused outright (``ValueError``), or the printer did not select the
-    file (``FileNotSelected``), which comes before the print command and
-    includes a printer that is switched off.
+    refused outright (``ValueError``), the printer did not select the file
+    (``FileNotSelected``), which comes before the print command and
+    includes a printer that is switched off, or the line failed before the
+    print command was written (``CommandNotSent``).
 
     Raises ``PrintAlreadyRunning``, sending no print command, if the
     printer reports a print under way, and ``PrintJustStarted`` if Mariner
@@ -215,15 +217,16 @@ def start_print(name: str) -> str:
         if _file_just_started() is not None:
             raise PrintJustStarted()
         with printer_session() as printer:
-            print_command_sent = True
             try:
                 printer.start_printing(relative_path)
-            except (ValueError, FileNotSelected):
-                print_command_sent = False
+            except (ValueError, FileNotSelected, CommandNotSent):
+                # The print command never reached the printer.
                 raise
-            finally:
-                if print_command_sent:
-                    _remember_started(relative_path)
+            except BaseException:
+                # It may have: only its answer is known to be missing.
+                _remember_started(relative_path)
+                raise
+            _remember_started(relative_path)
     return relative_path
 
 

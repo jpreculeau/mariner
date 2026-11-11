@@ -94,9 +94,10 @@ removed. Names it cannot use safely are refused instead of being rewritten:
 Rename the file and upload it again. The same rules apply to folder names and
 to files sent from a slicer.
 
-A file stored before these rules existed, under a name they no longer allow,
-can still be deleted from the web interface. A slicer can only name it if the
-name has no control character.
+A file stored before these rules existed, or put on the drive by other
+means, under a name they do not allow, can still be deleted from the web
+interface, from UVtools and from a slicer. It cannot be printed under that
+name.
 
 An upload is also refused with error 400 when the file is not in a format
 Mariner can print, when a folder already has that name, or when the name is

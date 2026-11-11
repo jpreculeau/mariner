@@ -167,6 +167,31 @@ describe("Files", () => {
       expect(api.listFiles).toHaveBeenCalledTimes(1);
     });
 
+    it("takes no other upload while the confirmed one is under way", async () => {
+      // The slowest path of all: the printer is asked again, then the
+      // file is sent again.
+      let finish: () => void = () => {};
+      vi.spyOn(api, "uploadFile")
+        .mockRejectedValueOnce(refusal)
+        .mockReturnValueOnce(
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+        );
+      const input = renderFiles();
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+      const button = screen.getByRole("button", { name: "Upload" });
+
+      pick(input, new File(["x"], "model.ctb"));
+      fireEvent.click(await screen.findByText("Replace anyway"));
+      await waitFor(() => expect(button).toHaveProperty("disabled", true));
+      pick(input, new File(["x"], "other.ctb"));
+      finish();
+
+      await waitFor(() => expect(button).toHaveProperty("disabled", false));
+      expect(api.uploadFile).toHaveBeenCalledTimes(2);
+    });
+
     it("does not ask twice about the same upload", async () => {
       // The printer is still silent when the confirmed upload is moved
       // into place, and the server says so again.

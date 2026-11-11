@@ -13,7 +13,11 @@ from typing import Match, Optional, Type
 import serial
 
 from mariner import config
-from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
+from mariner.exceptions import (
+    CommandNotSent,
+    FileNotSelected,
+    UnexpectedPrinterResponse,
+)
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -120,6 +124,12 @@ class ChiTuPrinter:
             # Unplugged, as opposed to busy, forbidden or out of reach for
             # a reason that says nothing about the printer.
             self._device_is_missing = exception.errno in _NO_SUCH_DEVICE
+        except _LINE_FAILURES:
+            # The device was found and then failed while being set up,
+            # which the serial library lets through as it is. That says
+            # nothing about the printer either.
+            self._is_connected = False
+            self._device_is_missing = False
 
     def close(self) -> None:
         if self._is_connected:
@@ -325,10 +335,26 @@ class ChiTuPrinter:
         self._send((f"M6040 I{delay_in_ms}").encode())
 
     def _send_and_read(self, data: bytes, timeout_secs: Optional[float] = None) -> str:
+        """Send *data* as one command line and give the first line of the answer.
+
+        Raises CommandNotSent if the line failed before the command was
+        written, and UnexpectedPrinterResponse if it failed from then on:
+        the printer may then have received the command.
+        """
         try:
             self._serial_port.reset_input_buffer()
             self._serial_port.reset_output_buffer()
+        except _LINE_FAILURES as exception:
+            logger.warning(
+                "Serial exception before sending %r; "
+                "treating printer as disconnected. error=%s",
+                data,
+                exception,
+            )
+            self._is_connected = False
+            raise CommandNotSent("") from exception
 
+        try:
             self._send(data + b"\r\n")
 
             original_timeout = self._serial_port.timeout
@@ -373,6 +399,9 @@ class ChiTuPrinter:
     ) -> str:
         if self._serial_port.in_waiting:
             # About to be discarded: the late answer to an earlier question.
+            # (Bytes arriving in the instant between this look and the
+            # discard below are missed. Nothing short of reading them one
+            # by one would close that.)
             self._heard = True
         self._serial_port.reset_input_buffer()
         self._serial_port.reset_output_buffer()

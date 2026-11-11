@@ -31,6 +31,15 @@ class FileNotSelected(UnexpectedPrinterResponse):
     """
 
 
+class CommandNotSent(UnexpectedPrinterResponse):
+    """The line failed before any of a command was written to it.
+
+    Raised instead of the plain UnexpectedPrinterResponse so that callers
+    can tell a command the printer cannot have received from one whose
+    answer was lost.
+    """
+
+
 class PrintAlreadyRunning(MarinerException):
     """A print was asked for while the printer reports one under way."""
 

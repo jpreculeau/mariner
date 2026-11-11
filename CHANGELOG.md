@@ -21,13 +21,13 @@
 - Let a web API client override that refusal when the user confirms the printer is switched off
 - Ask in the web interface before deleting or replacing a file while the printer does not answer
 - Tell a printer that answers unclearly from one that does not answer, and allow the override for the latter only
-- Do not protect a file whose print the printer refused to start
+- Do not protect a file whose print cannot have started: the printer did not select it, or the print command could not be written
 - Refuse to delete a folder over SDCP while a file is being uploaded into it
 - Recognise the names reserved for transfers in progress whatever their case
 - Keep line breaks in client-supplied names out of the logs
 - Answer 404 when a file or folder disappears during a deletion or an upload
 - Refuse to start a print while the printer reports one under way
-- Treat a terminal failure on the serial line like any other line failure, in every printer command
+- Treat a terminal failure on the serial line like any other line failure, in every printer command and while the port is being opened
 - Refuse, over SDCP too, a name with a line break at either end instead of trimming it
 - Trim an uploaded file's name before looking at its extension, as UVtools and SDCP do
 - Follow only symbolic links when listing a folder, so that large folders list quickly
@@ -47,7 +47,7 @@
 - Explain apart a file whose print was only just started (`print_just_started`)
 - Allow the "printer is off" override only when the printer was asked and stayed silent, not when the serial port could not be used or failed
 - Withdraw the "delete anyway" question when another file is shown, and ignore an answer that comes back for a file no longer on screen
-- Take one upload at a time in the web interface
+- Take one upload at a time in the web interface, a confirmed one included
 - Refuse an SDCP chunk from the middle of a transfer that is not under way, and let a client end its own transfer only
 - Drop unfinished SDCP transfers with no client connected
 - Keep an SDCP listing whole when it holds a link whose target is gone

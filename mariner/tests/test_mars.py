@@ -8,7 +8,11 @@ from unittest.mock import MagicMock, Mock, call, patch
 import serial
 from pyexpect import expect
 
-from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
+from mariner.exceptions import (
+    CommandNotSent,
+    FileNotSelected,
+    UnexpectedPrinterResponse,
+)
 from mariner.printer import (
     ChiTuPrinter,
     PrinterState,
@@ -390,6 +394,52 @@ class ChiTuPrinterTest(TestCase):
         with self.assertRaises(FileNotSelected):
             self.printer.start_printing("model.ctb")
         self.serial_port_mock.write.assert_not_called()
+
+    def test_a_port_that_fails_while_being_opened_is_not_opened(self) -> None:
+        # The serial library lets these through as they are when the
+        # device fails half-way through being opened.
+        for failure in (
+            termios.error(5, "Input/output error"),
+            OSError(errno.EIO, "Input/output error"),
+        ):
+            self.serial_port_mock.open.side_effect = failure
+            self.printer.open()
+            status = self.printer.get_print_status()
+            expect(status.state).to_equal(PrinterState.CLOSED)
+            expect(status.silent).to_equal(False)
+
+    def test_a_command_that_could_not_be_written_says_so(self) -> None:
+        # The line failed before a single byte of the command went out.
+        self.printer.open()
+        self.serial_port_mock.reset_input_buffer.side_effect = termios.error(
+            5, "Input/output error"
+        )
+        with self.assertRaises(CommandNotSent):
+            self.printer.pause_printing()
+        self.serial_port_mock.write.assert_not_called()
+
+    def test_a_command_whose_answer_was_lost_may_have_been_sent(self) -> None:
+        for failure in (
+            serial.SerialException("lost"),
+            termios.error(5, "Input/output error"),
+        ):
+            self.printer.open()
+            self.serial_port_mock.readline.side_effect = failure
+            with self.assertRaises(UnexpectedPrinterResponse) as raised:
+                self.printer.pause_printing()
+            expect(isinstance(raised.exception, CommandNotSent)).to_equal(False)
+
+    def test_a_print_command_that_could_not_be_written_says_so(self) -> None:
+        # The file was selected; the line then failed before M6030.
+        self.serial_port_mock.readline.return_value = b"File selected\r\n"
+        self.serial_port_mock.reset_input_buffer.side_effect = [
+            None,
+            termios.error(5, "Input/output error"),
+        ]
+        self.printer.open()
+        with self.assertRaises(CommandNotSent):
+            self.printer.start_printing("model.ctb")
+        self.serial_port_mock.write.assert_called_once_with(b"M23 /model.ctb\r\n")
 
     def test_a_printer_never_opened_is_not_known_to_be_silent(self) -> None:
         expect(self.printer.get_print_status().silent).to_equal(False)

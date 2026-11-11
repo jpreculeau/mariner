@@ -93,11 +93,11 @@ def strip_storage_prefix(path: str) -> str:
     Mariner has a single files directory, so both roots resolve to it.
     """
     value = path or ""
-    if has_control_character(value):
-        # Left as it is, for every caller to refuse. Trimming would quietly
-        # drop a line break at either end.
-        return value
-    value = value.strip()
+    if not has_control_character(value):
+        # Only then: trimming would quietly drop a line break at either
+        # end, and turn a name that must be refused for printing into
+        # another one that is not.
+        value = value.strip()
     for prefix in (constants.LOCAL_PREFIX, constants.USB_PREFIX):
         if value.startswith(prefix):
             return value.removeprefix(prefix)
@@ -392,10 +392,10 @@ class PrinterBridge:
             logger.warning("SDCP: start print refused: a print is running")
             return int(constants.PrintCtrlAck.BUSY)
         except _TRANSIENT_ERRORS as exc:
-            logger.warning("SDCP: start print failed: %s", exc)
+            logger.warning("SDCP: start print failed: %r", exc)
             return int(constants.PrintCtrlAck.FILEIO_FAILED)
         except OSError as exc:
-            logger.warning("SDCP: start print failed: %s", exc)
+            logger.warning("SDCP: start print failed: %r", exc)
             return int(constants.PrintCtrlAck.BUSY)
         return int(constants.PrintCtrlAck.OK)
 
@@ -405,7 +405,7 @@ class PrinterBridge:
         try:
             command()
         except _TRANSIENT_ERRORS + (OSError,) as exc:
-            logger.warning("SDCP: %s failed: %s", action, exc)
+            logger.warning("SDCP: %s failed: %r", action, exc)
             return int(constants.PrintCtrlAck.BUSY)
         return int(constants.PrintCtrlAck.OK)
 
