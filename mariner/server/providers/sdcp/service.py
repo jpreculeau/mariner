@@ -64,6 +64,9 @@ class SDCPService:
         self._bridge = PrinterBridge()
         self._uploads = UploadManager()
         self._clients: Set[web.WebSocketResponse] = set()
+        # The address each connected client speaks from, which is what its
+        # file transfers are known by.
+        self._addresses: Dict[web.WebSocketResponse, str] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._last_status: Optional[Dict[str, Any]] = None
@@ -177,6 +180,7 @@ class SDCPService:
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self._clients.add(ws)
+        self._addresses[ws] = request.remote or ""
         logger.info("SDCP: client connected from %s", request.remote)
 
         try:
@@ -209,6 +213,7 @@ class SDCPService:
             logger.exception("SDCP: websocket handler failed")
         finally:
             self._clients.discard(ws)
+            self._addresses.pop(ws, None)
             logger.info("SDCP: client disconnected from %s", request.remote)
         return ws
 
@@ -249,7 +254,7 @@ class SDCPService:
         data: Dict[str, Any],
         request_id: Optional[str],
     ) -> None:
-        logger.debug("SDCP: cmd %s data=%s", cmd, data)
+        logger.debug("SDCP: cmd %r data=%r", cmd, data)
 
         if cmd == constants.Cmd.REFRESH_STATUS:
             await self._reply(ws, cmd, {"Ack": 0}, request_id)
@@ -311,9 +316,8 @@ class SDCPService:
 
         if cmd == constants.Cmd.TERMINATE_TRANSFER:
             upload_uuid = str(data.get("Uuid", ""))
-            filename = str(data.get("FileName", ""))
             ack = await self._in_executor(
-                self._uploads.terminate, upload_uuid, filename
+                self._uploads.terminate, upload_uuid, self._addresses.get(ws, "")
             )
             await self._reply(ws, cmd, {"Ack": ack}, request_id)
             return
@@ -455,6 +459,9 @@ class SDCPService:
         interval = config.get_sdcp_poll_interval_secs()
         while True:
             await asyncio.sleep(interval)
+            # Done whether or not anyone is connected: the transfer of a
+            # slicer that was closed half-way has no one left to end it.
+            await self._in_executor(self._uploads.drop_idle_transfers)
             # Polling hits the serial port, which the web UI also uses, so
             # only do it while somebody is actually listening.
             if not self._clients:

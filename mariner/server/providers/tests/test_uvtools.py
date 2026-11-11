@@ -10,6 +10,7 @@ from pyexpect import expect
 
 from mariner import config
 from mariner.config import _get_config
+from mariner.exceptions import UnexpectedPrinterResponse
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
 from mariner.server import printer_access
 from mariner.server.app import app
@@ -154,7 +155,7 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(400)
         self.printer_mock.start_printing.assert_not_called()
 
-    def test_upload_replaces_an_existing_file_in_one_step(self) -> None:
+    def test_upload_replaces_an_existing_file(self) -> None:
         response = self.client.post(
             "/uvtools/upload/foobar.ctb",
             data=b"new contents",
@@ -294,11 +295,30 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(409)
         self.printer_mock.start_printing.assert_not_called()
 
-    def test_a_file_can_be_deleted_once_its_print_is_stopped(self) -> None:
+    def test_a_stopped_print_still_protects_its_file_for_a_moment(self) -> None:
         self.client.get("/uvtools/print/foobar.ctb")
+        expect(self.client.get("/uvtools/stop").status_code).to_equal(200)
         expect(self.client.get("/uvtools/delete/foobar.ctb").status_code).to_equal(409)
-        self.client.get("/uvtools/stop")
-        expect(self.client.get("/uvtools/delete/foobar.ctb").status_code).to_equal(200)
+
+    def test_a_command_the_printer_turns_down_cannot_add_lines_to_the_log(
+        self,
+    ) -> None:
+        # These routes take a file name they do not use. An error must not
+        # put it in the log as it came.
+        self.printer_mock.pause_printing.side_effect = UnexpectedPrinterResponse("")
+        self.printer_mock.resume_printing.side_effect = UnexpectedPrinterResponse("")
+        self.printer_mock.stop_printing.side_effect = UnexpectedPrinterResponse("")
+        with self.assertLogs(level="WARNING") as logs:
+            for command in ("pause", "resume", "stop"):
+                response = self.client.get(
+                    f"/uvtools/{command}/x%0AWARNING:mariner:FORGED%20LINE"
+                )
+                expect(response.status_code).to_equal(500)
+                expect(response.get_json()).to_equal({"success": False})
+        expect(len(logs.records)).to_equal(3)
+        for record in logs.records:
+            expect(record.name).to_equal("mariner.server.providers.uvtools")
+            expect("FORGED" in record.getMessage()).to_equal(False)
 
     def test_upload_onto_a_link_replaces_the_link_and_not_its_target(self) -> None:
         self.fs.create_file("/mnt/usb_share/sub/notes.txt", contents=b"notes")
@@ -320,7 +340,7 @@ class UVToolsProviderTest(TestCase):
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         response = self.client.get("/uvtools/delete/foobar.ctb")
         expect(response.status_code).to_equal(409)

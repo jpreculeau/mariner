@@ -29,13 +29,13 @@ PrinterInfo    GET     uvtools/info
 
 import logging
 import os
-from typing import Union
+from typing import Tuple, Union
 
 from flask import Blueprint, Response, abort, jsonify, request
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.exceptions import PrintAlreadyRunning
+from mariner.exceptions import MarinerException, PrintAlreadyRunning
 from mariner.printer import PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
 from mariner.server.files import (
@@ -52,7 +52,6 @@ from mariner.server.printer_access import (
     printer_session,
     read_status,
     start_print,
-    stop_print,
     unless_in_use,
 )
 from mariner.server.utils import read_cached_sliced_model_file
@@ -66,6 +65,7 @@ class UVToolsProvider(NetworkPrintProvider):
         return "uvtools"
 
     def register_routes(self, blueprint: Blueprint) -> None:
+        blueprint.register_error_handler(MarinerException, self._printer_error)
         blueprint.add_url_rule(
             "/upload/<filename>",
             endpoint="upload_file",
@@ -142,6 +142,16 @@ class UVToolsProvider(NetworkPrintProvider):
     # ------------------------------------------------------------------
     # Handlers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _printer_error(error: MarinerException) -> Tuple[Response, int]:
+        """Answer 500 when the printer turns a command down or does not answer.
+
+        Handled here so that Flask does not log it as an unhandled error,
+        which would put the request path, client text, into the log as is.
+        """
+        logger.warning("UVTools: printer command failed: %s", error)
+        return jsonify({"success": False}), 500
 
     def _upload_file(self, filename: str) -> Union[str, Response]:
         """Accept a raw-binary file upload.
@@ -248,7 +258,8 @@ class UVToolsProvider(NetworkPrintProvider):
         return jsonify({"success": True})
 
     def _stop_print(self, filename: str = "") -> Union[str, Response]:
-        stop_print()
+        with printer_session() as printer:
+            printer.stop_printing()
         logger.info("UVTools stop")
         return jsonify({"success": True})
 

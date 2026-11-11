@@ -24,14 +24,21 @@
 - Keep line breaks in client-supplied names out of the logs
 - Answer 404 when a file or folder disappears during a deletion or an upload
 - Refuse to start a print while the printer reports one under way
-- Free a file as soon as its print is cancelled
+- Refuse to start a second print until the printer reports the first
+- Explain apart a file whose print was only just started (`print_just_started`)
+- Allow the "printer is off" override only when the printer was asked and stayed silent, not when the serial port could not be used or failed
+- Confirm "delete anyway" for the file the question was about, even if another file is shown by then
+- Refuse an SDCP chunk from the middle of a transfer that is not under way, and let a client end its own transfer only
+- Drop unfinished SDCP transfers with no client connected
+- Keep an SDCP listing whole when it holds a link whose target is gone
+- Answer a UVtools command the printer turned down without logging the request path
 - Keep SDCP transfers apart by client address as well as id, and refuse a chunk that names another file or size
 - Abandon an SDCP transfer that has received nothing for five minutes
 - Refuse a declared MD5 that is not one
 - Leave no empty transfer folder behind after a refused or failed SDCP transfer
 - Replace a symbolic link itself, not its target, when a file is uploaded onto it from UVtools or SDCP
 - Do not read or show what a symbolic link leads to outside the files directory or in a transfer in progress
-- Refuse a deletion name containing a NUL byte or invalid Unicode while a transfer is in progress
+- Refuse a deletion name containing a NUL byte or invalid Unicode instead of failing
 - Refuse file names containing C1 control characters or Unicode line separators
 - Refuse file names the printer's FAT filesystem cannot store
 - Give each upload its own temporary file and remove leftovers at startup

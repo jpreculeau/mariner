@@ -50,7 +50,6 @@ from mariner.server.printer_access import (
     printer_session,
     read_status,
     start_print,
-    stop_print,
     unless_in_use,
 )
 from mariner.server.utils import read_cached_preview, read_cached_sliced_model_file
@@ -188,6 +187,13 @@ _IN_USE_ANSWERS: Dict[Usage, Tuple[str, str, str]] = {
         "{name} is in use by the print in progress. Wait for the print to "
         "finish or cancel it first",
     ),
+    Usage.JUST_STARTED: (
+        "print_just_started",
+        "Print Just Started",
+        "{name} is in use by a print that was started a moment ago. It stays "
+        "protected for half a minute, even if that print was cancelled. Try "
+        "again then",
+    ),
     Usage.UNIDENTIFIED_PRINT: (
         "print_file_unknown",
         "Print In Progress",
@@ -198,8 +204,9 @@ _IN_USE_ANSWERS: Dict[Usage, Tuple[str, str, str]] = {
     Usage.PRINTER_UNCLEAR: (
         "printer_answer_unclear",
         "Printer Answer Unclear",
-        "The printer answered, but not clearly enough to tell whether {name} "
-        "is being printed, so it was left untouched. Try again in a moment",
+        "Mariner could not get a clear answer from the printer, so there is "
+        "no telling whether {name} is being printed, and it was left "
+        "untouched. Try again in a moment",
     ),
     Usage.PRINTER_UNREACHABLE: (
         "printer_not_answering",
@@ -219,7 +226,7 @@ def _abort_file_in_use(error: FileInUse, *, replacing_it: bool) -> NoReturn:
 
     ``can_be_overridden`` tells the client whether repeating the request
     with ``ignore_unreachable_printer=1`` can go through, which is only the
-    case when nothing at all came back from the printer.
+    case when the printer is positively silent.
     """
     code, title, sentence = _IN_USE_ANSWERS[error.usage]
     description = sentence.format(name=error.path.name)
@@ -240,8 +247,28 @@ def _guard_for_this_request() -> Callable[[Path], ContextManager[None]]:
     the printer does not answer and confirmed that it is switched off. The
     file is still refused if the printer does answer and is printing it.
     """
-    even_if_unreachable = request.args.get("ignore_unreachable_printer") == "1"
-    return partial(unless_in_use, even_if_unreachable=even_if_unreachable)
+    return partial(unless_in_use, even_if_unreachable=_printer_declared_off())
+
+
+def _printer_declared_off() -> bool:
+    return request.args.get("ignore_unreachable_printer") == "1"
+
+
+def _refuse_early_if_in_use(destination: Path) -> None:
+    """Raise FileInUse before anything is written, when that is already known.
+
+    A refusal then costs nothing. A silent printer the user vouched for is
+    let through without being asked again here: giving up on it takes
+    seconds, and the guard asks it at the moment the file is moved into
+    place, which is the answer that counts.
+    """
+    try:
+        with unless_in_use(destination):
+            pass
+    except FileInUse as error:
+        if error.usage is Usage.PRINTER_UNREACHABLE and _printer_declared_off():
+            return
+        raise
 
 
 @api.route("/print_status", methods=["GET"])
@@ -361,6 +388,8 @@ def list_files() -> Union[str, Response]:
                 sliced_model_file: Optional[SlicedModelFile] = None
                 # A link leading out of the files directory is listed, so
                 # that it can be removed, but what it leads to is not read.
+                # (A link to a transfer in progress is listed too, although
+                # no route will touch it.)
                 if get_file_extension(
                     dir_entry.name
                 ) in get_supported_extensions() and stays_in_files_directory(
@@ -450,22 +479,22 @@ def upload_file() -> Union[str, Response]:
     if filename is None:
         abort(400)
 
-    parent = _resolve_or_400(request.args.get("path", "."))
-    if not os.path.isdir(parent):
+    folder = request.args.get("path", ".")
+    if not os.path.isdir(_resolve_or_400(folder)):
         abort(400)
 
-    destination = parent / filename
+    # The entry of that name in the folder, whatever it is at present.
+    destination = resolve_entry_in_files_directory(os.path.join(folder, filename))
+    if destination is None:
+        abort(400)
     if os.path.isdir(destination):
         # A folder already has that name; a file cannot take its place.
         abort(400)
-    guard = _guard_for_this_request()
     try:
-        # Checked first so that a refusal costs nothing: nothing is written.
         # Checked again by the guard at the moment the file is moved into
         # place, in case a print started while it was being written to disk.
-        with guard(destination):
-            pass
-        with replacing(destination, guard=guard) as scratch:
+        _refuse_early_if_in_use(destination)
+        with replacing(destination, guard=_guard_for_this_request()) as scratch:
             file.save(str(scratch))
     except FileInUse as error:
         _abort_file_in_use(error, replacing_it=True)
@@ -572,15 +601,13 @@ def printer_command(command: str) -> Union[str, Response]:
             abort(make_response(jsonify(body), 409))
         return jsonify({"success": True})
 
-    if printer_command == PrinterCommand.CANCEL_PRINT:
-        stop_print()
-        return jsonify({"success": True})
-
     with printer_session() as printer:
         if printer_command == PrinterCommand.PAUSE_PRINT:
             printer.pause_printing()
         elif printer_command == PrinterCommand.RESUME_PRINT:
             printer.resume_printing()
+        elif printer_command == PrinterCommand.CANCEL_PRINT:
+            printer.stop_printing()
         elif printer_command == PrinterCommand.REBOOT:
             printer.reboot()
         return jsonify({"success": True})

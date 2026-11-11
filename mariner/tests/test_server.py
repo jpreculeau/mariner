@@ -392,6 +392,8 @@ class MarinerServerTest(TestCase):
             ("sub//part.ctb", "sub/part.ctb"),
         ):
             self.printer_mock.start_printing.reset_mock()
+            # Each one as the first print of the day.
+            printer_access.forget_status()
             response = self.client.post(
                 f"/api/printer/command/start_print?filename={given}"
             )
@@ -478,15 +480,41 @@ class MarinerServerTest(TestCase):
         )
         self.printer_mock.start_printing.assert_not_called()
 
-    def test_a_file_can_be_deleted_once_its_print_is_cancelled(self) -> None:
+    def test_a_cancelled_print_still_protects_its_file_for_a_moment(self) -> None:
         # Started and cancelled at once, before the printer reported it.
+        # Nothing the printer says then tells a print that was stopped from
+        # one that is about to begin.
         self.client.post("/api/printer/command/start_print?filename=foobar.ctb")
-        refused = self.client.post("/api/delete_file?filename=foobar.ctb")
-        expect(refused.status_code).to_equal(409)
+        cancelled = self.client.post("/api/printer/command/cancel_print")
+        expect(cancelled.status_code).to_equal(200)
 
-        self.client.post("/api/printer/command/cancel_print")
         response = self.client.post("/api/delete_file?filename=foobar.ctb")
-        expect(response.status_code).to_equal(200)
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("print_just_started")
+
+    def test_a_just_started_print_cannot_be_overridden(self) -> None:
+        self.client.post("/api/printer/command/start_print?filename=foobar.ctb")
+        # The printer goes quiet right after. Set directly: the helper
+        # would also forget the print that was just started.
+        printer_access._forget_last_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED, silent=True
+        )
+        response = self.client.post(
+            "/api/delete_file?filename=foobar.ctb&ignore_unreachable_printer=1"
+        )
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("print_just_started")
+
+    def test_a_second_print_is_refused_until_the_first_is_reported(self) -> None:
+        self.fs.create_file("/mnt/usb_share/other.ctb", contents=self.ctb_file_contents)
+        self.client.post("/api/printer/command/start_print?filename=foobar.ctb")
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=other.ctb"
+        )
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("print_in_progress")
+        self.printer_mock.start_printing.assert_called_once_with("foobar.ctb")
 
     def test_command_cancel_print(self) -> None:
         response = self.client.post("/api/printer/command/cancel_print")
@@ -621,7 +649,7 @@ class MarinerServerTest(TestCase):
             expect(response.status_code).to_equal(400)
         expect(os.path.exists("/etc/passwd.ctb")).to_equal(False)
 
-    def test_upload_file_replaces_an_existing_file_in_one_step(self) -> None:
+    def test_upload_file_replaces_an_existing_file(self) -> None:
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(200)
@@ -715,7 +743,7 @@ class MarinerServerTest(TestCase):
     def _printer_is_silent(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
 
     def test_upload_file_does_not_replace_a_file_when_the_printer_is_silent(
@@ -795,6 +823,56 @@ class MarinerServerTest(TestCase):
         expect(response.status_code).to_equal(200)
         expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(False)
 
+    def test_a_refusal_known_beforehand_writes_nothing(self) -> None:
+        # Without the user's word, a silent printer is reason enough.
+        self._printer_is_silent()
+        with patch.object(FileStorage, "save") as save:
+            data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+            response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(409)
+        save.assert_not_called()
+
+        # With it, anything but silence still is.
+        self._printer_is_printing("foobar.ctb")
+        with patch.object(FileStorage, "save") as save:
+            data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+            response = self.client.post(
+                "/api/upload_file?ignore_unreachable_printer=1", data=data
+            )
+        expect(response.status_code).to_equal(409)
+        save.assert_not_called()
+
+    def test_an_overriding_upload_asks_the_silent_printer_only_once(self) -> None:
+        # Giving up on a silent printer takes seconds each time. The first
+        # request is the one that was refused and led the user to confirm.
+        self._printer_is_silent()
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        expect(self.client.post("/api/upload_file", data=data).status_code).to_equal(
+            409
+        )
+        self.printer_mock.get_print_status.reset_mock()
+
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        response = self.client.post(
+            "/api/upload_file?ignore_unreachable_printer=1", data=data
+        )
+        expect(response.status_code).to_equal(200)
+        expect(self.printer_mock.get_print_status.call_count).to_equal(1)
+
+    def test_upload_file_cannot_reach_a_transfer_under_another_name(self) -> None:
+        # Stands for the short alias FAT gives the same entry.
+        self.fs.create_file(
+            "/mnt/usb_share/.upload-0123456789abcdef.part", contents=b"half"
+        )
+        self.fs.create_link(
+            "/mnt/usb_share/.upload-0123456789abcdef.part", "/mnt/usb_share/alias.ctb"
+        )
+        data = {"file": (io.BytesIO(b"new contents"), "alias.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(400)
+        with open("/mnt/usb_share/.upload-0123456789abcdef.part", "rb") as file:
+            expect(file.read()).to_equal(b"half")
+
     def test_an_upload_can_override_a_silent_printer_too(self) -> None:
         self._printer_is_silent()
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
@@ -854,7 +932,15 @@ class MarinerServerTest(TestCase):
 
         response = self.client.post("/api/delete_file?filename=foobar.ctb")
         expect(response.status_code).to_equal(409)
-        expect(response.get_json()["code"]).to_equal("file_in_use")
+        body = response.get_json()
+        expect(body["code"]).to_equal("print_just_started")
+        expect(body["title"]).to_equal("Print Just Started")
+        expect(body["description"]).to_equal(
+            "foobar.ctb is in use by a print that was started a moment ago. It "
+            "stays protected for half a minute, even if that print was "
+            "cancelled. Try again then."
+        )
+        expect(body["can_be_overridden"]).to_equal(False)
         expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
 
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
@@ -884,7 +970,7 @@ class MarinerServerTest(TestCase):
     def _printer_answers_only_ok(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE, answered=True
+            state=PrinterState.IDLE
         )
 
     def test_an_unclear_answer_from_the_printer_has_its_own_explanation(
@@ -897,11 +983,27 @@ class MarinerServerTest(TestCase):
         expect(body["code"]).to_equal("printer_answer_unclear")
         expect(body["title"]).to_equal("Printer Answer Unclear")
         expect(body["description"]).to_equal(
-            "The printer answered, but not clearly enough to tell whether "
-            "foobar.ctb is being printed, so it was left untouched. Try again "
-            "in a moment."
+            "Mariner could not get a clear answer from the printer, so there "
+            "is no telling whether foobar.ctb is being printed, and it was "
+            "left untouched. Try again in a moment."
         )
         expect(body["can_be_overridden"]).to_equal(False)
+
+    def test_a_serial_port_that_could_not_be_used_cannot_be_overridden(self) -> None:
+        # Mariner's own trouble (no permission, too many open files): the
+        # printer was never asked, so it cannot be taken to be off.
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        response = self.client.post(
+            "/api/delete_file?filename=foobar.ctb&ignore_unreachable_printer=1"
+        )
+        expect(response.status_code).to_equal(409)
+        body = response.get_json()
+        expect(body["code"]).to_equal("printer_answer_unclear")
+        expect(body["can_be_overridden"]).to_equal(False)
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
 
     def test_an_unclear_answer_from_the_printer_cannot_be_overridden(self) -> None:
         self._printer_answers_only_ok()
@@ -966,7 +1068,7 @@ class MarinerServerTest(TestCase):
         self,
     ) -> None:
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         with patch("mariner.server.api.reset_progress_tracking") as reset_mock:
             response = self.client.get("/api/print_status")

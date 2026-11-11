@@ -1,3 +1,4 @@
+import errno
 import logging
 import os
 import re
@@ -15,6 +16,9 @@ from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
 
 logger: logging.Logger = logging.getLogger(__name__)
 
+
+# What opening a serial device that is not there fails with.
+_NO_SUCH_DEVICE = frozenset({errno.ENOENT, errno.ENODEV, errno.ENXIO})
 
 # Control characters (C0, DEL and C1, which includes NEL), and the LINE and
 # PARAGRAPH SEPARATOR characters.
@@ -69,16 +73,20 @@ class PrintStatus:
     # field). An answer of nothing but "ok" also reads as IDLE, but says
     # nothing about a print; this tells the two apart.
     counters_seen: bool = False
-    # Whether anything at all came back from the printer. A printer that is
-    # switched off sends nothing; one that sent something, however unclear,
-    # is switched on.
-    answered: bool = False
+    # Whether the printer is positively known to have sent nothing: it was
+    # asked and not one byte came back, or its serial device is not there at
+    # all. That is what a printer that is switched off looks like. False
+    # whenever it is not known, such as when the port could not be opened
+    # for another reason or failed while it was being read.
+    silent: bool = False
 
 
 class ChiTuPrinter:
     _serial_port: serial.Serial
     # Track serial / printer connection status to allow disconnects
     _is_connected = False
+    # Whether the last attempt to open the port found no device there.
+    _device_is_missing = False
 
     def __init__(self) -> None:
         self._serial_port = serial.Serial(
@@ -97,8 +105,12 @@ class ChiTuPrinter:
             self._serial_port.port = config.get_printer_serial_port()
             self._serial_port.open()
             self._is_connected = True
-        except serial.SerialException:
+            self._device_is_missing = False
+        except serial.SerialException as exception:
             self._is_connected = False
+            # Unplugged, as opposed to busy, forbidden or out of reach for
+            # a reason that says nothing about the printer.
+            self._device_is_missing = exception.errno in _NO_SUCH_DEVICE
 
     def close(self) -> None:
         if self._is_connected:
@@ -134,7 +146,7 @@ class ChiTuPrinter:
             match = None
             data = ""
             # Whether any of the attempts brought something back.
-            answered = False
+            heard = False
             try:
                 for _ in range(3):
                     data = self._send_and_read_until_contains(
@@ -143,7 +155,7 @@ class ChiTuPrinter:
                         max_readline_attempts=30,
                         read_timeout_secs=3.0,
                     )
-                    answered = answered or bool(data)
+                    heard = heard or bool(data)
                     logger.debug("M4000 raw response: %r", data)
                     match = re.search("D:([0-9]+)/([0-9]+)/([0-9]+)", data)
                     if match is not None:
@@ -155,16 +167,17 @@ class ChiTuPrinter:
                     exception,
                 )
                 self._is_connected = False
-                return PrintStatus(state=PrinterState.CLOSED, answered=answered)
+                # The line failed: that is not the same as hearing nothing.
+                return PrintStatus(state=PrinterState.CLOSED)
             if match is None:
                 if "ok" in data:
-                    return PrintStatus(state=PrinterState.IDLE, answered=True)
+                    return PrintStatus(state=PrinterState.IDLE)
                 logger.warning(
                     "M4000 returned no parseable status payload; "
                     "treating printer as CLOSED. last_response=%r",
                     data,
                 )
-                return PrintStatus(state=PrinterState.CLOSED, answered=answered)
+                return PrintStatus(state=PrinterState.CLOSED, silent=not heard)
 
             current_byte = int(match.group(1))
             total_bytes = int(match.group(2))
@@ -181,9 +194,7 @@ class ChiTuPrinter:
             )
 
             if total_bytes == 0:
-                return PrintStatus(
-                    state=PrinterState.IDLE, counters_seen=True, answered=True
-                )
+                return PrintStatus(state=PrinterState.IDLE, counters_seen=True)
 
             if current_byte == 0:
                 state = PrinterState.STARTING_PRINT
@@ -196,6 +207,7 @@ class ChiTuPrinter:
                 state=PrinterState.CLOSED,
                 current_byte=current_byte,
                 total_bytes=total_bytes,
+                silent=self._device_is_missing,
             )
 
         return PrintStatus(
@@ -204,7 +216,6 @@ class ChiTuPrinter:
             total_bytes=total_bytes,
             z_pos_mm=z_pos_mm,
             counters_seen=True,
-            answered=True,
         )
 
     def get_z_pos(self) -> float:

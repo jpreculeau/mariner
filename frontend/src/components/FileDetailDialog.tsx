@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import {
@@ -28,8 +28,24 @@ export function FileDetailDialog({
 }: FileDetailDialogProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  // Why the server refused a deletion that the user may still confirm.
-  const [printerOffReason, setPrinterOffReason] = useState<string | null>(null);
+  // A deletion the server refused but that the user may still confirm. The
+  // path is kept with the reason: confirming must delete the file the
+  // question names, whatever the dialog shows by then.
+  const [refused, setRefused] = useState<{
+    path: string;
+    reason: string;
+  } | null>(null);
+
+  // The file on screen right now. An answer can come seconds after the
+  // request, when the user has closed the dialog or opened another file.
+  const shownPath = open && file ? file.path : null;
+  const shownPathNow = useRef(shownPath);
+  shownPathNow.current = shownPath;
+
+  useEffect(() => {
+    // A question about a file that is no longer shown is withdrawn.
+    setRefused(null);
+  }, [shownPath]);
 
   const { data: details } = useQuery({
     queryKey: ["fileDetails", file?.path],
@@ -45,18 +61,22 @@ export function FileDetailDialog({
     navigate("/");
   };
 
-  const deleteFile = async (ignoreUnreachablePrinter: boolean) => {
-    setPrinterOffReason(null);
+  const deleteFile = async (
+    path: string,
+    ignoreUnreachablePrinter: boolean,
+  ) => {
+    setRefused(null);
     try {
-      await api.deleteFile(file.path, { ignoreUnreachablePrinter });
+      await api.deleteFile(path, { ignoreUnreachablePrinter });
     } catch (err) {
       if (
         err instanceof ApiError &&
         err.canBeOverridden &&
-        !ignoreUnreachablePrinter
+        !ignoreUnreachablePrinter &&
+        shownPathNow.current === path
       ) {
         // The printer sent nothing back: the user decides.
-        setPrinterOffReason(err.message);
+        setRefused({ path, reason: err.message });
         return;
       }
       // The server says why, e.g. the file is being printed. The dialog
@@ -64,8 +84,10 @@ export function FileDetailDialog({
       toast.error(err instanceof Error ? err.message : "Could not delete file");
       return;
     }
-    onOpenChange(false);
     queryClient.invalidateQueries({ queryKey: ["files"] });
+    if (shownPathNow.current === path) {
+      onOpenChange(false);
+    }
   };
 
   return (
@@ -122,7 +144,7 @@ export function FileDetailDialog({
           <Button
             variant="ghost"
             className="gap-2 text-muted-foreground"
-            onClick={() => deleteFile(false)}
+            onClick={() => deleteFile(file.path, false)}
           >
             <Trash2 className="h-4 w-4" />
             Delete
@@ -136,10 +158,12 @@ export function FileDetailDialog({
         </DialogFooter>
       </DialogContent>
       <PrinterOffDialog
-        reason={printerOffReason}
+        reason={refused?.reason ?? null}
         confirmLabel="Delete anyway"
-        onConfirm={() => deleteFile(true)}
-        onCancel={() => setPrinterOffReason(null)}
+        onConfirm={() => {
+          if (refused) deleteFile(refused.path, true);
+        }}
+        onCancel={() => setRefused(null)}
       />
     </Dialog>
   );

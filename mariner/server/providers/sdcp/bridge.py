@@ -32,7 +32,6 @@ from mariner.server.printer_access import (
     printer_session,
     read_status,
     start_print,
-    stop_print,
     unless_in_use,
 )
 from mariner.server.providers.sdcp import constants, identity
@@ -417,13 +416,16 @@ class PrinterBridge:
         with printer_session() as printer:
             printer.resume_printing()
 
+    @staticmethod
+    def _stop() -> None:
+        with printer_session() as printer:
+            printer.stop_printing()
+
     def pause_print(self) -> int:
         return self._acknowledged("pause", self._pause)
 
     def stop_print(self) -> int:
-        # Through printer_access, which also stops assuming the print that
-        # was started a moment ago.
-        return self._acknowledged("stop", stop_print)
+        return self._acknowledged("stop", self._stop)
 
     def resume_print(self) -> int:
         return self._acknowledged("resume", self._resume)
@@ -470,10 +472,16 @@ class PrinterBridge:
                             }
                         )
                     elif get_file_extension(entry.name) in supported:
+                        try:
+                            size = entry.stat().st_size
+                        except OSError:
+                            # A link whose target is gone. It must not cut
+                            # the listing short.
+                            continue
                         entries.append(
                             {
                                 "name": display,
-                                "usedSize": entry.stat().st_size,
+                                "usedSize": size,
                                 "totalSize": total_size,
                                 "storageType": 0,
                                 "type": 1,

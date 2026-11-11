@@ -4,7 +4,7 @@ The web UI polls the printer every few seconds, the SDCP service does the
 same for its clients, and a slicer can send a command at any moment. They all
 share a single serial line on which a command is followed by its answer, so
 two conversations at once read each other's answers. Everything that talks to
-the printer goes through ``printer_session`` and therefore waits its turn.
+the printer goes through this module and therefore waits its turn.
 
 This module also answers the question every file operation has to ask before
 replacing or removing a file: is the printer reading it right now? See
@@ -36,7 +36,7 @@ import time
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Type
+from typing import Iterator, Optional, Tuple, Type
 
 import serial
 
@@ -87,11 +87,10 @@ _memory_lock = threading.Lock()
 # The last status read and when. Guarded by _memory_lock.
 _last_status: Optional[Tuple[float, PrintStatus, str]] = None
 
-# The files Mariner started printing and when, until the printer reports a
-# print itself. More than one, because a start the printer turned down is
-# remembered too and must not push out the one that is running. Guarded by
-# _memory_lock.
-_just_started: Dict[Path, float] = {}
+# The file Mariner last started printing and when, until the printer reports
+# a print itself or the grace period runs out. Only one: no other print is
+# started meanwhile (see ``start_print``). Guarded by _memory_lock.
+_just_started: Optional[Tuple[Path, float]] = None
 
 
 class Usage(Enum):
@@ -101,11 +100,18 @@ class Usage(Enum):
     FREE = "free"
     # The printer is reading it, or something inside it.
     PRINTING = "printing"
+    # Mariner sent the command to print it a moment ago, and the printer
+    # has yet to report that print. Cancelling does not lift this: nothing
+    # the printer says in that moment tells a print that was stopped from
+    # one that is about to begin.
+    JUST_STARTED = "print just started"
     # A print is running, but which file it reads could not be established.
     UNIDENTIFIED_PRINT = "unidentified print"
-    # The printer answered, but not clearly enough to tell.
+    # No clear word from the printer: it answered something that settles
+    # nothing, or the serial port could not be used.
     PRINTER_UNCLEAR = "printer answer unclear"
-    # Nothing came back from the printer at all: it is off, or unplugged.
+    # The printer was asked and nothing at all came back, or its serial
+    # device is not there: it is off, or unplugged.
     PRINTER_UNREACHABLE = "printer unreachable"
 
 
@@ -129,10 +135,10 @@ def forget_status() -> None:
     The next check then asks the printer, and a print started a moment ago
     is no longer assumed. Used by tests to start from a clean slate.
     """
-    global _last_status
+    global _last_status, _just_started
     with _memory_lock:
         _last_status = None
-        _just_started.clear()
+        _just_started = None
 
 
 def _forget_last_status() -> None:
@@ -181,14 +187,21 @@ def start_print(relative_path: str) -> None:
     includes a printer that is switched off.
 
     Raises ``PrintAlreadyRunning``, sending nothing, if the printer reports
-    a print under way: it might select the new file while still reading the
-    old one, and the file it then names would no longer be the one to
-    protect. Otherwise raises whatever ``ChiTuPrinter.start_printing``
-    raises.
+    a print under way, or if Mariner started one a moment ago that the
+    printer has yet to report: the printer might select the new file while
+    still reading the old one, and the file it then names would no longer
+    be the one to protect.
+
+    A printer whose answer settles nothing is still sent the command, and
+    turns it down itself if it cannot print. Refusing on anything short of
+    a clear "idle" would be safer still, but would leave a board that
+    answers tersely unable to print at all.
+
+    Otherwise raises whatever ``ChiTuPrinter.start_printing`` raises.
     """
     with _change_lock:
         status, _ = read_status()
-        if status.state in _ACTIVE_STATES:
+        if status.state in _ACTIVE_STATES or _file_just_started() is not None:
             raise PrintAlreadyRunning()
         with printer_session() as printer:
             print_command_sent = True
@@ -203,27 +216,11 @@ def start_print(relative_path: str) -> None:
 
 
 def _remember_started(relative_path: str) -> None:
+    global _just_started
     started = resolve_in_files_directory(relative_path)
     if started is not None:
         with _memory_lock:
-            _just_started[started] = time.monotonic()
-
-
-def stop_print() -> None:
-    """Cancel the print in progress.
-
-    Once the printer has accepted that, a print Mariner started a moment
-    ago is no longer assumed, so its file is free again without waiting
-    for the grace period to run out.
-
-    Raises whatever ``ChiTuPrinter.stop_printing`` raises; nothing is
-    forgotten in that case.
-    """
-    with _change_lock:
-        with printer_session() as printer:
-            printer.stop_printing()
-        with _memory_lock:
-            _just_started.clear()
+            _just_started = (started, time.monotonic())
 
 
 def _query_printer() -> Tuple[PrintStatus, str]:
@@ -251,7 +248,7 @@ def read_status() -> Tuple[PrintStatus, str]:
     is kept and the file is reported as ``""``: knowing that a print is
     running matters even when its file is unknown.
     """
-    global _last_status
+    global _last_status, _just_started
     # Held until the answer is stored, not only while asking: otherwise an
     # answer read just before a print is started could be stored just
     # after, and be taken for the printer's word on that print.
@@ -266,7 +263,7 @@ def read_status() -> Tuple[PrintStatus, str]:
                 # The printer now reports a print itself, and names its
                 # file. What Mariner assumed since it started one is no
                 # longer needed, whoever asked.
-                _just_started.clear()
+                _just_started = None
         return (status, selected_file)
 
 
@@ -300,18 +297,21 @@ def _recent_status() -> Tuple[PrintStatus, str]:
         return _remembered_status() or read_status()
 
 
-def _files_just_started() -> List[Path]:
-    """The files Mariner started printing, while the printer has yet to say so.
+def _file_just_started() -> Optional[Path]:
+    """The file Mariner started printing, while the printer has yet to say so.
 
-    Emptied by ``read_status`` as soon as the printer reports a print; an
-    entry the printer never confirms is dropped after the grace period.
+    Forgotten by ``read_status`` as soon as the printer reports a print,
+    and after the grace period if the printer never does.
     """
+    global _just_started
     with _memory_lock:
-        now = time.monotonic()
-        for started, started_at in list(_just_started.items()):
-            if now - started_at >= _START_GRACE_SECS:
-                del _just_started[started]
-        return list(_just_started)
+        if _just_started is None:
+            return None
+        started, started_at = _just_started
+        if time.monotonic() - started_at >= _START_GRACE_SECS:
+            _just_started = None
+            return None
+        return started
 
 
 def same_file(a: Path, b: Path) -> bool:
@@ -377,11 +377,12 @@ def usage_of(path: Path) -> Usage:
             return Usage.UNIDENTIFIED_PRINT
         return Usage.PRINTING if _concerns(printing, path) else Usage.FREE
 
-    if any(_concerns(started, path) for started in _files_just_started()):
-        return Usage.PRINTING
+    started = _file_just_started()
+    if started is not None and _concerns(started, path):
+        return Usage.JUST_STARTED
     if _is_confirmed_idle(status):
         return Usage.FREE
-    return Usage.PRINTER_UNCLEAR if status.answered else Usage.PRINTER_UNREACHABLE
+    return Usage.PRINTER_UNREACHABLE if status.silent else Usage.PRINTER_UNCLEAR
 
 
 @contextmanager
@@ -392,12 +393,12 @@ def unless_in_use(path: Path, *, even_if_unreachable: bool = False) -> Iterator[
     print cannot begin on *path* between the check and the change the block
     makes. Keep the block short, a rename or a single removal.
 
-    *even_if_unreachable* lets the block run although nothing came back
-    from the printer (``Usage.PRINTER_UNREACHABLE``). It is for a user who
+    *even_if_unreachable* lets the block run although the printer is
+    positively silent (``Usage.PRINTER_UNREACHABLE``). It is for a user who
     knows the printer is switched off and says so explicitly. It is granted
-    only on an answer the printer gave after this request arrived, never on
-    one remembered from before, and never when the printer answered
-    anything at all.
+    only on silence observed after this request arrived, never on silence
+    remembered from before, and never when the printer answered anything
+    at all or could not be asked.
     """
     asked_at: Optional[float] = None
     if os.path.lexists(path):

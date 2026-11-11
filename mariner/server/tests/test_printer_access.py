@@ -48,7 +48,12 @@ class PrinterAccessTest(TestCase):
         # once the remembered status expires.
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=state, current_byte=10, total_bytes=100, counters_seen=True
+            state=state,
+            current_byte=10,
+            total_bytes=100,
+            counters_seen=True,
+            # CLOSED stands for a printer that is switched off.
+            silent=state == PrinterState.CLOSED,
         )
         self.printer_mock.get_selected_file.return_value = selected
 
@@ -147,7 +152,7 @@ class PrinterAccessTest(TestCase):
         def slow_silent_printer() -> PrintStatus:
             asked.set()
             give_up.wait(timeout=5)
-            return PrintStatus(state=PrinterState.CLOSED)
+            return PrintStatus(state=PrinterState.CLOSED, silent=True)
 
         self.printer_mock.get_print_status.side_effect = slow_silent_printer
         answers = []
@@ -379,10 +384,10 @@ class PrinterAccessTest(TestCase):
         self.printer_mock.start_printing.assert_called_once_with("sub/part.ctb")
 
         expect(printer_access.usage_of(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
-            printer_access.Usage.PRINTING
+            printer_access.Usage.JUST_STARTED
         )
         expect(printer_access.usage_of(Path("/mnt/usb_share/sub"))).to_equal(
-            printer_access.Usage.PRINTING
+            printer_access.Usage.JUST_STARTED
         )
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
             printer_access.Usage.FREE
@@ -414,20 +419,6 @@ class PrinterAccessTest(TestCase):
                 printer_access.Usage.FREE
             )
 
-    def test_a_start_the_printer_turned_down_does_not_unprotect_another(
-        self,
-    ) -> None:
-        self._printer_still_says_idle()
-        printer_access.start_print("model.ctb")
-        self.printer_mock.start_printing.side_effect = UnexpectedPrinterResponse("busy")
-        with self.assertRaises(UnexpectedPrinterResponse):
-            printer_access.start_print("sub/part.ctb")
-
-        for name in ("model.ctb", "sub/part.ctb"):
-            expect(printer_access.usage_of(Path("/mnt/usb_share") / name)).to_equal(
-                printer_access.Usage.PRINTING
-            )
-
     def test_a_started_print_the_printer_never_reports_is_given_up_on(self) -> None:
         self._printer_still_says_idle()
         with patch("mariner.server.printer_access.time.monotonic") as clock:
@@ -435,7 +426,7 @@ class PrinterAccessTest(TestCase):
             printer_access.start_print("model.ctb")
             clock.return_value = 1000.0 + printer_access._START_GRACE_SECS - 1
             expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-                printer_access.Usage.PRINTING
+                printer_access.Usage.JUST_STARTED
             )
             clock.return_value = 1000.0 + printer_access._START_GRACE_SECS + 1
             expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
@@ -450,7 +441,7 @@ class PrinterAccessTest(TestCase):
         with self.assertRaises(UnexpectedPrinterResponse):
             printer_access.start_print("model.ctb")
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            printer_access.Usage.PRINTING
+            printer_access.Usage.JUST_STARTED
         )
 
     def test_a_start_that_was_never_sent_is_not_remembered(self) -> None:
@@ -479,7 +470,7 @@ class PrinterAccessTest(TestCase):
     ) -> None:
         self._printer_reports(PrinterState.CLOSED, "")
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         self.printer_mock.start_printing.side_effect = FileNotSelected("")
         with self.assertRaises(FileNotSelected):
@@ -507,7 +498,6 @@ class PrinterAccessTest(TestCase):
                 current_byte=10,
                 total_bytes=100,
                 counters_seen=True,
-                answered=True,
             )
             self.printer_mock.get_selected_file.return_value = "model.ctb"
             printer_access.read_status()
@@ -541,8 +531,8 @@ class PrinterAccessTest(TestCase):
         # Only a reported print stands in the way. The printer itself
         # turns the command down if it cannot print.
         for status in (
-            PrintStatus(state=PrinterState.CLOSED),
-            PrintStatus(state=PrinterState.IDLE, answered=True),
+            PrintStatus(state=PrinterState.CLOSED, silent=True),
+            PrintStatus(state=PrinterState.IDLE),
         ):
             printer_access.forget_status()
             self.printer_mock.start_printing.reset_mock()
@@ -550,33 +540,56 @@ class PrinterAccessTest(TestCase):
             printer_access.start_print("model.ctb")
             self.printer_mock.start_printing.assert_called_once_with("model.ctb")
 
-    def test_a_cancelled_print_no_longer_protects_its_file(self) -> None:
-        # Cancelled before the printer ever reported it.
+    def test_a_cancelled_print_still_protects_its_file_for_a_moment(self) -> None:
+        # Right after a cancel, an idle answer may mean the print stopped,
+        # or that it has not begun yet. Nothing tells the two apart.
         self._printer_still_says_idle()
         printer_access.start_print("model.ctb")
-        printer_access.stop_print()
-        self.printer_mock.stop_printing.assert_called_once_with()
+        with printer_access.printer_session() as printer:
+            printer.stop_printing()
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            printer_access.Usage.FREE
+            printer_access.Usage.JUST_STARTED
         )
 
-    def test_a_cancellation_the_printer_turned_down_changes_nothing(self) -> None:
+    def test_a_second_print_is_not_started_until_the_first_is_reported(self) -> None:
         self._printer_still_says_idle()
-        printer_access.start_print("model.ctb")
-        self.printer_mock.stop_printing.side_effect = UnexpectedPrinterResponse("")
-        with self.assertRaises(UnexpectedPrinterResponse):
-            printer_access.stop_print()
-        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            printer_access.Usage.PRINTING
+        with patch("mariner.server.printer_access.time.monotonic") as clock:
+            clock.return_value = 1000.0
+            printer_access.start_print("model.ctb")
+            self.printer_mock.start_printing.reset_mock()
+
+            clock.return_value = 1005.0
+            with self.assertRaises(PrintAlreadyRunning):
+                printer_access.start_print("sub/part.ctb")
+            self.printer_mock.start_printing.assert_not_called()
+            # The first one keeps its protection, the second gets none.
+            expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+                printer_access.Usage.JUST_STARTED
+            )
+
+            # The printer never reported the first: after the grace period
+            # another print can be started.
+            clock.return_value = 1000.0 + printer_access._START_GRACE_SECS + 1
+            printer_access.start_print("sub/part.ctb")
+            self.printer_mock.start_printing.assert_called_once_with("sub/part.ctb")
+
+    def test_a_start_the_printer_did_not_take_does_not_block_the_next(self) -> None:
+        # The file was never selected, so no print can be starting.
+        self._printer_still_says_idle()
+        self.printer_mock.start_printing.side_effect = FileNotSelected("")
+        with self.assertRaises(FileNotSelected):
+            printer_access.start_print("model.ctb")
+        self.printer_mock.start_printing.side_effect = None
+        printer_access.start_print("sub/part.ctb")
+        expect(printer_access.usage_of(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
+            printer_access.Usage.JUST_STARTED
         )
 
     # ---- answers that settle nothing ----
 
     def _printer_answers_unclearly(self, state: PrinterState) -> None:
         printer_access.forget_status()
-        self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=state, answered=True
-        )
+        self.printer_mock.get_print_status.return_value = PrintStatus(state=state)
         self.printer_mock.get_selected_file.return_value = "model.ctb"
 
     def test_an_answer_without_the_print_counters_settles_nothing(self) -> None:
@@ -597,7 +610,7 @@ class PrinterAccessTest(TestCase):
     def test_a_printer_that_sends_nothing_is_unreachable(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "")
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
             printer_access.Usage.PRINTER_UNREACHABLE
@@ -687,7 +700,7 @@ class PrinterAccessTest(TestCase):
     ) -> None:
         self._printer_reports(PrinterState.CLOSED, "")
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         with printer_access.unless_in_use(
             Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
@@ -708,7 +721,7 @@ class PrinterAccessTest(TestCase):
             other = threading.Thread(target=store_a_new_file)
             other.start()
             other.join(timeout=5)
-            return PrintStatus(state=PrinterState.CLOSED)
+            return PrintStatus(state=PrinterState.CLOSED, silent=True)
 
         printer_access.forget_status()
         self.printer_mock.get_print_status.side_effect = silent_printer
@@ -724,7 +737,7 @@ class PrinterAccessTest(TestCase):
         # printer's own screen.
         self._printer_reports(PrinterState.CLOSED, "")
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         now = [1000.0]
         change_lock = printer_access._change_lock
@@ -738,7 +751,6 @@ class PrinterAccessTest(TestCase):
                     current_byte=10,
                     total_bytes=100,
                     counters_seen=True,
-                    answered=True,
                 )
                 test.printer_mock.get_selected_file.return_value = "model.ctb"
                 change_lock.acquire()

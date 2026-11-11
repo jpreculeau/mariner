@@ -94,12 +94,16 @@ class UploadManager:
         self._unless_in_use = unless_in_use
 
     def is_transferring(self) -> bool:
-        self._drop_idle_transfers()
+        self.drop_idle_transfers()
         with self._lock:
             return bool(self._sessions)
 
-    def _drop_idle_transfers(self) -> None:
-        """Give up on transfers whose client stopped sending."""
+    def drop_idle_transfers(self) -> None:
+        """Give up on transfers whose client stopped sending.
+
+        Called on every chunk and status request, and by the service at
+        regular intervals, so that it happens with no client around too.
+        """
         with self._lock:
             now = time.monotonic()
             for key, session in list(self._sessions.items()):
@@ -136,7 +140,7 @@ class UploadManager:
         choose the same id, "default" when they send none, and must not
         feed each other's transfer.
         """
-        self._drop_idle_transfers()
+        self.drop_idle_transfers()
         try:
             return self._handle_chunk(
                 key=(client, upload_uuid),
@@ -215,6 +219,14 @@ class UploadManager:
 
         with self._lock:
             session = self._sessions.get(key)
+
+            if session is None and offset != 0:
+                # A chunk from the middle of a transfer that is not under
+                # way: abandoned, terminated, or never begun. Nothing is
+                # kept for it.
+                return ChunkResult(
+                    ok=False, error=constants.UploadError.OFFSET_MISMATCH
+                )
 
             # Offset 0 always (re)starts a transfer, so a client retrying from
             # the beginning discards whatever was buffered before.
@@ -380,22 +392,18 @@ class UploadManager:
         logger.info("SDCP: received %s (%d bytes)", session.filename, session.offset)
         return ChunkResult(ok=True, completed=True, filename=session.filename)
 
-    def terminate(self, upload_uuid: str, filename: str = "") -> int:
+    def terminate(self, upload_uuid: str, client: str = "") -> int:
         """Handle Cmd 255, returning the matching ack code.
 
-        The command names a transfer by its id alone, so every transfer
-        that goes by that id ends, whichever client began it.
+        Ends the transfer *client* began under that id, and no one else's.
         """
+        key = (client, upload_uuid)
         with self._lock:
-            ended = [
-                (key, session)
-                for key, session in self._sessions.items()
-                if key[1] == upload_uuid
-            ]
-            for key, session in ended:
+            session = self._sessions.get(key)
+            if session is not None:
                 self._discard(key, session)
         self._cleanup_scratch_dir()
-        if not ended:
+        if session is None:
             return int(constants.FileTransferAck.NOT_TRANSFER)
         return int(constants.FileTransferAck.SUCCESS)
 

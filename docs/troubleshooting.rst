@@ -113,7 +113,7 @@ removed the next time Mariner starts.
 
 The printer reads its file layer by layer for the whole print. Mariner
 therefore changes an existing file only when the printer confirms it is not
-reading it, and refuses in four cases, in the web interface, from UVtools
+reading it, and refuses in five cases, in the web interface, from UVtools
 and from a slicer sending over the network alike:
 
 * **The file is being printed** (the print is starting, running or paused).
@@ -121,19 +121,30 @@ and from a slicer sending over the network alike:
   holds however the print was started: from Mariner, from a slicer or from
   the printer's own screen. Wait for the print to finish, or cancel it.
 
+* **A print of the file was started through Mariner a moment ago.** For a
+  few seconds after being told to print, the printer still reports that it
+  is idle, so Mariner protects the file itself for half a minute, or until
+  the printer reports the print. Cancelling the print during that time does
+  not lift the protection: nothing the printer says then tells a print that
+  was stopped from one that is about to begin. Try again half a minute
+  later.
+
 * **A print is running from a file Mariner could not identify**, for example
   one started from the printer's own screen under a name Mariner does not
   find. Every existing file is then left alone until that print is over.
 
-* **The printer answered, but not clearly enough.** It is switched on, and
-  what it sent says nothing about a print, which happens now and then on a
-  busy serial line. Try again in a moment.
+* **Mariner could not get a clear answer from the printer.** The printer
+  sent something that says nothing about a print, which happens now and
+  then on a busy serial line, or the line failed while it was being read,
+  or Mariner could not use the serial port at all. Try again in a moment;
+  if it lasts, see `Other Issues`_.
 
-* **The printer is not answering at all**: it is off, or the serial cable is
+* **The printer is not answering at all**: it was asked and nothing came
+  back, or its serial device is not there. It is off, or the cable is
   loose. Switch the printer on or check the cable, then try again; opening
   the dashboard asks the printer again.
 
-In all four cases a file can still be stored under a **new name**, since
+In all five cases a file can still be stored under a **new name**, since
 nothing can be reading a file that does not exist yet.
 
 .. rubric:: Changing a file while the printer is switched off
@@ -149,8 +160,8 @@ refusal, and no other, can be lifted:
   is asked each time.
 
 * A client of the **web API** repeats the request with
-  ``ignore_unreachable_printer=1``. Mariner then asks the printer once more
-  and goes ahead only if nothing at all comes back.
+  ``ignore_unreachable_printer=1``. Mariner then asks the printer again
+  and goes ahead only if it stays silent.
 
 * **UVtools and slicers sending over the network** have no way to confirm,
   so for them the refusal stands. Use the web interface, or store the file
@@ -161,8 +172,8 @@ refusal, and no other, can be lifted:
 The web interface shows the reason in a notification. The web API answers
 with status 409 and a JSON body:
 
-* ``code``: ``file_in_use``, ``print_file_unknown``,
-  ``printer_answer_unclear`` or ``printer_not_answering``, for the four
+* ``code``: ``file_in_use``, ``print_just_started``, ``print_file_unknown``,
+  ``printer_answer_unclear`` or ``printer_not_answering``, for the five
   cases above in that order;
 * ``title`` and ``description``: the explanation, ready to be shown;
 * ``can_be_overridden``: true for ``printer_not_answering`` only.
@@ -186,11 +197,11 @@ Printing
 
 Mariner does not start a print while the printer reports one that is
 starting, running or paused. Wait for it to finish, or cancel it first. The
-web API answers 409 with the code ``print_in_progress``, UVtools receives a
-409, and a slicer using SDCP is told that the printer is busy.
-
-Cancelling a print frees its file at once, including a print started through
-Mariner a moment earlier that the printer had not reported yet.
+same goes for the half minute after a print was started through Mariner,
+until the printer reports that print, which also stops a double click from
+starting two. The web API answers 409 with the code ``print_in_progress``,
+UVtools receives a 409, and a slicer using SDCP is told that the printer is
+busy.
 
 .. rubric:: A transfer from a slicer is refused or disappears
 
@@ -199,7 +210,9 @@ pieces of each transfer apart by the address of the computer that sends them
 and by the transfer id the slicer chose:
 
 * a piece that names another file, or another size, than the transfer it
-  claims to continue is refused;
+  claims to continue is refused, and so is a piece from the middle of a
+  transfer that is not under way;
+* a slicer can only end its own transfer;
 * a declared MD5 checksum that is not 32 hexadecimal digits is refused;
 * a transfer that receives nothing for five minutes is abandoned and what
   was received is removed. Send the file again.

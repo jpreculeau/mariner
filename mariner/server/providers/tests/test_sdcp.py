@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import os
@@ -430,13 +431,21 @@ class SDCPBridgeTest(TestCase):
         )
         self.printer_mock.start_printing.assert_not_called()
 
-    def test_a_file_can_be_deleted_once_its_print_is_stopped(self) -> None:
+    def test_a_stopped_print_still_protects_its_file_for_a_moment(self) -> None:
         self.bridge.start_print("/local/foobar.ctb")
+        expect(self.bridge.stop_print()).to_equal(int(constants.PrintCtrlAck.OK))
+        self.printer_mock.stop_printing.assert_called_once_with()
         expect(self.bridge.delete(["/local/foobar.ctb"], [])).to_equal(
             ["/local/foobar.ctb"]
         )
-        expect(self.bridge.stop_print()).to_equal(int(constants.PrintCtrlAck.OK))
-        expect(self.bridge.delete(["/local/foobar.ctb"], [])).to_equal([])
+
+    def test_a_second_print_is_refused_until_the_first_is_reported(self) -> None:
+        self.fs.create_file("/mnt/usb_share/other.ctb", contents=self.ctb_file_contents)
+        self.bridge.start_print("/local/foobar.ctb")
+        expect(self.bridge.start_print("/local/other.ctb")).to_equal(
+            int(constants.PrintCtrlAck.BUSY)
+        )
+        self.printer_mock.start_printing.assert_called_once_with("foobar.ctb")
 
     def test_stop_print_reports_a_printer_that_turned_it_down(self) -> None:
         self.printer_mock.stop_printing.side_effect = UnexpectedPrinterResponse("")
@@ -488,6 +497,13 @@ class SDCPBridgeTest(TestCase):
             []
         )
 
+    def test_list_files_is_not_cut_short_by_a_link_whose_target_is_gone(
+        self,
+    ) -> None:
+        self.fs.create_symlink("/mnt/usb_share/aaa.ctb", "/mnt/usb_share/gone.ctb")
+        names = [entry["name"] for entry in self.bridge.list_files("/local/")]
+        expect(names).to_equal(["/local/foobar.ctb"])
+
     def test_list_files_rejects_escape(self) -> None:
         expect(self.bridge.list_files("/local/../../etc")).to_equal([])
 
@@ -521,7 +537,7 @@ class SDCPBridgeTest(TestCase):
 
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         failures = self.bridge.delete(["/local/foobar.ctb"], [])
         expect(failures).to_equal(["/local/foobar.ctb"])
@@ -547,7 +563,7 @@ class SDCPBridgeTest(TestCase):
         self.fs.create_file("/mnt/usb_share/x\nWARNING forged.ctb", contents=b"x")
         self.fs.create_dir("/mnt/usb_share/y\nWARNING forged")
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED
+            state=PrinterState.CLOSED, silent=True
         )
         with self.assertLogs("mariner.server.providers.sdcp.bridge", "WARNING") as logs:
             self.bridge.delete(
@@ -615,6 +631,8 @@ class SDCPBridgeTest(TestCase):
             ("/local//mnt/usb_share/sub/part.ctb", "sub/part.ctb"),
         ):
             self.printer_mock.start_printing.reset_mock()
+            # Each one as the first print of the day.
+            printer_access.forget_status()
             expect(self.bridge.start_print(given)).to_equal(
                 int(constants.PrintCtrlAck.OK)
             )
@@ -1156,12 +1174,27 @@ class UploadManagerTest(TestCase):
         expect(self._stored("model.ctb")).to_equal(b"BBBBBBBB")
         expect(os.listdir("/mnt/usb_share")).to_equal(["model.ctb"])
 
-    def test_terminate_ends_the_transfers_of_that_id_for_every_client(self) -> None:
+    def test_terminate_ends_the_transfer_of_the_client_that_asks_only(self) -> None:
         self._send(0, b"AAAA", client="10.0.0.1")
         self._send(0, b"BBBB", client="10.0.0.2")
-        expect(self.manager.terminate("default")).to_equal(
+
+        expect(self.manager.terminate("default", "10.0.0.9")).to_equal(
+            int(constants.FileTransferAck.NOT_TRANSFER)
+        )
+        expect(self.manager.terminate("default", "10.0.0.1")).to_equal(
             int(constants.FileTransferAck.SUCCESS)
         )
+
+        # The other client's transfer goes on to its end.
+        expect(self._send(4, b"BBBB", client="10.0.0.2").completed).to_equal(True)
+        expect(self._stored("model.ctb")).to_equal(b"BBBBBBBB")
+        expect(os.listdir("/mnt/usb_share")).to_equal(["model.ctb"])
+
+    def test_a_chunk_from_the_middle_of_no_transfer_leaves_nothing(self) -> None:
+        # Its transfer was abandoned or terminated, or never began.
+        result = self._send(4, b"AAAA")
+        expect(result.ok).to_equal(False)
+        expect(result.error).to_equal(int(constants.UploadError.OFFSET_MISMATCH))
         expect(self.manager.is_transferring()).to_equal(False)
         expect(os.listdir("/mnt/usb_share")).to_equal([])
 
@@ -1404,6 +1437,73 @@ class ServiceUploadTest(IsolatedAsyncioTestCase):
         expect(sent["client"]).to_equal("192.168.1.20")
         expect(sent["upload_uuid"]).to_equal("default")
         expect(sent["data"]).to_equal(b"AAAA")
+
+
+class ServiceHousekeepingTest(IsolatedAsyncioTestCase):
+    def _service(self) -> Any:
+        service = SDCPService.__new__(SDCPService)
+        service._uploads = Mock(spec=UploadManager)
+        service._clients = set()
+        service._addresses = {}
+
+        async def run_now(function: Any, *args: Any) -> Any:
+            return function(*args)
+
+        service._in_executor = run_now
+        return service
+
+    async def test_unfinished_transfers_are_dropped_with_no_client_connected(
+        self,
+    ) -> None:
+        # A slicer closed half-way through a transfer leaves no one to
+        # trigger the clean-up but the service itself.
+        service = self._service()
+        ticks = [None, asyncio.CancelledError()]
+        with patch(
+            "mariner.server.providers.sdcp.service.asyncio.sleep", side_effect=ticks
+        ), patch(
+            "mariner.server.providers.sdcp.service.config.get_sdcp_poll_interval_secs",
+            return_value=1,
+        ):
+            with self.assertRaises(asyncio.CancelledError):
+                await service._poll_status_forever()
+        service._uploads.drop_idle_transfers.assert_called_once_with()
+
+    async def test_terminate_is_asked_for_the_client_that_sent_it(self) -> None:
+        service = self._service()
+        service._uploads.terminate.return_value = 0
+        ws = _OpenWebSocket()
+        service._addresses[ws] = "192.168.1.20"
+        with patch.object(service, "_reply", Mock(wraps=_no_reply)):
+            await service._dispatch(
+                cast(Any, ws),
+                int(constants.Cmd.TERMINATE_TRANSFER),
+                {"Uuid": "abc"},
+                "req-1",
+            )
+        service._uploads.terminate.assert_called_once_with("abc", "192.168.1.20")
+
+    async def test_a_command_cannot_add_lines_to_the_debug_log(self) -> None:
+        # A client may send text where an object is expected.
+        service = self._service()
+        with patch.object(service, "_reply", Mock(wraps=_no_reply)), patch.object(
+            service, "_push_status", Mock(wraps=_no_reply)
+        ):
+            with self.assertLogs(
+                "mariner.server.providers.sdcp.service", "DEBUG"
+            ) as logs:
+                await service._dispatch(
+                    cast(Any, _OpenWebSocket()),
+                    int(constants.Cmd.REFRESH_STATUS),
+                    cast(Any, "x\nWARNING forged line"),
+                    "req-1",
+                )
+        for record in logs.records:
+            expect("\n" in record.getMessage()).to_equal(False)
+
+
+async def _no_reply(*_: Any) -> None:
+    return None
 
 
 class ThumbnailUrlTest(TestCase):

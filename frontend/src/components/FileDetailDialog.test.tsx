@@ -16,16 +16,36 @@ const file = {
   can_be_printed: false,
 };
 
-function renderDialog(onOpenChange = vi.fn()) {
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+const otherFile = {
+  filename: "precious.txt",
+  path: "precious.txt",
+  can_be_printed: false,
+};
+
+const queryClient = new QueryClient();
+
+function dialogFor(shown: typeof file, onOpenChange: () => void) {
+  return (
+    <QueryClientProvider client={queryClient}>
       <MemoryRouter>
-        <FileDetailDialog file={file} open={true} onOpenChange={onOpenChange} />
+        <FileDetailDialog
+          file={shown}
+          open={true}
+          onOpenChange={onOpenChange}
+        />
       </MemoryRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+}
+
+function renderDialog(onOpenChange = vi.fn()) {
+  const { rerender } = render(dialogFor(file, onOpenChange));
+  // Shows another file in the same dialog, as picking one in the list does.
+  showOther = () => rerender(dialogFor(otherFile, onOpenChange));
   return onOpenChange;
 }
+
+let showOther: () => void;
 
 describe("FileDetailDialog", () => {
   beforeEach(() => {
@@ -114,6 +134,65 @@ describe("FileDetailDialog", () => {
         expect(screen.queryByText("Delete anyway")).toBeNull(),
       );
       expect(api.deleteFile).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("drops the question when another file is shown", async () => {
+      vi.spyOn(api, "deleteFile")
+        .mockRejectedValueOnce(refusal)
+        .mockResolvedValue();
+      renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      await screen.findByText("Delete anyway");
+      showOther();
+
+      // The question went away with the file it was about.
+      await waitFor(() =>
+        expect(screen.queryByText("Delete anyway")).toBeNull(),
+      );
+      expect(api.deleteFile).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not ask about a file the user has moved on from", async () => {
+      // The printer takes seconds to give up on; the answer comes late.
+      let refuse: (error: ApiError) => void = () => {};
+      vi.spyOn(api, "deleteFile").mockReturnValue(
+        new Promise<void>((_, reject) => {
+          refuse = reject;
+        }),
+      );
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      showOther();
+      refuse(refusal);
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "The printer is not answering.",
+        ),
+      );
+      expect(screen.queryByText("Delete anyway")).toBeNull();
+      expect(api.deleteFile).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("leaves the dialog of another file open when a deletion ends late", async () => {
+      let finish: () => void = () => {};
+      vi.spyOn(api, "deleteFile").mockReturnValue(
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+      );
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      showOther();
+      finish();
+
+      await waitFor(() => expect(api.deleteFile).toHaveBeenCalledTimes(1));
+      await Promise.resolve();
       expect(onOpenChange).not.toHaveBeenCalled();
     });
 
