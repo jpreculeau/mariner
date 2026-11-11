@@ -19,6 +19,7 @@ from mariner.server.api import _layer_from_byte_offset
 from mariner.server.files import (
     NotPrintable,
     printable_relative_path,
+    resolve_entry_in_files_directory,
     resolve_in_files_directory,
     scratch_path_beside,
 )
@@ -470,7 +471,7 @@ class PrinterBridge:
 
         for raw in _as_list(file_list):
             path = self._deletable(raw)
-            if path is None or not os.path.isfile(path):
+            if path is None or not (os.path.isfile(path) or os.path.islink(path)):
                 failures.append(raw)
                 continue
             try:
@@ -514,10 +515,13 @@ class PrinterBridge:
 
     @staticmethod
     def _deletable(raw: Any) -> Optional[Path]:
-        """The path *raw* names inside the files directory, if it names one."""
+        """The entry *raw* names inside the files directory, if it names one.
+
+        The entry itself: for a symbolic link, the link and not its target.
+        """
         if not isinstance(raw, str):
             return None
-        return resolve_in_files_directory(strip_storage_prefix(raw))
+        return resolve_entry_in_files_directory(strip_storage_prefix(raw))
 
 
 def _as_list(value: Any) -> List[Any]:

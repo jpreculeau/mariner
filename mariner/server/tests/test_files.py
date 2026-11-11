@@ -17,6 +17,7 @@ from mariner.server.files import (
     printable_relative_path,
     remove_stale_scratch_files,
     replacing,
+    resolve_entry_in_files_directory,
     resolve_in_files_directory,
     safe_filename,
     scratch_path_beside,
@@ -111,6 +112,62 @@ class ResolveInFilesDirectoryTest(TestCase):
 
     def test_refuses_a_nul_byte(self) -> None:
         expect(resolve_in_files_directory("a\x00b")).to_equal(None)
+
+    def test_refuses_to_go_through_a_hidden_entry(self) -> None:
+        # Transfers in progress live there. No client request may reach them.
+        self.fs.create_file("/mnt/usb_share/.sdcp_uploads/abcd.part", contents=b"x")
+        self.fs.create_file("/mnt/usb_share/sub/.upload-0123abcd.part", contents=b"x")
+        for relative in (
+            ".sdcp_uploads",
+            ".sdcp_uploads/abcd.part",
+            "sub/.upload-0123abcd.part",
+            "sub/../.sdcp_uploads",
+        ):
+            expect(resolve_in_files_directory(relative)).to_equal(None)
+
+
+class ResolveEntryInFilesDirectoryTest(TestCase):
+    fs: FakeFilesystem
+
+    def setUp(self) -> None:
+        _get_config.cache_clear()
+        self.setUpPyfakefs(additional_skip_names=["importlib.metadata"])
+        self.fs.create_file("/mnt/usb_share/sub/model.ctb", contents=b"x")
+        self.fs.create_file("/mnt/outside.ctb", contents=b"x")
+        self.fs.create_symlink(
+            "/mnt/usb_share/link.ctb", "/mnt/usb_share/sub/model.ctb"
+        )
+        self.fs.create_symlink("/mnt/usb_share/dangling.ctb", "/mnt/usb_share/gone")
+        self.fs.create_symlink("/mnt/usb_share/way_out", "/mnt")
+
+    def test_gives_the_entry_and_not_what_it_points_to(self) -> None:
+        expect(resolve_entry_in_files_directory("sub/model.ctb")).to_equal(
+            Path("/mnt/usb_share/sub/model.ctb")
+        )
+        expect(resolve_entry_in_files_directory("link.ctb")).to_equal(
+            Path("/mnt/usb_share/link.ctb")
+        )
+        expect(resolve_entry_in_files_directory("dangling.ctb")).to_equal(
+            Path("/mnt/usb_share/dangling.ctb")
+        )
+
+    def test_resolves_the_folder_holding_the_entry(self) -> None:
+        expect(resolve_entry_in_files_directory("sub/../sub/model.ctb")).to_equal(
+            Path("/mnt/usb_share/sub/model.ctb")
+        )
+
+    def test_refuses_to_leave_the_files_directory(self) -> None:
+        for relative in ("../outside.ctb", "/mnt/outside.ctb", "way_out/outside.ctb"):
+            expect(resolve_entry_in_files_directory(relative)).to_equal(None)
+
+    def test_refuses_what_does_not_name_an_entry(self) -> None:
+        for relative in ("", ".", "..", "sub/..", "sub/."):
+            expect(resolve_entry_in_files_directory(relative)).to_equal(None)
+
+    def test_refuses_hidden_entries(self) -> None:
+        self.fs.create_file("/mnt/usb_share/.sdcp_uploads/abcd.part", contents=b"x")
+        for relative in (".sdcp_uploads", ".sdcp_uploads/abcd.part"):
+            expect(resolve_entry_in_files_directory(relative)).to_equal(None)
 
 
 class RealFilesystemResolveTest(TestCase):

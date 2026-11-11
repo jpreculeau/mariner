@@ -42,6 +42,7 @@ from mariner.server.files import (
     modification_time,
     printable_relative_path,
     replacing,
+    resolve_entry_in_files_directory,
     resolve_in_files_directory,
     safe_filename,
 )
@@ -201,13 +202,15 @@ class UVToolsProvider(NetworkPrintProvider):
     def _delete_file(self, filename: str) -> Union[str, Response]:
         # Not safe_filename: that decides which names may be stored. A file
         # that is already there must stay deletable whatever its name, as
-        # long as the path stays inside the files directory.
-        path = resolve_in_files_directory(filename)
-        if path is None or "/" in filename or "\\" in filename:
+        # long as it is an entry of the files directory itself.
+        path = None
+        if "/" not in filename and "\\" not in filename:
+            path = resolve_entry_in_files_directory(filename)
+        if path is None:
             logger.warning("UVTools: refusing unsafe filename %r", filename)
             abort(400)
 
-        if not os.path.isfile(path):
+        if not (os.path.isfile(path) or os.path.islink(path)):
             abort(404)
         try:
             with unless_in_use(path):

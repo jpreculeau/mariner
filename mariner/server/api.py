@@ -39,6 +39,7 @@ from mariner.server.files import (
     modification_time,
     printable_relative_path,
     replacing,
+    resolve_entry_in_files_directory,
     resolve_in_files_directory,
     safe_filename,
 )
@@ -340,8 +341,8 @@ def list_files() -> Union[str, Response]:
         directories = []
         for dir_entry in sorted(dir_entries, key=modification_time, reverse=True):
             if is_hidden_entry(dir_entry.name):
-                # A transfer still on its way in; the file appears under its
-                # real name once complete.
+                # Something on its way in or out, or the SDCP transfer
+                # folder. See files.is_hidden_entry.
                 continue
             if dir_entry.is_dir():
                 directories.append({"dirname": dir_entry.name})
@@ -461,10 +462,12 @@ def upload_file() -> Union[str, Response]:
 @api.route("/delete_file", methods=["POST"])
 def delete_file() -> Union[str, Response]:
     filename = request.args.get("filename")
-    path = _resolve_or_400(filename)
-    # we use os.path.isfile instead of Path.is_file here because pyfakefs doesn't
-    # seem to properly mock Path.is_file as of pyfakefs 4.4.0
-    if not os.path.isfile(path):
+    # The entry itself, not what it leads to: deleting a symbolic link
+    # removes the link, whether or not its target still exists.
+    path = resolve_entry_in_files_directory(filename) if filename else None
+    if path is None:
+        abort(400)
+    if not (os.path.isfile(path) or os.path.islink(path)):
         abort(400)
     try:
         with _guard_for_this_request()(path):

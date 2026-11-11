@@ -213,6 +213,18 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(200)
         expect(os.path.exists("/mnt/usb_share/it's (v2).ctb")).to_equal(False)
 
+    def test_delete_removes_a_link_whose_target_is_gone(self) -> None:
+        self.fs.create_symlink("/mnt/usb_share/dangling.ctb", "/mnt/usb_share/gone")
+        response = self.client.get("/uvtools/delete/dangling.ctb")
+        expect(response.status_code).to_equal(200)
+        expect(os.path.lexists("/mnt/usb_share/dangling.ctb")).to_equal(False)
+
+    def test_delete_cannot_reach_a_transfer_in_progress(self) -> None:
+        self.fs.create_file("/mnt/usb_share/.upload-0123abcd.part", contents=b"x")
+        response = self.client.get("/uvtools/delete/.upload-0123abcd.part")
+        expect(response.status_code).to_equal(400)
+        expect(os.path.exists("/mnt/usb_share/.upload-0123abcd.part")).to_equal(True)
+
     def test_delete_refuses_to_leave_the_files_directory(self) -> None:
         self.fs.create_file("/mnt/outside.ctb", contents=b"x")
         for name in ("..", "..%5Coutside.ctb"):

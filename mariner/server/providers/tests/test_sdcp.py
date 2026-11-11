@@ -26,8 +26,16 @@ from mariner.server.printer_access import FileInUse
 from mariner.server.providers.sdcp.uploads import UploadManager
 
 
-def _never_in_use(path: pathlib.Path) -> bool:
-    return False
+def _refusing_when(condition: Any, usage: Any = None) -> Any:
+    """A stand-in for unless_in_use that refuses when *condition(path)* holds."""
+
+    @contextmanager
+    def guard(path: pathlib.Path) -> Iterator[None]:
+        if condition(path):
+            raise FileInUse(path, usage or printer_access.Usage.PRINTING)
+        yield
+
+    return guard
 
 
 @contextmanager
@@ -375,7 +383,7 @@ class SDCPBridgeTest(TestCase):
         NOT_FOUND even though the file was sitting in the directory.
         """
         name = "a-precise-chimney_6(1).stl_1_0.050_2.500_2026_09_07.ctb"
-        manager = UploadManager(is_in_use=_never_in_use, unless_in_use=_no_guard)
+        manager = UploadManager(unless_in_use=_no_guard)
         result = manager.handle_chunk(
             upload_uuid="abc",
             filename=name,
@@ -538,6 +546,24 @@ class SDCPBridgeTest(TestCase):
         expect(self.bridge.known_firmware_version()).to_equal("V4.4.3_LCDC")
         self.printer_mock.get_firmware_version.assert_called_once_with()
 
+    def test_transfers_in_progress_are_out_of_reach(self) -> None:
+        self.fs.create_file("/mnt/usb_share/.sdcp_uploads/abcd.part", contents=b"x")
+        failures = self.bridge.delete(
+            ["/local/.sdcp_uploads/abcd.part"], ["/local/.sdcp_uploads"]
+        )
+        expect(failures).to_equal(
+            ["/local/.sdcp_uploads/abcd.part", "/local/.sdcp_uploads"]
+        )
+        expect(os.listdir("/mnt/usb_share/.sdcp_uploads")).to_equal(["abcd.part"])
+        expect(self.bridge.list_files("/local/.sdcp_uploads")).to_equal([])
+
+    def test_delete_removes_a_link_and_leaves_its_target(self) -> None:
+        self.fs.create_symlink("/mnt/usb_share/link.ctb", "/mnt/usb_share/foobar.ctb")
+        failures = self.bridge.delete(["/local/link.ctb"], [])
+        expect(failures).to_equal([])
+        expect(os.path.lexists("/mnt/usb_share/link.ctb")).to_equal(False)
+        expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(True)
+
     def test_delete_asks_the_printer_once_for_a_whole_batch(self) -> None:
         self.fs.create_file("/mnt/usb_share/a.ctb", contents=b"x")
         self.fs.create_file("/mnt/usb_share/b.ctb", contents=b"x")
@@ -574,7 +600,7 @@ class UploadManagerTest(TestCase):
         _get_config.cache_clear()
         self.setUpPyfakefs(additional_skip_names=["importlib.metadata"])
         self.fs.create_dir("/mnt/usb_share")
-        self.manager = UploadManager(is_in_use=_never_in_use, unless_in_use=_no_guard)
+        self.manager = UploadManager(unless_in_use=_no_guard)
 
     def _upload(
         self,
@@ -617,7 +643,7 @@ class UploadManagerTest(TestCase):
     def test_upload_refuses_to_replace_the_file_being_printed(self) -> None:
         self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
         manager = UploadManager(
-            is_in_use=lambda path: path.name == "model.ctb", unless_in_use=_no_guard
+            unless_in_use=_refusing_when(lambda path: path.name == "model.ctb")
         )
         result = self._chunk(manager, 0, b"new!", 8)
         expect(result.ok).to_equal(False)
@@ -630,16 +656,12 @@ class UploadManagerTest(TestCase):
 
     def test_upload_refuses_when_the_print_starts_during_the_transfer(self) -> None:
         self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
-
-        @contextmanager
-        def print_started_meanwhile(path: pathlib.Path) -> Iterator[None]:
-            raise FileInUse(path, printer_access.Usage.PRINTING)
-            yield
-
+        printing = {"now": False}
         manager = UploadManager(
-            is_in_use=_never_in_use, unless_in_use=print_started_meanwhile
+            unless_in_use=_refusing_when(lambda path: printing["now"])
         )
         expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
+        printing["now"] = True
         result = self._chunk(manager, 4, b"new!", 8)
         expect(result.ok).to_equal(False)
         expect(result.error).to_equal(constants.UploadError.FILE_OPEN_FAILED)
@@ -647,12 +669,27 @@ class UploadManagerTest(TestCase):
             expect(file.read()).to_equal(b"printing")
         expect(manager.is_transferring()).to_equal(False)
 
+    def test_the_log_says_why_a_transfer_was_refused(self) -> None:
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"old")
+        manager = UploadManager(
+            unless_in_use=_refusing_when(
+                lambda path: True, printer_access.Usage.PRINTER_UNREACHABLE
+            )
+        )
+        with self.assertLogs(
+            "mariner.server.providers.sdcp.uploads", level="WARNING"
+        ) as logs:
+            self._chunk(manager, 0, b"new!", 8)
+        expect(len(logs.output)).to_equal(1)
+        expect("printer unreachable" in logs.output[0]).to_equal(True)
+        expect("prints" in logs.output[0]).to_equal(False)
+
     def test_restarting_a_transfer_onto_a_printing_file_drops_what_was_sent(
         self,
     ) -> None:
         printing = {"now": False}
         manager = UploadManager(
-            is_in_use=lambda path: printing["now"], unless_in_use=_no_guard
+            unless_in_use=_refusing_when(lambda path: printing["now"])
         )
         expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
         printing["now"] = True
@@ -666,12 +703,15 @@ class UploadManagerTest(TestCase):
         # move, a second one arrives under the same id (clients that send
         # none all share "default"). Each must end up whole, under its name.
         manager: Any = None
-        interleaved = []
+        checks_of_first: List[str] = []
 
         @contextmanager
         def guard(path: pathlib.Path) -> Iterator[None]:
-            if not interleaved:
-                interleaved.append(True)
+            if path.name == "first.ctb":
+                checks_of_first.append("check")
+            # The second check of first.ctb is the one made at its final
+            # move, after its session has left the table.
+            if path.name == "first.ctb" and len(checks_of_first) == 2:
                 started = manager.handle_chunk(
                     upload_uuid="default",
                     filename="second.ctb",
@@ -684,7 +724,7 @@ class UploadManagerTest(TestCase):
                 expect(started.ok).to_equal(True)
             yield
 
-        manager = UploadManager(is_in_use=_never_in_use, unless_in_use=guard)
+        manager = UploadManager(unless_in_use=guard)
         first = manager.handle_chunk(
             upload_uuid="default",
             filename="first.ctb",
@@ -716,12 +756,14 @@ class UploadManagerTest(TestCase):
         # A small transfer completes, and cleans up, while a big one is still
         # waiting for the printer before its final move.
         manager: Any = None
-        interleaved = []
+        checks_of_big: List[str] = []
 
         @contextmanager
         def guard(path: pathlib.Path) -> Iterator[None]:
-            if path.name == "big.ctb" and not interleaved:
-                interleaved.append(True)
+            if path.name == "big.ctb":
+                checks_of_big.append("check")
+            # The second check of big.ctb is the one made at its final move.
+            if path.name == "big.ctb" and len(checks_of_big) == 2:
                 small = manager.handle_chunk(
                     upload_uuid="small",
                     filename="small.ctb",
@@ -734,7 +776,7 @@ class UploadManagerTest(TestCase):
                 expect(small.completed).to_equal(True)
             yield
 
-        manager = UploadManager(is_in_use=_never_in_use, unless_in_use=guard)
+        manager = UploadManager(unless_in_use=guard)
         big = manager.handle_chunk(
             upload_uuid="big",
             filename="big.ctb",
@@ -792,16 +834,12 @@ class UploadManagerTest(TestCase):
         manager: Any = None
         observed = []
 
-        def is_in_use(path: pathlib.Path) -> bool:
-            observed.append(manager._lock.locked())
-            return False
-
         @contextmanager
         def unless_in_use(path: pathlib.Path) -> Iterator[None]:
             observed.append(manager._lock.locked())
             yield
 
-        manager = UploadManager(is_in_use=is_in_use, unless_in_use=unless_in_use)
+        manager = UploadManager(unless_in_use=unless_in_use)
         expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
         expect(self._chunk(manager, 4, b"new!", 8).completed).to_equal(True)
         expect(observed).to_equal([False, False])

@@ -34,7 +34,7 @@ import time
 from contextlib import contextmanager
 from enum import Enum
 from pathlib import Path
-from typing import Iterator, Optional, Tuple, Type
+from typing import Dict, Iterator, List, Optional, Tuple, Type
 
 import serial
 
@@ -62,15 +62,15 @@ _ACTIVE_STATES = (
 _STATUS_MAX_AGE_SECS = 1.0
 
 # Giving up on a printer that does not answer takes several seconds. That
-# answer is kept longer, so that a refusal is repeated at once instead of
-# after the same wait each time. Keeping it errs on the safe side: while it
-# lasts, existing files stay protected. Any new conversation with the
-# printer, a status poll included, replaces it.
+# answer is kept longer, so that the same refusal is not paid for again on
+# every attempt. Keeping it errs on the safe side: while it lasts, existing
+# files stay protected. It is replaced by the next status read, and it is
+# never enough to grant an override (see ``unless_in_use``).
 _CLOSED_STATUS_MAX_AGE_SECS = 30.0
 
 # For a moment after being told to print, the printer still reports that it
 # is idle. A file Mariner has just started printing is treated as in use for
-# this long, or until the printer reports the print itself.
+# this long, or until the printer reports a print itself.
 _START_GRACE_SECS = 30.0
 
 # Reentrant, so that code holding one of them can call the helpers below.
@@ -81,9 +81,11 @@ _memory_lock = threading.Lock()
 # The last status read and when. Guarded by _memory_lock.
 _last_status: Optional[Tuple[float, PrintStatus, str]] = None
 
-# The file Mariner last started printing and when, until the printer reports
-# the print itself. Guarded by _memory_lock.
-_just_started: Optional[Tuple[Path, float]] = None
+# The files Mariner started printing and when, until the printer reports a
+# print itself. More than one, because a start the printer turned down is
+# remembered too and must not push out the one that is running. Guarded by
+# _memory_lock.
+_just_started: Dict[Path, float] = {}
 
 
 class Usage(Enum):
@@ -117,10 +119,10 @@ def forget_status() -> None:
     The next check then asks the printer, and a print started a moment ago
     is no longer assumed. Used by tests to start from a clean slate.
     """
-    global _last_status, _just_started
+    global _last_status
     with _memory_lock:
         _last_status = None
-        _just_started = None
+        _just_started.clear()
 
 
 def _forget_last_status() -> None:
@@ -130,14 +132,25 @@ def _forget_last_status() -> None:
 
 
 @contextmanager
-def printer_session() -> Iterator[ChiTuPrinter]:
-    """Open the printer for one conversation, exclusively."""
+def _open_printer() -> Iterator[ChiTuPrinter]:
     with _serial_lock:
-        # Whatever is said next may change what the printer is doing, so the
-        # remembered status can no longer be trusted.
-        _forget_last_status()
         with ChiTuPrinter() as printer:
             yield printer
+
+
+@contextmanager
+def printer_session() -> Iterator[ChiTuPrinter]:
+    """Open the printer for one conversation, exclusively.
+
+    For sending commands. What the printer was last known to be doing is
+    forgotten afterwards, since a command may have changed it. To read the
+    status, use ``read_status``, which remembers its answer.
+    """
+    with _open_printer() as printer:
+        try:
+            yield printer
+        finally:
+            _forget_last_status()
 
 
 def start_print(relative_path: str) -> None:
@@ -170,15 +183,14 @@ def start_print(relative_path: str) -> None:
 
 
 def _remember_started(relative_path: str) -> None:
-    global _just_started
     started = resolve_in_files_directory(relative_path)
     if started is not None:
         with _memory_lock:
-            _just_started = (started, time.monotonic())
+            _just_started[started] = time.monotonic()
 
 
 def _query_printer() -> Tuple[PrintStatus, str]:
-    with printer_session() as printer:
+    with _open_printer() as printer:
         status = retry(printer.get_print_status, TRANSIENT_ERRORS, num_retries=3)
         if status.state == PrinterState.CLOSED:
             return (status, "")
@@ -230,23 +242,31 @@ def _remembered_status() -> Optional[Tuple[PrintStatus, str]]:
 
 
 def _recent_status() -> Tuple[PrintStatus, str]:
-    """The status, asking the printer only if nothing recent is remembered."""
-    return _remembered_status() or read_status()
+    """The status, asking the printer only if nothing recent is remembered.
+
+    If someone else is talking to the printer, this waits for them, and then
+    looks again before asking: a status poll that just finished has left its
+    answer behind, and that answer will do.
+    """
+    remembered = _remembered_status()
+    if remembered is not None:
+        return remembered
+    with _serial_lock:
+        return _remembered_status() or read_status()
 
 
-def _file_just_started(status: PrintStatus) -> Optional[Path]:
-    """The file Mariner started printing, while the printer has yet to say so."""
-    global _just_started
+def _files_just_started(status: PrintStatus) -> List[Path]:
+    """The files Mariner started printing, while the printer has yet to say so."""
     with _memory_lock:
-        if _just_started is None:
-            return None
-        started, started_at = _just_started
-        reported_by_printer = status.state in _ACTIVE_STATES
-        expired = time.monotonic() - started_at >= _START_GRACE_SECS
-        if reported_by_printer or expired:
-            _just_started = None
-            return None
-        return started
+        if status.state in _ACTIVE_STATES:
+            # The printer now reports a print itself, and names its file.
+            _just_started.clear()
+            return []
+        now = time.monotonic()
+        for started, started_at in list(_just_started.items()):
+            if now - started_at >= _START_GRACE_SECS:
+                del _just_started[started]
+        return list(_just_started)
 
 
 def same_file(a: Path, b: Path) -> bool:
@@ -305,7 +325,7 @@ def usage_of(path: Path) -> Usage:
         return Usage.FREE
 
     status, selected_file = _recent_status()
-    just_started = _file_just_started(status)
+    just_started = _files_just_started(status)
 
     if status.state in _ACTIVE_STATES:
         printing = resolve_in_files_directory(selected_file) if selected_file else None
@@ -313,7 +333,7 @@ def usage_of(path: Path) -> Usage:
             return Usage.UNIDENTIFIED_PRINT
         return Usage.PRINTING if _concerns(printing, path) else Usage.FREE
 
-    if just_started is not None and _concerns(just_started, path):
+    if any(_concerns(started, path) for started in just_started):
         return Usage.PRINTING
     if _is_confirmed_idle(status):
         return Usage.FREE
@@ -335,12 +355,22 @@ def unless_in_use(path: Path, *, even_if_unreachable: bool = False) -> Iterator[
 
     *even_if_unreachable* lets the block run although the printer could not
     be asked (``Usage.PRINTER_UNREACHABLE``). It is for a user who knows the
-    printer is switched off and says so explicitly; it never overrides a
-    print the printer did report.
+    printer is switched off and says so explicitly. The printer is asked
+    again on the spot before the override is granted, so it never applies to
+    a print the printer reports, however recently it started answering.
     """
+    if os.path.lexists(path):
+        # Asked before the lock is taken, so that while this waits for the
+        # printer, operations that need nothing from it are not held up.
+        _recent_status()
     with _change_lock:
         usage = usage_of(path)
-        overridden = even_if_unreachable and usage is Usage.PRINTER_UNREACHABLE
-        if usage is not Usage.FREE and not overridden:
+        if usage is Usage.PRINTER_UNREACHABLE and even_if_unreachable:
+            # What is remembered may be half a minute old. Ask again now.
+            read_status()
+            usage = usage_of(path)
+            if usage is Usage.PRINTER_UNREACHABLE:
+                usage = Usage.FREE
+        if usage is not Usage.FREE:
             raise FileInUse(path, usage)
         yield

@@ -93,6 +93,11 @@ removed. Names it cannot use safely are refused instead of being rewritten:
 Rename the file and upload it again. The same rules apply to folder names and
 to files sent from a slicer.
 
+An upload is also refused with error 400 when the file is not in a format
+Mariner can print, when a folder already has that name, or when the name is
+one Mariner keeps for transfers in progress (``.upload-<random>.part`` and
+``.sdcp_uploads``).
+
 .. rubric:: Replacing a file
 
 Uploading a file whose name already exists replaces it. The new file is first

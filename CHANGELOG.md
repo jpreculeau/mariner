@@ -27,6 +27,8 @@
 - Show in the web interface why an upload or a deletion was refused
 - Keep overlapping SDCP transfers apart, even when they share an id
 - Refuse to upload a file onto the name of a folder
+- Keep transfers in progress out of reach of every file route
+- Delete a symbolic link itself, not the file it points to, including a link whose target is gone
 - Keep the dashboard working when the file being printed cannot be read
 - Read the firmware version from boards that end lines with CRLF
 - Treat undecodable bytes from the printer as a bad answer instead of crashing

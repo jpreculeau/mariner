@@ -764,6 +764,30 @@ class MarinerServerTest(TestCase):
         expect(response.status_code).to_equal(200)
         expect(self._stored("foobar.ctb")).to_equal(b"new contents")
 
+    def test_an_override_does_not_go_through_if_the_printer_now_answers(
+        self,
+    ) -> None:
+        # Refused because the printer was silent. Before the user confirms,
+        # the printer comes back, printing that very file.
+        self._printer_is_silent()
+        expect(
+            self.client.post("/api/delete_file?filename=foobar.ctb").status_code
+        ).to_equal(409)
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING,
+            current_byte=5000,
+            total_bytes=10000,
+            counters_seen=True,
+        )
+        self.printer_mock.get_selected_file.return_value = "foobar.ctb"
+
+        response = self.client.post(
+            "/api/delete_file?filename=foobar.ctb&ignore_unreachable_printer=1"
+        )
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("file_in_use")
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+
     def test_a_print_in_progress_cannot_be_overridden(self) -> None:
         self._printer_is_printing("foobar.ctb")
         response = self.client.post(
@@ -906,6 +930,48 @@ class MarinerServerTest(TestCase):
         expect(os.path.exists(config.get_files_directory() / "mariner.ctb")).to_equal(
             False
         )
+
+    def test_delete_file_removes_a_link_and_leaves_its_target(self) -> None:
+        self.fs.create_symlink("/mnt/usb_share/link.ctb", "/mnt/usb_share/foobar.ctb")
+        response = self.client.post("/api/delete_file?filename=link.ctb")
+        expect(response.status_code).to_equal(200)
+        expect(os.path.lexists("/mnt/usb_share/link.ctb")).to_equal(False)
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+
+    def test_delete_file_removes_a_link_whose_target_is_gone(self) -> None:
+        # The listing shows it, so it must be possible to get rid of it.
+        self.fs.create_symlink("/mnt/usb_share/dangling.ctb", "/mnt/usb_share/gone")
+        response = self.client.post("/api/delete_file?filename=dangling.ctb")
+        expect(response.status_code).to_equal(200)
+        expect(os.path.lexists("/mnt/usb_share/dangling.ctb")).to_equal(False)
+
+    def test_transfers_in_progress_are_out_of_reach_of_every_route(self) -> None:
+        self.fs.create_file("/mnt/usb_share/.sdcp_uploads/abcd.part", contents=b"x")
+        self.fs.create_file("/mnt/usb_share/.upload-0123abcd.part", contents=b"x")
+
+        expect(
+            self.client.get("/api/list_files?path=.sdcp_uploads").status_code
+        ).to_equal(400)
+        for hidden in (".sdcp_uploads/abcd.part", ".upload-0123abcd.part"):
+            response = self.client.post(f"/api/delete_file?filename={hidden}")
+            expect(response.status_code).to_equal(400)
+            expect(
+                self.client.get(f"/api/file_details?filename={hidden}").status_code
+            ).to_equal(400)
+        data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
+        expect(
+            self.client.post(
+                "/api/upload_file?path=.sdcp_uploads", data=data
+            ).status_code
+        ).to_equal(400)
+        expect(
+            self.client.post(
+                "/api/create_directory?path=.sdcp_uploads&name=d"
+            ).status_code
+        ).to_equal(400)
+
+        expect(os.listdir("/mnt/usb_share/.sdcp_uploads")).to_equal(["abcd.part"])
+        expect(os.path.exists("/mnt/usb_share/.upload-0123abcd.part")).to_equal(True)
 
     def test_delete_file_that_is_not_file(self) -> None:
         with patch("os.remove") as remove_mock:

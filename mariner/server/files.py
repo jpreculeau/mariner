@@ -79,11 +79,28 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
     return name
 
 
+def _is_inside_files_directory(candidate: Path, files_directory: Path) -> bool:
+    """Whether *candidate* is the files directory or something clients may reach in it.
+
+    Hidden entries (see ``is_hidden_entry``) are out of reach at any depth:
+    they hold transfers in progress, which no client request may list,
+    change or remove.
+    """
+    if candidate == files_directory:
+        return True
+    if files_directory not in candidate.parents:
+        return False
+    return not any(
+        is_hidden_entry(part) for part in candidate.relative_to(files_directory).parts
+    )
+
+
 def resolve_in_files_directory(relative: str) -> Optional[Path]:
     """Resolve *relative* inside the files directory, or None if it escapes.
 
     Returns the files directory itself for ``""`` and ``"."``. Symbolic links
     are followed before the check, so a link pointing outside is refused too.
+    A path that goes through a hidden entry is refused as well.
     """
     if "\x00" in relative:
         # No path can carry a NUL byte.
@@ -95,9 +112,32 @@ def resolve_in_files_directory(relative: str) -> Optional[Path]:
         # Text the filesystem cannot take as a path at all, such as the lone
         # surrogates a JSON client can send.
         return None
-    if candidate != files_directory and files_directory not in candidate.parents:
+    if not _is_inside_files_directory(candidate, files_directory):
         return None
     return candidate
+
+
+def resolve_entry_in_files_directory(relative: str) -> Optional[Path]:
+    """Like ``resolve_in_files_directory``, but for the entry itself.
+
+    The folder holding the entry is resolved; the entry's own name is kept
+    as it is. For a symbolic link this gives the link, not what it points
+    to, which is what removing an entry must act on: the link goes, its
+    target stays, and a link whose target is gone can still be removed.
+
+    Returns None if the path escapes, or does not name an entry (``""``,
+    ``.``, a path ending in ``..``).
+    """
+    name = os.path.basename(relative.rstrip("/"))
+    if name in ("", ".", ".."):
+        return None
+    parent = resolve_in_files_directory(os.path.dirname(relative.rstrip("/")))
+    if parent is None:
+        return None
+    entry = parent / name
+    if not _is_inside_files_directory(entry, config.get_files_directory().resolve()):
+        return None
+    return entry
 
 
 class NotPrintable(Exception):

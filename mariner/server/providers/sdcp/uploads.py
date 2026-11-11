@@ -22,7 +22,7 @@ from mariner.server.files import (
     resolve_in_files_directory,
     safe_filename,
 )
-from mariner.server.printer_access import FileInUse, is_in_use, unless_in_use
+from mariner.server.printer_access import FileInUse, unless_in_use
 from mariner.server.providers.sdcp import constants
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -69,18 +69,16 @@ class UploadManager:
 
     def __init__(
         self,
-        is_in_use: Callable[[Path], bool] = is_in_use,
         unless_in_use: Callable[[Path], ContextManager[None]] = unless_in_use,
     ) -> None:
         """
-        *is_in_use* and *unless_in_use* decide whether a file may be replaced
-        while a print is running (see ``printer_access``). They talk to the
-        printer, which can take seconds, so they are never called with
-        ``self._lock`` held: the SDCP event loop takes that lock itself.
+        *unless_in_use* decides whether a file may be replaced while a print
+        is running (see ``printer_access``). It talks to the printer, which
+        can take seconds, so it is never called with ``self._lock`` held:
+        the SDCP event loop takes that lock itself.
         """
         self._lock = threading.Lock()
         self._sessions: Dict[str, _Session] = {}
-        self._is_in_use = is_in_use
         self._unless_in_use = unless_in_use
 
     def is_transferring(self) -> bool:
@@ -136,9 +134,13 @@ class UploadManager:
         # file is moved into place.
         if self._starts_a_transfer(upload_uuid, offset):
             destination = resolve_in_files_directory(safe_name)
-            if destination is not None and self._is_in_use(destination):
+            try:
+                if destination is not None:
+                    with self._unless_in_use(destination):
+                        pass
+            except FileInUse as error:
                 logger.warning(
-                    "SDCP: refusing to replace %s while it prints", safe_name
+                    "SDCP: not replacing %s: %s", safe_name, error.usage.value
                 )
                 self._abandon(upload_uuid)
                 return ChunkResult(
@@ -283,9 +285,9 @@ class UploadManager:
             # start on this file between the check and the replacement.
             with self._unless_in_use(destination):
                 os.replace(session.scratch_path, destination)
-        except FileInUse:
+        except FileInUse as error:
             logger.warning(
-                "SDCP: refusing to replace %s while it prints", session.filename
+                "SDCP: not replacing %s: %s", session.filename, error.usage.value
             )
             self._unlink(session.scratch_path)
             return ChunkResult(ok=False, error=constants.UploadError.FILE_OPEN_FAILED)
