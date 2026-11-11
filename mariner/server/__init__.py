@@ -10,6 +10,7 @@ from mariner import config
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
 from mariner.server.app import app as flask_app, csrf
+from mariner.server.files import remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
 from mariner.server.utils import (
     read_cached_preview,
@@ -64,6 +65,7 @@ class CacheBootstrapper(multiprocessing.Process):
 
 
 def main() -> None:
+    remove_stale_scratch_files()
     CacheBootstrapper().start()
 
     # Global log level applies to mariner.* and waitress output.

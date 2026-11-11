@@ -21,6 +21,7 @@ from mariner.printer import (
     PrintStatus,
 )
 from mariner.server.api import reset_progress_tracking
+from mariner.server import printer_access
 from mariner.server.app import app
 from mariner.server.utils import read_cached_sliced_model_file
 
@@ -63,6 +64,7 @@ class MarinerServerTest(TestCase):
         )
 
         self.client = app.test_client()
+        printer_access.forget_status()
         app.config["WTF_CSRF_ENABLED"] = False
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
@@ -301,6 +303,37 @@ class MarinerServerTest(TestCase):
         self.fs.create_symlink("/mnt/usb_share/dangling.ctb", "/mnt/usb_share/gone")
         response = self.client.get("/api/list_files")
         expect(response.status_code).to_equal(200)
+        listing = response.get_json()
+        # Not offered as a folder, which could not be opened.
+        expect(listing["directories"]).to_equal([])
+        files = {f["filename"]: f for f in listing["files"]}
+        expect(files["dangling.ctb"]["can_be_printed"]).to_equal(False)
+
+    def test_list_files_lists_anything_that_is_not_a_directory_as_a_file(self) -> None:
+        # pyfakefs reports a dangling link as a file; a real filesystem
+        # reports it as neither file nor directory. Both must land in "files".
+        entry = Mock()
+        entry.name = "dangling.ctb"
+        entry.path = "/mnt/usb_share/dangling.ctb"
+        entry.is_dir.return_value = False
+        entry.is_file.return_value = False
+        entry.stat.side_effect = OSError("dangling")
+        scan = Mock()
+        scan.__enter__ = Mock(return_value=[entry])
+        scan.__exit__ = Mock(return_value=None)
+        with patch("mariner.server.api.os.scandir", return_value=scan):
+            listing = self.client.get("/api/list_files").get_json()
+        expect(listing["directories"]).to_equal([])
+        expect([f["filename"] for f in listing["files"]]).to_equal(["dangling.ctb"])
+
+    def test_list_files_hides_uploads_in_progress(self) -> None:
+        self.fs.create_file(
+            "/mnt/usb_share/.upload-0123456789abcdef.part", contents=b"partial"
+        )
+        listing = self.client.get("/api/list_files").get_json()
+        names = [f["filename"] for f in listing["files"]]
+        expect(".upload-0123456789abcdef.part" in names).to_equal(False)
+        expect("foobar.ctb" in names).to_equal(True)
 
     def test_list_files_from_invalid_directory(self) -> None:
         response = self.client.get("/api/list_files?path=../foo/")
@@ -322,6 +355,23 @@ class MarinerServerTest(TestCase):
         )
         expect(response.status_code).to_equal(200)
         self.printer_mock.start_printing.assert_called_once_with("sub/part.ctb")
+
+    def test_command_start_printing_sends_the_path_the_printer_knows(self) -> None:
+        self.fs.create_file(
+            "/mnt/usb_share/sub/part.ctb", contents=self.ctb_file_contents
+        )
+        for given, sent in (
+            ("/mnt/usb_share/foobar.ctb", "foobar.ctb"),
+            ("./foobar.ctb", "foobar.ctb"),
+            ("sub/../foobar.ctb", "foobar.ctb"),
+            ("sub//part.ctb", "sub/part.ctb"),
+        ):
+            self.printer_mock.start_printing.reset_mock()
+            response = self.client.post(
+                f"/api/printer/command/start_print?filename={given}"
+            )
+            expect(response.status_code).to_equal(200)
+            self.printer_mock.start_printing.assert_called_once_with(sent)
 
     def test_command_start_printing_refuses_control_characters(self) -> None:
         # Anything after a line break would reach the mainboard as a command
@@ -483,6 +533,12 @@ class MarinerServerTest(TestCase):
     def _leftovers(self, directory: str = "/mnt/usb_share") -> list:
         return [name for name in os.listdir(directory) if name.endswith(".part")]
 
+    @staticmethod
+    def _save_half_then_fail(destination: str, *args: Any, **kwargs: Any) -> None:
+        with open(destination, "wb") as file:
+            file.write(b"abc")
+        raise OSError("disk full")
+
     def test_upload_file(self) -> None:
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
         response = self.client.post("/api/upload_file", data=data)
@@ -523,13 +579,16 @@ class MarinerServerTest(TestCase):
 
     def test_upload_file_that_fails_leaves_nothing_behind(self) -> None:
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
-        with patch.object(FileStorage, "save", side_effect=OSError("disk full")):
+        # The failure comes after some bytes were written, so the test fails
+        # if the half-written scratch file is not removed.
+        with patch.object(FileStorage, "save", side_effect=self._save_half_then_fail):
             with self.assertRaises(OSError):
                 self.client.post("/api/upload_file", data=data)
         expect(os.path.exists("/mnt/usb_share/myfile.ctb")).to_equal(False)
         expect(self._leftovers()).to_equal([])
 
     def _printer_is_printing(self, selected_file: str) -> None:
+        printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.PRINTING, current_byte=5000, total_bytes=10000
         )
@@ -542,6 +601,7 @@ class MarinerServerTest(TestCase):
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("file_in_use")
         expect(response.get_json()["title"]).to_equal("File In Use")
         expect(self._stored("foobar.ctb")).to_equal(self.ctb_file_contents)
         expect(self._leftovers()).to_equal([])
@@ -564,6 +624,107 @@ class MarinerServerTest(TestCase):
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(200)
         expect(self._stored("foobar.ctb")).to_equal(b"new contents")
+
+    def test_upload_file_refuses_when_the_print_starts_during_the_upload(self) -> None:
+        # The first check passes, then the print starts while the body is
+        # being received. The check made as the file is moved into place
+        # must still catch it.
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE
+        )
+        self.printer_mock.get_selected_file.return_value = "foobar.ctb"
+        real_save = FileStorage.save
+
+        def save_while_a_print_starts(
+            storage: FileStorage, destination: str, *args: Any, **kwargs: Any
+        ) -> None:
+            real_save(storage, destination, *args, **kwargs)
+            self.client.post("/api/printer/command/start_print?filename=foobar.ctb")
+            self._printer_is_printing("foobar.ctb")
+
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        with patch.object(
+            FileStorage, "save", autospec=True, side_effect=save_while_a_print_starts
+        ):
+            response = self.client.post("/api/upload_file", data=data)
+
+        expect(response.status_code).to_equal(409)
+        expect(self._stored("foobar.ctb")).to_equal(self.ctb_file_contents)
+        expect(self._leftovers()).to_equal([])
+
+    def _printer_is_silent(self) -> None:
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+
+    def test_upload_file_does_not_replace_a_file_when_the_printer_is_silent(
+        self,
+    ) -> None:
+        # With no answer there is no telling whether the file is being
+        # printed, so it is left alone and the client is told why.
+        self._printer_is_silent()
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("printer_not_answering")
+        expect(self._stored("foobar.ctb")).to_equal(self.ctb_file_contents)
+        expect(self._leftovers()).to_equal([])
+
+    def test_upload_file_under_a_new_name_works_when_the_printer_is_silent(
+        self,
+    ) -> None:
+        self._printer_is_silent()
+        data = {"file": (io.BytesIO(b"abcdef"), "other.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(200)
+        expect(self._stored("other.ctb")).to_equal(b"abcdef")
+        # A new file cannot be in use, so the printer is not even asked.
+        self.printer_mock.get_print_status.assert_not_called()
+
+    def test_upload_file_goes_through_once_the_printer_answers_again(self) -> None:
+        self._printer_is_silent()
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        expect(self.client.post("/api/upload_file", data=data).status_code).to_equal(
+            409
+        )
+
+        # Reading the status asks the printer anew, which is what a client
+        # does to retry.
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE
+        )
+        self.printer_mock.get_selected_file.return_value = ""
+        expect(self.client.get("/api/print_status").get_json()["state"]).to_equal(
+            "IDLE"
+        )
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        expect(self.client.post("/api/upload_file", data=data).status_code).to_equal(
+            200
+        )
+        expect(self._stored("foobar.ctb")).to_equal(b"new contents")
+
+    def test_upload_file_does_not_replace_a_file_when_the_printing_file_is_unknown(
+        self,
+    ) -> None:
+        self.fs.create_file("/mnt/usb_share/other.ctb", contents=b"old")
+        self._printer_is_printing("foobar.ctb")
+        self.printer_mock.get_selected_file.side_effect = UnexpectedPrinterResponse(
+            "ok\r\n"
+        )
+        data = {"file": (io.BytesIO(b"abcdef"), "other.ctb")}
+        with patch("mariner.server.utils.time.sleep"):
+            response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("printer_not_answering")
+        expect(self._stored("other.ctb")).to_equal(b"old")
+
+    def test_delete_file_is_refused_when_the_printer_is_silent(self) -> None:
+        self._printer_is_silent()
+        response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("printer_not_answering")
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
 
     def test_delete_file_refuses_the_file_being_printed(self) -> None:
         self._printer_is_printing("foobar.ctb")
@@ -652,7 +813,7 @@ class MarinerServerTest(TestCase):
         )
 
     def test_create_directory_with_unsafe_name(self) -> None:
-        for name in ("..", "a%2Fb", "it%27s", "a%0Ab"):
+        for name in ("..", "a%2Fb", "it%27s", "a%0Ab", "a%3Ab", "a%3F"):
             response = self.client.post(f"/api/create_directory?path=.&name={name}")
             expect(response.status_code).to_equal(400)
 

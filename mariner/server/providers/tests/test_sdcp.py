@@ -3,7 +3,8 @@ import json
 import os
 import pathlib
 import re
-from typing import Any, List, cast
+from contextlib import contextmanager
+from typing import Any, Iterator, List, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -19,7 +20,18 @@ from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
 from mariner.server.providers.sdcp import constants, identity, messages
 from mariner.server.providers.sdcp.bridge import PrinterBridge, strip_storage_prefix
 from mariner.server.providers.sdcp.service import SDCPService
+from mariner.server import printer_access
+from mariner.server.printer_access import FileInUse
 from mariner.server.providers.sdcp.uploads import UploadManager
+
+
+def _never_in_use(path: pathlib.Path) -> bool:
+    return False
+
+
+@contextmanager
+def _no_guard(path: pathlib.Path) -> Iterator[None]:
+    yield
 
 
 class StripStoragePrefixTest(TestCase):
@@ -175,6 +187,7 @@ class SDCPBridgeTest(TestCase):
         )
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
+        printer_access.forget_status()
         self.printer_patcher = patch("mariner.server.printer_access.ChiTuPrinter")
         constructor = self.printer_patcher.start()
         constructor.return_value = self.printer_mock
@@ -356,7 +369,7 @@ class SDCPBridgeTest(TestCase):
         NOT_FOUND even though the file was sitting in the directory.
         """
         name = "a-precise-chimney_6(1).stl_1_0.050_2.500_2026_09_07.ctb"
-        manager = UploadManager(is_being_printed=lambda path: False)
+        manager = UploadManager(is_in_use=_never_in_use, unless_in_use=_no_guard)
         result = manager.handle_chunk(
             upload_uuid="abc",
             filename=name,
@@ -437,6 +450,37 @@ class SDCPBridgeTest(TestCase):
         expect(failures).to_equal(["/local/batch"])
         expect(pathlib.Path("/mnt/usb_share/batch/part.ctb").exists()).to_equal(True)
 
+    def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        failures = self.bridge.delete(["/local/foobar.ctb"], [])
+        expect(failures).to_equal(["/local/foobar.ctb"])
+        expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(True)
+
+    def test_delete_asks_the_printer_once_for_a_whole_batch(self) -> None:
+        self.fs.create_file("/mnt/usb_share/a.ctb", contents=b"x")
+        self.fs.create_file("/mnt/usb_share/b.ctb", contents=b"x")
+        self.printer_mock.get_selected_file.return_value = ""
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE
+        )
+        failures = self.bridge.delete(["/local/a.ctb", "/local/b.ctb"], [])
+        expect(failures).to_equal([])
+        expect(self.printer_mock.get_print_status.call_count).to_equal(1)
+
+    def test_delete_does_not_walk_a_string_character_by_character(self) -> None:
+        # A client sending "FolderList": "a" must not delete the folder "a".
+        self.fs.create_dir("/mnt/usb_share/a")
+        failures = self.bridge.delete([], "ab")
+        expect(failures).to_equal(["ab"])
+        expect(pathlib.Path("/mnt/usb_share/a").is_dir()).to_equal(True)
+
+    def test_delete_reports_entries_that_are_not_paths(self) -> None:
+        failures = self.bridge.delete([42, None, {"a": 1}], [["x"]])
+        expect(failures).to_equal([42, None, {"a": 1}, ["x"]])
+        expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(True)
+
     def test_delete_refuses_to_remove_root(self) -> None:
         failures = self.bridge.delete([], ["/local/"])
         expect(failures).to_equal(["/local/"])
@@ -450,7 +494,7 @@ class UploadManagerTest(TestCase):
         _get_config.cache_clear()
         self.setUpPyfakefs(additional_skip_names=["importlib.metadata"])
         self.fs.create_dir("/mnt/usb_share")
-        self.manager = UploadManager(is_being_printed=lambda path: False)
+        self.manager = UploadManager(is_in_use=_never_in_use, unless_in_use=_no_guard)
 
     def _upload(
         self,
@@ -479,41 +523,82 @@ class UploadManagerTest(TestCase):
                 return result
         return result
 
-    def test_upload_refuses_to_replace_the_file_being_printed(self) -> None:
-        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
-        manager = UploadManager(is_being_printed=lambda path: path.name == "model.ctb")
-        result = manager.handle_chunk(
+    def _chunk(self, manager: Any, offset: int, data: bytes, total: int) -> Any:
+        return manager.handle_chunk(
             upload_uuid="abc",
             filename="model.ctb",
-            offset=0,
-            total_size=4,
+            offset=offset,
+            total_size=total,
             expected_md5="",
             verify=False,
-            data=b"new!",
+            data=data,
         )
+
+    def test_upload_refuses_to_replace_the_file_being_printed(self) -> None:
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
+        manager = UploadManager(
+            is_in_use=lambda path: path.name == "model.ctb", unless_in_use=_no_guard
+        )
+        result = self._chunk(manager, 0, b"new!", 8)
+        expect(result.ok).to_equal(False)
+        expect(result.error).to_equal(constants.UploadError.FILE_OPEN_FAILED)
+        with open("/mnt/usb_share/model.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"printing")
+        # Refused before anything was stored.
+        expect(manager.is_transferring()).to_equal(False)
+        expect(os.path.exists("/mnt/usb_share/.sdcp_uploads")).to_equal(False)
+
+    def test_upload_refuses_when_the_print_starts_during_the_transfer(self) -> None:
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
+
+        @contextmanager
+        def print_started_meanwhile(path: pathlib.Path) -> Iterator[None]:
+            raise FileInUse(path, printer_access.Usage.PRINTING)
+            yield
+
+        manager = UploadManager(
+            is_in_use=_never_in_use, unless_in_use=print_started_meanwhile
+        )
+        expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
+        result = self._chunk(manager, 4, b"new!", 8)
         expect(result.ok).to_equal(False)
         expect(result.error).to_equal(constants.UploadError.FILE_OPEN_FAILED)
         with open("/mnt/usb_share/model.ctb", "rb") as file:
             expect(file.read()).to_equal(b"printing")
         expect(manager.is_transferring()).to_equal(False)
 
-    def test_upload_refuses_when_the_print_starts_during_the_transfer(self) -> None:
-        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
+    def test_restarting_a_transfer_onto_a_printing_file_drops_what_was_sent(
+        self,
+    ) -> None:
         printing = {"now": False}
-        manager = UploadManager(is_being_printed=lambda path: printing["now"])
-        common = dict(
-            upload_uuid="abc",
-            filename="model.ctb",
-            total_size=8,
-            expected_md5="",
-            verify=False,
+        manager = UploadManager(
+            is_in_use=lambda path: printing["now"], unless_in_use=_no_guard
         )
-        expect(manager.handle_chunk(offset=0, data=b"new!", **common).ok).to_equal(True)
+        expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
         printing["now"] = True
-        result = manager.handle_chunk(offset=4, data=b"new!", **common)
-        expect(result.ok).to_equal(False)
-        with open("/mnt/usb_share/model.ctb", "rb") as file:
-            expect(file.read()).to_equal(b"printing")
+        expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(False)
+        expect(manager.is_transferring()).to_equal(False)
+
+    def test_the_printer_is_never_queried_with_the_upload_lock_held(self) -> None:
+        # The SDCP event loop calls is_transferring(), which takes that lock.
+        # A serial conversation can take seconds; holding the lock across it
+        # would freeze every connected client.
+        manager: Any = None
+        observed = []
+
+        def is_in_use(path: pathlib.Path) -> bool:
+            observed.append(manager._lock.locked())
+            return False
+
+        @contextmanager
+        def unless_in_use(path: pathlib.Path) -> Iterator[None]:
+            observed.append(manager._lock.locked())
+            yield
+
+        manager = UploadManager(is_in_use=is_in_use, unless_in_use=unless_in_use)
+        expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
+        expect(self._chunk(manager, 4, b"new!", 8).completed).to_equal(True)
+        expect(observed).to_equal([False, False])
 
     def test_upload_id_cannot_name_a_path(self) -> None:
         self.fs.create_dir("/mnt/outside")

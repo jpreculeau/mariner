@@ -14,16 +14,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import PrinterState
+from mariner.printer import PrinterState, is_safe_for_printer
 from mariner.server.api import _layer_from_byte_offset
-from mariner.server.files import is_safe_for_printer, resolve_in_files_directory
+from mariner.server.files import resolve_in_files_directory
 from mariner.server.printer_access import (
     TRANSIENT_ERRORS as _TRANSIENT_ERRORS,
-    file_being_printed,
-    is_inside,
+    FileInUse,
     printer_session,
     read_status,
-    same_file,
+    unless_in_use,
 )
 from mariner.server.providers.sdcp import constants, identity
 from mariner.server.utils import (
@@ -90,7 +89,10 @@ def strip_storage_prefix(path: str) -> str:
 
 
 class PrinterBridge:
-    """Serializes access to the printer and renders SDCP payloads."""
+    """Renders SDCP payloads from the printer and file state.
+
+    Access to the printer itself is serialized by ``printer_access``.
+    """
 
     def __init__(self) -> None:
         self._previous_status: int = int(constants.MachineStatus.IDLE)
@@ -398,11 +400,7 @@ class PrinterBridge:
 
     def list_files(self, url: str) -> List[Dict[str, Any]]:
         relative = strip_storage_prefix(url)
-        directory = (
-            resolve_in_files_directory(relative)
-            if relative
-            else resolve_in_files_directory("")
-        )
+        directory = resolve_in_files_directory(relative)
         if directory is None or not os.path.isdir(directory):
             return []
 
@@ -446,41 +444,57 @@ class PrinterBridge:
             logger.warning("SDCP: listing %s failed: %s", directory, exc)
         return entries
 
-    def delete(self, file_list: List[str], folder_list: List[str]) -> List[str]:
-        """Delete the given paths, returning the ones that could not be removed."""
-        failures: List[str] = []
-        # Asked once: the printer reads this file for the whole print, so
-        # neither it nor a folder holding it may go.
-        printing = file_being_printed()
+    def delete(self, file_list: Any, folder_list: Any) -> List[Any]:
+        """Delete the given paths, returning the ones that could not be removed.
 
-        for raw in file_list or []:
-            path = resolve_in_files_directory(strip_storage_prefix(raw))
+        Both arguments come straight from the client and are expected to be
+        lists of path strings. Anything else is reported as a failure and
+        left alone, as is the file of the print in progress or a folder
+        holding it.
+        """
+        failures: List[Any] = []
+
+        for raw in _as_list(file_list):
+            path = self._deletable(raw)
             if path is None or not os.path.isfile(path):
                 failures.append(raw)
                 continue
-            if printing is not None and same_file(printing, path):
-                logger.warning("SDCP: refusing to delete %s while it prints", raw)
-                failures.append(raw)
-                continue
             try:
-                os.remove(path)
-            except OSError:
+                with unless_in_use(path):
+                    os.remove(path)
+            except (FileInUse, OSError) as exc:
+                logger.warning("SDCP: not deleting %s: %s", raw, exc)
                 failures.append(raw)
 
-        for raw in folder_list or []:
-            relative = strip_storage_prefix(raw)
-            path = resolve_in_files_directory(relative)
-            files_dir = config.get_files_directory().resolve()
+        files_dir = config.get_files_directory().resolve()
+        for raw in _as_list(folder_list):
+            path = self._deletable(raw)
             if path is None or not os.path.isdir(path) or path == files_dir:
                 failures.append(raw)
                 continue
-            if printing is not None and is_inside(printing, path):
-                logger.warning("SDCP: refusing to delete %s while it prints", raw)
-                failures.append(raw)
-                continue
             try:
-                shutil.rmtree(path)
-            except OSError:
+                with unless_in_use(path):
+                    shutil.rmtree(path)
+            except (FileInUse, OSError) as exc:
+                logger.warning("SDCP: not deleting %s: %s", raw, exc)
                 failures.append(raw)
 
         return failures
+
+    @staticmethod
+    def _deletable(raw: Any) -> Optional[Path]:
+        """The path *raw* names inside the files directory, if it names one."""
+        if not isinstance(raw, str):
+            return None
+        return resolve_in_files_directory(strip_storage_prefix(raw))
+
+
+def _as_list(value: Any) -> List[Any]:
+    """*value* if the client sent a list, otherwise a list holding it.
+
+    A bare string must not be walked character by character as if each one
+    were a path to delete.
+    """
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]

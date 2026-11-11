@@ -13,12 +13,12 @@ import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, Dict, Optional
+from typing import Any, BinaryIO, Callable, ContextManager, Dict, Optional
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.server.files import resolve_in_files_directory, safe_filename
-from mariner.server.printer_access import is_being_printed
+from mariner.server.printer_access import FileInUse, is_in_use, unless_in_use
 from mariner.server.providers.sdcp import constants
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -64,18 +64,20 @@ class UploadManager:
     _lock: threading.Lock
 
     def __init__(
-        self, is_being_printed: Callable[[Path], bool] = is_being_printed
+        self,
+        is_in_use: Callable[[Path], bool] = is_in_use,
+        unless_in_use: Callable[[Path], ContextManager[None]] = unless_in_use,
     ) -> None:
+        """
+        *is_in_use* and *unless_in_use* decide whether a file may be replaced
+        while a print is running (see ``printer_access``). They talk to the
+        printer, which can take seconds, so they are never called with
+        ``self._lock`` held: the SDCP event loop takes that lock itself.
+        """
         self._lock = threading.Lock()
         self._sessions: Dict[str, _Session] = {}
-        self._is_being_printed = is_being_printed
-
-    def _would_replace_file_being_printed(self, filename: str) -> bool:
-        destination = resolve_in_files_directory(filename)
-        if destination is None or not self._is_being_printed(destination):
-            return False
-        logger.warning("SDCP: refusing to replace %s while it prints", filename)
-        return True
+        self._is_in_use = is_in_use
+        self._unless_in_use = unless_in_use
 
     def is_transferring(self) -> bool:
         with self._lock:
@@ -124,6 +126,20 @@ class UploadManager:
                 format_failed=True,
             )
 
+        # Refused before any byte is stored, so the client learns at once
+        # instead of after sending the whole file. Checked again when the
+        # file is moved into place.
+        if self._starts_a_transfer(upload_uuid, offset):
+            destination = resolve_in_files_directory(safe_name)
+            if destination is not None and self._is_in_use(destination):
+                logger.warning(
+                    "SDCP: refusing to replace %s while it prints", safe_name
+                )
+                self._abandon(upload_uuid)
+                return ChunkResult(
+                    ok=False, error=constants.UploadError.FILE_OPEN_FAILED
+                )
+
         with self._lock:
             session = self._sessions.get(upload_uuid)
 
@@ -132,12 +148,6 @@ class UploadManager:
             if session is None or offset == 0:
                 if session is not None:
                     self._discard(upload_uuid, session)
-                # Refused before any byte is stored, so the client learns at
-                # once instead of after sending the whole file.
-                if self._would_replace_file_being_printed(safe_name):
-                    return ChunkResult(
-                        ok=False, error=constants.UploadError.FILE_OPEN_FAILED
-                    )
                 try:
                     scratch = self._scratch_dir() / f"{upload_uuid}.part"
                     handle = open(scratch, "wb")
@@ -193,15 +203,34 @@ class UploadManager:
             session.hasher.update(data)
             session.offset += len(data)
 
-            if session.total_size and session.offset >= session.total_size:
-                return self._finalize(upload_uuid, session)
+            if not (session.total_size and session.offset >= session.total_size):
+                return ChunkResult(ok=True)
 
-        return ChunkResult(ok=True)
+            # Complete. The session leaves the table here, under the lock;
+            # the rest happens outside it because it talks to the printer.
+            session.close()
+            self._sessions.pop(upload_uuid, None)
 
-    def _finalize(self, upload_uuid: str, session: _Session) -> ChunkResult:
-        session.close()
-        self._sessions.pop(upload_uuid, None)
+        return self._finalize(session)
 
+    def _starts_a_transfer(self, upload_uuid: str, offset: int) -> bool:
+        with self._lock:
+            return offset == 0 or upload_uuid not in self._sessions
+
+    def _abandon(self, upload_uuid: str) -> None:
+        """Drop whatever was received so far under *upload_uuid*, if anything."""
+        with self._lock:
+            session = self._sessions.get(upload_uuid)
+            if session is not None:
+                self._discard(upload_uuid, session)
+        self._cleanup_scratch_dir()
+
+    def _finalize(self, session: _Session) -> ChunkResult:
+        """Verify a completed transfer and move it into the files directory.
+
+        Called without ``self._lock``: *session* is already out of the table,
+        so nothing else can reach it.
+        """
         computed = session.hasher.hexdigest()
         logger.info(
             "SDCP: upload finished: %s bytes=%d declared_total=%d check=%s "
@@ -230,10 +259,6 @@ class UploadManager:
                     filename=session.filename,
                 )
 
-        if self._would_replace_file_being_printed(session.filename):
-            self._unlink(session.scratch_path)
-            return ChunkResult(ok=False, error=constants.UploadError.FILE_OPEN_FAILED)
-
         destination = resolve_in_files_directory(session.filename)
         if destination is None:
             self._unlink(session.scratch_path)
@@ -244,7 +269,16 @@ class UploadManager:
             )
 
         try:
-            os.replace(session.scratch_path, destination)
+            # The guard holds the printer for the move, so a print cannot
+            # start on this file between the check and the replacement.
+            with self._unless_in_use(destination):
+                os.replace(session.scratch_path, destination)
+        except FileInUse:
+            logger.warning(
+                "SDCP: refusing to replace %s while it prints", session.filename
+            )
+            self._unlink(session.scratch_path)
+            return ChunkResult(ok=False, error=constants.UploadError.FILE_OPEN_FAILED)
         except OSError as exc:
             logger.warning("SDCP: could not move upload into place: %s", exc)
             self._unlink(session.scratch_path)

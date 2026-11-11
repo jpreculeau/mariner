@@ -77,14 +77,17 @@ File Names
 
 .. rubric:: An upload is refused with error 400
 
-Mariner stores a file under exactly the name it was given, so that the same
-name works for listing, printing and deleting. It no longer rewrites names
-(spaces, accents, parentheses and non-Latin characters are all kept), and
-refuses the few it cannot use safely:
+Mariner stores a file under the name it was given, so that the same name
+works for listing, printing and deleting. Spaces, accents, parentheses and
+non-Latin characters are all kept; only the whitespace around the name is
+removed. Names it cannot use safely are refused instead of being rewritten:
 
 * names containing ``/`` or ``\``;
 * names containing a single quote (``'``), which the printer uses to delimit
   the file name in its print command;
+* names containing ``: * ? " < > |``, which the FAT filesystem read by the
+  printer cannot store;
+* names ending with a dot, or longer than 255 bytes;
 * names containing control characters such as a line break.
 
 Rename the file and upload it again. The same rules apply to folder names and
@@ -92,20 +95,42 @@ to files sent from a slicer.
 
 .. rubric:: Replacing a file
 
-Uploading a file whose name already exists replaces it. The new file is
-written under a temporary name (``.upload-<name>.part``) and moved into place
-once complete, so an interrupted upload leaves the previous file intact.
+Uploading a file whose name already exists replaces it. The new file is first
+written under a temporary name (``.upload-<random>.part``), which the file
+list does not show, and moved into place once complete. An interrupted upload
+therefore leaves the previous file intact, and anything left behind by a
+power cut is removed the next time Mariner starts.
 
-.. rubric:: A file cannot be replaced or deleted during a print
+.. rubric:: A file cannot be replaced or deleted (error 409)
 
-The printer reads the file layer by layer for the whole print. While a print
-is starting, running or paused, Mariner therefore refuses to replace or delete
-the file being printed, or a folder that contains it. The web interface and
-UVtools answer with error 409, and a slicer sending over the network sees its
-transfer fail. Other files can still be uploaded and deleted as usual.
+The printer reads its file layer by layer for the whole print. Mariner
+therefore refuses to replace or delete an existing file in two cases, in the
+web interface, from UVtools and from a slicer sending over the network alike:
 
-Wait for the print to finish or cancel it, then try again. To print a new
-version without waiting, upload it under another name.
+* **The file is being printed** (the print is starting, running or paused).
+  The same goes for a folder that contains it, which slicers can delete. This
+  holds however the print was started: from Mariner, from a slicer or from
+  the printer's own screen. Wait for the print to finish, or cancel it.
+
+* **The printer is not answering**, so Mariner cannot tell whether the file
+  is being printed: the printer is off, the serial cable is loose, or the
+  printer started a print without saying from which file. Switch the printer
+  on or check the cable, then try again; opening the dashboard asks the
+  printer again.
+
+In both cases a file can always be stored under a **new name**, since nothing
+can be reading a file that does not exist yet.
+
+The web API answers with status 409 and a ``code`` of ``file_in_use`` or
+``printer_not_answering``. UVtools receives a 409, and a slicer using SDCP sees
+its transfer or deletion fail.
+
+.. note::
+
+   This protection is only as good as the serial link. A print started from
+   the printer's own screen is noticed within about a second. Mariner cannot
+   protect a file from being changed by other means, such as another computer
+   writing to the same storage.
 
 Printing
 --------

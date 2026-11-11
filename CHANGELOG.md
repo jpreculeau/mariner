@@ -13,7 +13,13 @@
 - Answer 404 instead of 500 for a missing folder or an unknown printer command
 - List a folder that contains a dangling symbolic link
 - Let only one request at a time talk to the printer's serial port
-- Refuse to replace or delete the file being printed
+- Refuse to replace or delete the file being printed, however the print was started
+- Leave existing files alone while the printer does not answer; new names are still accepted
+- Refuse file names the printer's FAT filesystem cannot store
+- Give each upload its own temporary file and remove leftovers at startup
+- Send the printer the path it knows when a print is started with another form of it
+- Check the file extension before printing from UVtools
+- Ignore malformed file lists in SDCP delete requests
 - Keep the dashboard working when the file being printed cannot be read
 - Read the firmware version from boards that end lines with CRLF
 - Treat undecodable bytes from the printer as a bad answer instead of crashing

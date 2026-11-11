@@ -15,6 +15,21 @@ from mariner.exceptions import UnexpectedPrinterResponse
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+def has_control_character(value: str) -> bool:
+    """Whether *value* holds a character that would break a command line."""
+    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+
+
+def is_safe_for_printer(path: str) -> bool:
+    """Whether *path* can be placed in a command line sent to the printer.
+
+    A line break would start a second command, and a single quote would end
+    the quoted file name of the print command early. ``/`` is fine: a file in
+    a subdirectory is selected by its relative path.
+    """
+    return bool(path) and "'" not in path and not has_control_character(path)
+
+
 class PrinterState(Enum):
     IDLE = "IDLE"
     STARTING_PRINT = "STARTING_PRINT"
@@ -176,12 +191,9 @@ class ChiTuPrinter:
         """Refuse a filename that would not stay inside its command line.
 
         Callers validate names before they get here. This is the last check
-        before the wire: a line break would start a second command, and a
-        quote would end the M6030 argument early.
+        before the wire.
         """
-        if "'" in filename or any(
-            ord(character) < 0x20 or ord(character) == 0x7F for character in filename
-        ):
+        if not is_safe_for_printer(filename):
             raise ValueError(f"unsafe filename for the printer: {filename!r}")
 
     def select_file(self, filename: str) -> None:

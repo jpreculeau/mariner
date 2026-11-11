@@ -1,61 +1,70 @@
-"""Filename and path checks shared by every interface that touches files.
+"""Filename and path handling shared by every interface that touches files.
 
 The web API and the network print providers all take a name or a path from a
-client, then store, list, print or delete a file under it. These two helpers
-are the single place that decides whether such a value is acceptable, so no
+client, then store, list, print or delete a file under it. The helpers here
+decide whether such a value is acceptable and how a file is written, so no
 interface can forget a check another one has.
+
+The rule for what may appear in a command line sent to the printer lives in
+``mariner.printer`` (``is_safe_for_printer``), next to the code that builds
+those lines, and is reused here.
 """
 
+import logging
 import os
-from contextlib import contextmanager
+import secrets
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, ContextManager, Iterator, Optional
 
 from mariner import config
+from mariner.printer import has_control_character
 
-# Characters that would let a name escape the files directory, plus the
-# single quote: the printer is told which file to print as M6030 '<name>',
-# so a quote inside the name ends it early.
-_FORBIDDEN = ("/", "\\", "'")
+logger: logging.Logger = logging.getLogger(__name__)
 
+# Path separators would let a name escape its directory. The single quote
+# delimits the file name in the printer's print command. The rest cannot be
+# stored on the FAT filesystem the printer reads the files from.
+_FORBIDDEN_CHARACTERS = frozenset("/\\'" + ':*?"<>|')
 
-def _has_control_character(value: str) -> bool:
-    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+# The longest name a FAT (and most other) filesystems can store.
+_MAX_NAME_BYTES = 255
+
+# Uploads in progress are stored under this pattern; see ``replacing``.
+_SCRATCH_PREFIX = ".upload-"
+_SCRATCH_SUFFIX = ".part"
 
 
 def safe_filename(filename: Optional[str]) -> Optional[str]:
-    """The client's filename, preserved, or None if it is not safe to use.
+    """The client's filename, or None if it is not safe to use.
 
-    Deliberately not ``werkzeug.secure_filename``. That rewrites the name:
-    it strips parentheses, collapses spaces, and drops non-ASCII entirely,
-    extension included. A client that uploads ``model_6(1).ctb`` and then
-    asks to print it under that name finds nothing, because the stored file
-    is ``model_61.ctb``. Validating and rejecting instead of rewriting keeps
+    The name is returned as given, apart from surrounding whitespace, which
+    is removed. It is deliberately not passed through
+    ``werkzeug.secure_filename``, which rewrites it: parentheses are
+    stripped, spaces collapsed, and non-ASCII characters dropped, extension
+    included. A client that uploads ``model_6(1).ctb`` and then asks to print
+    it under that name would find nothing, because the stored file would be
+    ``model_61.ctb``. Validating and rejecting instead of rewriting keeps
     exactly one name in play across upload, listing, printing and deletion.
 
-    Control characters are refused because the name ends up in a line sent
-    to the printer, where a line break starts a new command.
+    Refused: empty names, ``.`` and ``..``, names with a path separator, a
+    single quote, a control character or a character FAT cannot store, names
+    ending with a dot (FAT drops it, so the stored name would differ), and
+    names longer than a filesystem entry can be.
 
     This is not on its own sufficient to contain a path: callers must still
     resolve it with ``resolve_in_files_directory``.
     """
     name = (filename or "").strip()
-    if not name or name in (".", ".."):
+    if not name or name in (".", "..") or name.endswith("."):
         return None
-    if any(character in name for character in _FORBIDDEN):
+    if not _FORBIDDEN_CHARACTERS.isdisjoint(name):
         return None
-    if _has_control_character(name):
+    if has_control_character(name):
+        return None
+    if len(name.encode("utf-8", errors="replace")) > _MAX_NAME_BYTES:
         return None
     return name
-
-
-def is_safe_for_printer(path: str) -> bool:
-    """Whether *path* can be placed in a command line sent to the printer.
-
-    Unlike ``safe_filename`` this accepts ``/``, since files in a
-    subdirectory are selected by their relative path.
-    """
-    return bool(path) and "'" not in path and not _has_control_character(path)
 
 
 def resolve_in_files_directory(relative: str) -> Optional[Path]:
@@ -75,22 +84,88 @@ def resolve_in_files_directory(relative: str) -> Optional[Path]:
     return candidate
 
 
+def modification_time(dir_entry: "os.DirEntry[str]") -> float:
+    """When *dir_entry* was last modified, for sorting a listing.
+
+    A dangling symbolic link has nothing to stat; it sorts as the oldest
+    entry instead of failing the whole listing.
+    """
+    try:
+        return dir_entry.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def is_scratch_file(name: str) -> bool:
+    """Whether *name* is an upload in progress rather than a file to list."""
+    return name.startswith(_SCRATCH_PREFIX) and name.endswith(_SCRATCH_SUFFIX)
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _no_guard(_destination: Path) -> ContextManager[None]:
+    return nullcontext()
+
+
 @contextmanager
-def replacing(destination: Path) -> Iterator[Path]:
+def replacing(
+    destination: Path,
+    guard: Callable[[Path], ContextManager[None]] = _no_guard,
+) -> Iterator[Path]:
     """Yield a scratch path whose contents become *destination* on success.
 
-    The file is written under a temporary name next to its destination and
-    moved into place in one step. The printer therefore never reads a
-    half-written file under its final name, and an upload that fails leaves
-    the file it was meant to replace untouched.
+    The caller writes the new contents to the scratch path, next to the
+    destination. On leaving the block they are moved into place in one step.
+    The printer therefore never reads a half-written file under its final
+    name, and an upload that fails leaves the file it was meant to replace
+    untouched.
+
+    Each call gets its own scratch file, so two uploads of the same name do
+    not write into each other; the last one to finish wins, whole.
+
+    *guard* wraps the final move. It is how a caller refuses the replacement
+    at the last moment, by raising, with whatever it needs held for the
+    duration of the move (see ``printer_access.unless_in_use``).
+
+    If the block or the guard raises, the scratch file is removed and the
+    exception propagates.
     """
-    scratch = destination.with_name(f".upload-{destination.name}.part")
+    scratch = destination.with_name(
+        f"{_SCRATCH_PREFIX}{secrets.token_hex(8)}{_SCRATCH_SUFFIX}"
+    )
     try:
         yield scratch
-        os.replace(scratch, destination)
+        with guard(destination):
+            os.replace(scratch, destination)
     except BaseException:
-        try:
-            os.remove(scratch)
-        except OSError:
-            pass
+        _remove_quietly(scratch)
         raise
+
+
+def remove_stale_scratch_files() -> int:
+    """Remove uploads that a crash or a power cut left unfinished.
+
+    ``replacing`` cleans up after an upload that fails, but not after a
+    process that is killed mid-upload. Meant to run once at startup, before
+    any upload can be in progress. Returns how many files were removed.
+    """
+    removed = 0
+    pattern = f"{_SCRATCH_PREFIX}*{_SCRATCH_SUFFIX}"
+    try:
+        leftovers = list(config.get_files_directory().rglob(pattern))
+    except OSError:
+        return 0
+    for leftover in leftovers:
+        try:
+            os.remove(leftover)
+        except OSError:
+            continue
+        removed += 1
+    if removed:
+        logger.info("Removed %d unfinished upload(s) left by a previous run", removed)
+    return removed

@@ -37,8 +37,18 @@ from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
-from mariner.server.files import replacing, resolve_in_files_directory, safe_filename
-from mariner.server.printer_access import is_being_printed, printer_session, read_status
+from mariner.server.files import (
+    modification_time,
+    replacing,
+    resolve_in_files_directory,
+    safe_filename,
+)
+from mariner.server.printer_access import (
+    FileInUse,
+    printer_session,
+    read_status,
+    unless_in_use,
+)
 from mariner.server.utils import read_cached_sliced_model_file
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -150,12 +160,16 @@ class UVToolsProvider(NetworkPrintProvider):
         data = request.get_data()
         if not data:
             abort(400)
-        if is_being_printed(dest):
-            logger.warning("UVTools: refusing to replace %s while it prints", safe_name)
+        try:
+            # Checked first so a refusal comes before anything is written,
+            # and again by the guard as the file is moved into place.
+            with unless_in_use(dest):
+                pass
+            with replacing(dest, guard=unless_in_use) as scratch:
+                scratch.write_bytes(data)
+        except FileInUse as error:
+            logger.warning("UVTools: not replacing %s: %s", safe_name, error.usage)
             abort(409)
-
-        with replacing(dest) as scratch:
-            scratch.write_bytes(data)
         try:
             os.sync()
         except AttributeError:
@@ -175,6 +189,8 @@ class UVToolsProvider(NetworkPrintProvider):
             abort(400)
         if not os.path.isfile(file_path):
             abort(404)
+        if get_file_extension(safe_name) not in get_supported_extensions():
+            abort(400)
 
         with printer_session() as printer:
             printer.start_printing(safe_name)
@@ -194,11 +210,12 @@ class UVToolsProvider(NetworkPrintProvider):
 
         if not os.path.isfile(path):
             abort(404)
-        if is_being_printed(path):
-            logger.warning("UVTools: refusing to delete %s while it prints", safe_name)
+        try:
+            with unless_in_use(path):
+                os.remove(path)
+        except FileInUse as error:
+            logger.warning("UVTools: not deleting %s: %s", safe_name, error.usage)
             abort(409)
-
-        os.remove(path)
         logger.info("UVTools delete: %s", safe_name)
         return jsonify({"success": True})
 
@@ -226,7 +243,7 @@ class UVToolsProvider(NetworkPrintProvider):
         file_list = []
 
         with os.scandir(files_dir) as entries:
-            for entry in sorted(entries, key=lambda e: e.stat().st_mtime, reverse=True):
+            for entry in sorted(entries, key=modification_time, reverse=True):
                 if entry.is_file() and get_file_extension(entry.name) in supported:
                     file_list.append(entry.name)
 

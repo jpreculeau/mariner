@@ -5,7 +5,7 @@ import threading
 import traceback
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
 
 from flask import (
     Blueprint,
@@ -21,17 +21,19 @@ from mariner import config
 from mariner.exceptions import MarinerException
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import PrinterState
+from mariner.printer import PrinterState, is_safe_for_printer
 from mariner.server.files import (
-    is_safe_for_printer,
+    is_scratch_file,
+    modification_time,
     replacing,
     resolve_in_files_directory,
     safe_filename,
 )
 from mariner.server.printer_access import (
-    is_being_printed,
+    FileInUse,
     printer_session,
     read_status,
+    unless_in_use,
 )
 from mariner.server.utils import read_cached_preview, read_cached_sliced_model_file
 
@@ -157,21 +159,33 @@ def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
         return None
 
 
-def _abort_if_being_printed(path: Path) -> None:
-    """Refuse to touch the file the printer is reading for the current print."""
-    if is_being_printed(path):
-        abort(
-            make_response(
-                jsonify(
-                    {
-                        "title": "File In Use",
-                        "description": f"{path.name} is being printed. "
-                        "Wait for the print to finish, or cancel it first.",
-                    }
-                ),
-                409,
-            )
-        )
+def _abort_file_in_use(error: FileInUse) -> NoReturn:
+    """Answer 409: the file cannot change now, and say what to do about it.
+
+    ``code`` tells clients the two cases apart: ``file_in_use`` when the
+    printer is reading the file, ``printer_not_answering`` when it could not
+    be asked. In the second case the client can read the status again (GET
+    /api/print_status asks the printer anew) and retry.
+    """
+    name = error.path.name
+    if error.printer_is_silent:
+        body = {
+            "code": "printer_not_answering",
+            "title": "Printer Not Answering",
+            "description": f"The printer did not say whether {name} is being "
+            "printed, so it was left untouched. Check that the printer is on "
+            "and connected, then try again, or store the file under another "
+            "name.",
+        }
+    else:
+        body = {
+            "code": "file_in_use",
+            "title": "File In Use",
+            "description": f"{name} is in use by the print in progress. Wait "
+            "for the print to finish or cancel it first, or store the file "
+            "under another name.",
+        }
+    abort(make_response(jsonify(body), 409))
 
 
 @api.route("/print_status", methods=["GET"])
@@ -263,15 +277,6 @@ def print_status() -> Union[str, Response]:
     )
 
 
-def _modification_time(dir_entry: "os.DirEntry[str]") -> float:
-    try:
-        return dir_entry.stat().st_mtime
-    except OSError:
-        # A dangling symbolic link has nothing to stat. It still gets listed,
-        # after everything that does.
-        return 0.0
-
-
 def _is_macos_metadata(path: str) -> bool:
     with open(path, "rb") as file:
         return b"Mac OS X" in file.read(32)
@@ -286,8 +291,17 @@ def list_files() -> Union[str, Response]:
     with os.scandir(path) as dir_entries:
         files = []
         directories = []
-        for dir_entry in sorted(dir_entries, key=_modification_time, reverse=True):
-            if dir_entry.is_file():
+        for dir_entry in sorted(dir_entries, key=modification_time, reverse=True):
+            if is_scratch_file(dir_entry.name):
+                # An upload still on its way in; it appears under its real
+                # name once complete.
+                continue
+            if dir_entry.is_dir():
+                directories.append({"dirname": dir_entry.name})
+            else:
+                # Anything that is not a directory is listed as a file, a
+                # dangling symbolic link included: it is reported as
+                # unprintable instead of as a folder that cannot be opened.
                 sliced_model_file: Optional[SlicedModelFile] = None
                 if get_file_extension(dir_entry.name) in get_supported_extensions():
                     # A file with a supported extension can still fail to
@@ -333,8 +347,6 @@ def list_files() -> Union[str, Response]:
                     }
 
                 files.append(file_data)
-            else:
-                directories.append({"dirname": dir_entry.name})
         return jsonify(
             {
                 "directories": directories,
@@ -380,9 +392,17 @@ def upload_file() -> Union[str, Response]:
     if not os.path.isdir(parent):
         abort(400)
 
-    _abort_if_being_printed(parent / filename)
-    with replacing(parent / filename) as scratch:
-        file.save(str(scratch))
+    destination = parent / filename
+    try:
+        # Checked first so a refusal comes before the upload is stored, and
+        # again by the guard at the moment the file is moved into place, in
+        # case the print started while it was being received.
+        with unless_in_use(destination):
+            pass
+        with replacing(destination, guard=unless_in_use) as scratch:
+            file.save(str(scratch))
+    except FileInUse as error:
+        _abort_file_in_use(error)
     os.sync()
     return jsonify({"success": True})
 
@@ -395,8 +415,11 @@ def delete_file() -> Union[str, Response]:
     # seem to properly mock Path.is_file as of pyfakefs 4.4.0
     if not os.path.isfile(path):
         abort(400)
-    _abort_if_being_printed(path)
-    os.remove(path)
+    try:
+        with unless_in_use(path):
+            os.remove(path)
+    except FileInUse as error:
+        _abort_file_in_use(error)
     return jsonify({"success": True})
 
 
@@ -445,11 +468,14 @@ class PrinterCommand(Enum):
 
 
 def _printable_file_or_abort(filename: Optional[str]) -> str:
-    """Check *filename* names a printable file here, before the printer sees it.
+    """The path to give the printer for *filename*, or an error response.
 
-    The name is placed verbatim in the command lines sent over serial, so it
-    is refused unless it is free of control characters and points at an
-    existing file of a supported format inside the files directory.
+    The path ends up verbatim in the command lines sent over serial, so the
+    request is refused unless the name is free of control characters and
+    points at an existing file of a supported format inside the files
+    directory. What is returned is that file's path relative to the files
+    directory, which is how the printer knows it, whatever form the client
+    used (``./a.ctb``, ``sub/../a.ctb`` or an absolute path).
     """
     if filename is None or not is_safe_for_printer(filename):
         abort(400)
@@ -458,7 +484,11 @@ def _printable_file_or_abort(filename: Optional[str]) -> str:
         abort(404)
     if get_file_extension(path.name) not in get_supported_extensions():
         abort(400)
-    return filename
+    relative = path.relative_to(config.get_files_directory().resolve()).as_posix()
+    if not is_safe_for_printer(relative):
+        # Possible only through a symbolic link whose target has such a name.
+        abort(400)
+    return relative
 
 
 @api.route("/printer/command/<command>", methods=["POST"])

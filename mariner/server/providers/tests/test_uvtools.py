@@ -11,6 +11,7 @@ from pyexpect import expect
 from mariner import config
 from mariner.config import _get_config
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
+from mariner.server import printer_access
 from mariner.server.app import app
 
 
@@ -40,6 +41,7 @@ class UVToolsProviderTest(TestCase):
         )
 
         self.client = app.test_client()
+        printer_access.forget_status()
         app.config["WTF_CSRF_ENABLED"] = False
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
@@ -156,6 +158,7 @@ class UVToolsProviderTest(TestCase):
         expect(leftovers).to_equal([])
 
     def _printer_is_printing(self, selected_file: str) -> None:
+        printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.PRINTING, current_byte=5000, total_bytes=10000
         )
@@ -174,6 +177,29 @@ class UVToolsProviderTest(TestCase):
 
     def test_delete_refuses_the_file_being_printed(self) -> None:
         self._printer_is_printing("foobar.ctb")
+        response = self.client.get("/uvtools/delete/foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
+            True
+        )
+
+    def test_print_file_refuses_an_unsupported_file(self) -> None:
+        self.fs.create_file("/mnt/usb_share/notes.txt", contents=b"x")
+        response = self.client.get("/uvtools/print/notes.txt")
+        expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_get_files_survives_a_broken_symlink(self) -> None:
+        self.fs.create_symlink("/mnt/usb_share/dangling.ctb", "/mnt/usb_share/gone")
+        response = self.client.get("/uvtools/files")
+        expect(response.status_code).to_equal(200)
+        expect("foobar.ctb" in response.get_json()["files"]).to_equal(True)
+
+    def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
         response = self.client.get("/uvtools/delete/foobar.ctb")
         expect(response.status_code).to_equal(409)
         expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
