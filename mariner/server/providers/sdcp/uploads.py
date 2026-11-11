@@ -8,6 +8,7 @@ to the destination so the final move is an atomic same-filesystem rename.
 import hashlib
 import logging
 import os
+import re
 import shutil
 import threading
 from dataclasses import dataclass, field
@@ -16,7 +17,7 @@ from typing import Any, BinaryIO, Dict, Optional
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.server.providers.filenames import safe_filename
+from mariner.server.files import resolve_in_files_directory, safe_filename
 from mariner.server.providers.sdcp import constants
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -32,6 +33,9 @@ class ChunkResult:
     filename: str = ""
     md5_failed: bool = False
     format_failed: bool = False
+
+
+_UPLOAD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 @dataclass
@@ -86,6 +90,12 @@ class UploadManager:
     ) -> ChunkResult:
         if offset < 0 or total_size < 0:
             return ChunkResult(ok=False, error=constants.UploadError.OFFSET_ERROR)
+
+        # The id names the scratch file, so it must not be able to name a
+        # path. Clients send a UUID, with or without dashes.
+        if not _UPLOAD_ID.fullmatch(upload_uuid):
+            logger.warning("SDCP: refusing malformed upload id %r", upload_uuid)
+            return ChunkResult(ok=False, error=constants.UploadError.UNKNOWN)
 
         safe_name = safe_filename(filename)
         if safe_name is None:
@@ -203,11 +213,8 @@ class UploadManager:
                     filename=session.filename,
                 )
 
-        files_dir = config.get_files_directory().resolve()
-        destination = (files_dir / session.filename).resolve()
-        try:
-            destination.relative_to(files_dir)
-        except ValueError:
+        destination = resolve_in_files_directory(session.filename)
+        if destination is None:
             self._unlink(session.scratch_path)
             return ChunkResult(
                 ok=False,

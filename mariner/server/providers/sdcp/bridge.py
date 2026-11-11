@@ -20,6 +20,7 @@ from mariner.exceptions import UnexpectedPrinterResponse
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import ChiTuPrinter, PrinterState
 from mariner.server.api import _layer_from_byte_offset
+from mariner.server.files import is_safe_for_printer, resolve_in_files_directory
 from mariner.server.providers.sdcp import constants, identity
 from mariner.server.utils import (
     read_cached_preview,
@@ -87,15 +88,6 @@ def strip_storage_prefix(path: str) -> str:
         if value.startswith(prefix):
             return value.removeprefix(prefix)
     return value.lstrip("/")
-
-
-def _safe_resolve(relative: str) -> Optional[Path]:
-    """Resolve *relative* inside the files directory, or None if it escapes."""
-    files_dir = config.get_files_directory().resolve()
-    candidate = (files_dir / relative).resolve()
-    if candidate != files_dir and files_dir not in candidate.parents:
-        return None
-    return candidate
 
 
 class PrinterBridge:
@@ -334,7 +326,7 @@ class PrinterBridge:
         return [name for _mtime, name in candidates[:limit]]
 
     def _read_sliced(self, filename: str) -> Optional[Any]:
-        path = _safe_resolve(filename)
+        path = resolve_in_files_directory(filename)
         if path is None or not os.path.isfile(path):
             return None
         try:
@@ -351,7 +343,7 @@ class PrinterBridge:
         that then 404s leaves the client showing a broken image. The render
         is memoized, so the GET that follows costs nothing extra.
         """
-        path = _safe_resolve(filename)
+        path = resolve_in_files_directory(filename)
         if path is None or not os.path.isfile(path):
             return False
         if get_file_extension(filename) not in get_supported_extensions():
@@ -360,7 +352,7 @@ class PrinterBridge:
 
     def render_preview(self, filename: str) -> Optional[bytes]:
         """PNG preview bytes for *filename*, or None if it cannot be made."""
-        path = _safe_resolve(filename)
+        path = resolve_in_files_directory(filename)
         if path is None or not os.path.isfile(path):
             return None
         try:
@@ -379,10 +371,10 @@ class PrinterBridge:
 
     def start_print(self, filename: str, start_layer: int = 0) -> int:
         relative = strip_storage_prefix(filename)
-        if not relative:
+        if not is_safe_for_printer(relative):
             return int(constants.PrintCtrlAck.NOT_FOUND)
 
-        path = _safe_resolve(relative)
+        path = resolve_in_files_directory(relative)
         if path is None or not os.path.isfile(path):
             return int(constants.PrintCtrlAck.NOT_FOUND)
 
@@ -427,7 +419,11 @@ class PrinterBridge:
 
     def list_files(self, url: str) -> List[Dict[str, Any]]:
         relative = strip_storage_prefix(url)
-        directory = _safe_resolve(relative) if relative else _safe_resolve("")
+        directory = (
+            resolve_in_files_directory(relative)
+            if relative
+            else resolve_in_files_directory("")
+        )
         if directory is None or not os.path.isdir(directory):
             return []
 
@@ -476,7 +472,7 @@ class PrinterBridge:
         failures: List[str] = []
 
         for raw in file_list or []:
-            path = _safe_resolve(strip_storage_prefix(raw))
+            path = resolve_in_files_directory(strip_storage_prefix(raw))
             if path is None or not os.path.isfile(path):
                 failures.append(raw)
                 continue
@@ -487,7 +483,7 @@ class PrinterBridge:
 
         for raw in folder_list or []:
             relative = strip_storage_prefix(raw)
-            path = _safe_resolve(relative)
+            path = resolve_in_files_directory(relative)
             files_dir = config.get_files_directory().resolve()
             if path is None or not os.path.isdir(path) or path == files_dir:
                 failures.append(raw)

@@ -39,7 +39,7 @@ from mariner.exceptions import UnexpectedPrinterResponse
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import ChiTuPrinter, PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
-from mariner.server.providers.filenames import safe_filename
+from mariner.server.files import replacing, resolve_in_files_directory, safe_filename
 from mariner.server.utils import read_cached_sliced_model_file, retry
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -144,18 +144,16 @@ class UVToolsProvider(NetworkPrintProvider):
         if ext not in get_supported_extensions():
             abort(400)
 
-        files_dir = config.get_files_directory().resolve()
-        dest = (files_dir / safe_name).resolve()
-        try:
-            dest.relative_to(files_dir)
-        except ValueError:
+        dest = resolve_in_files_directory(safe_name)
+        if dest is None:
             abort(400)
 
         data = request.get_data()
         if not data:
             abort(400)
 
-        dest.write_bytes(data)
+        with replacing(dest) as scratch:
+            scratch.write_bytes(data)
         try:
             os.sync()
         except AttributeError:
@@ -170,7 +168,9 @@ class UVToolsProvider(NetworkPrintProvider):
             logger.warning("UVTools: refusing unsafe filename %r", filename)
             abort(400)
 
-        file_path = config.get_files_directory() / safe_name
+        file_path = resolve_in_files_directory(safe_name)
+        if file_path is None:
+            abort(400)
         if not os.path.isfile(file_path):
             abort(404)
 
@@ -186,11 +186,8 @@ class UVToolsProvider(NetworkPrintProvider):
             logger.warning("UVTools: refusing unsafe filename %r", filename)
             abort(400)
 
-        files_dir = config.get_files_directory().resolve()
-        path = (files_dir / safe_name).resolve()
-        try:
-            path.relative_to(files_dir)
-        except ValueError:
+        path = resolve_in_files_directory(safe_name)
+        if path is None:
             abort(400)
 
         if not os.path.isfile(path):

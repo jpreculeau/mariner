@@ -218,6 +218,23 @@ class ChiTuPrinterTest(TestCase):
         self.serial_port_mock.write.assert_called_once_with(b"M114\r\n")
         expect(z_pos).is_almost_equal(155.0, max_delta=1e-9)
 
+    def test_start_printing_refuses_a_filename_that_carries_a_command(self) -> None:
+        self.printer.open()
+        for filename in ("a.ctb\r\nG0 Z-50", "a.ctb\nG28", "it's.ctb", "a\x00.ctb"):
+            with self.assertRaises(ValueError):
+                self.printer.start_printing(filename)
+        self.printer.close()
+
+        self.serial_port_mock.write.assert_not_called()
+
+    def test_select_file_refuses_a_filename_that_carries_a_command(self) -> None:
+        self.printer.open()
+        with self.assertRaises(ValueError):
+            self.printer.select_file("a.ctb\r\nG0 Z-50")
+        self.printer.close()
+
+        self.serial_port_mock.write.assert_not_called()
+
     def test_get_selected_file(self) -> None:
         self.serial_port_mock.readline.return_value = b"ok 'LittleBBC.ctb'\r\n"
 

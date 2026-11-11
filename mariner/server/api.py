@@ -3,6 +3,7 @@ import os
 import subprocess
 import traceback
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import serial
@@ -15,13 +16,18 @@ from flask import (
     request,
 )
 from pyre_extensions import none_throws
-from werkzeug.utils import secure_filename
 
 from mariner import config
 from mariner.exceptions import MarinerException, UnexpectedPrinterResponse
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
+from mariner.server.files import (
+    is_safe_for_printer,
+    replacing,
+    resolve_in_files_directory,
+    safe_filename,
+)
 from mariner.server.utils import (
     read_cached_preview,
     read_cached_sliced_model_file,
@@ -92,6 +98,16 @@ def _layer_from_byte_offset(current_byte: int, end_byte_offsets: List[int]) -> i
         if current_byte <= end_byte:
             return i + 1
     return len(end_byte_offsets)
+
+
+def _resolve_or_400(relative: Optional[str]) -> Path:
+    """The path *relative* names inside the files directory, or a 400."""
+    if relative is None:
+        abort(400)
+    path = resolve_in_files_directory(relative)
+    if path is None:
+        abort(400)
+    return path
 
 
 @api.errorhandler(MarinerException)
@@ -212,22 +228,30 @@ def print_status() -> Union[str, Response]:
         )
 
 
+def _modification_time(dir_entry: "os.DirEntry[str]") -> float:
+    try:
+        return dir_entry.stat().st_mtime
+    except OSError:
+        # A dangling symbolic link has nothing to stat. It still gets listed,
+        # after everything that does.
+        return 0.0
+
+
+def _is_macos_metadata(path: str) -> bool:
+    with open(path, "rb") as file:
+        return b"Mac OS X" in file.read(32)
+
+
 @api.route("/list_files", methods=["GET"])
 def list_files() -> Union[str, Response]:
-    path_parameter = str(request.args.get("path", "."))
-    path = (config.get_files_directory() / path_parameter).resolve()
+    path = _resolve_or_400(request.args.get("path", "."))
     files_directory_resolved = config.get_files_directory().resolve()
-    if (
-        files_directory_resolved not in path.parents
-        and path != files_directory_resolved
-    ):
-        abort(400)
+    if not os.path.isdir(path):
+        abort(404)
     with os.scandir(path) as dir_entries:
         files = []
         directories = []
-        for dir_entry in sorted(
-            dir_entries, key=lambda t: t.stat().st_mtime, reverse=True
-        ):
+        for dir_entry in sorted(dir_entries, key=_modification_time, reverse=True):
             if dir_entry.is_file():
                 sliced_model_file: Optional[SlicedModelFile] = None
                 if get_file_extension(dir_entry.name) in get_supported_extensions():
@@ -238,7 +262,7 @@ def list_files() -> Union[str, Response]:
                     # file that cannot be printed.
                     try:
                         if dir_entry.name.startswith("._"):
-                            if b"Mac OS X" not in open(dir_entry.path, "rb").read(32):
+                            if not _is_macos_metadata(dir_entry.path):
                                 sliced_model_file = read_cached_sliced_model_file(
                                     path / dir_entry.name
                                 )
@@ -286,14 +310,8 @@ def list_files() -> Union[str, Response]:
 
 @api.route("/file_details", methods=["GET"])
 def file_details() -> Union[str, Response]:
-    filename = str(request.args.get("filename"))
-    path = (config.get_files_directory() / filename).resolve()
-    files_directory_resolved = config.get_files_directory().resolve()
-    if (
-        files_directory_resolved not in path.parents
-        and path != files_directory_resolved
-    ):
-        abort(400)
+    filename = request.args.get("filename")
+    path = _resolve_or_400(filename)
     if not os.path.isfile(path):
         abort(400)
     sliced_model_file = read_cached_sliced_model_file(path)
@@ -319,40 +337,24 @@ def upload_file() -> Union[str, Response]:
     file_filename: str = none_throws(file.filename)
     if get_file_extension(file_filename) not in get_supported_extensions():
         abort(400)
-    filename = secure_filename(file_filename)
-
-    path_parameter = str(request.args.get("path", "."))
-    files_directory_resolved = config.get_files_directory().resolve()
-    parent = (config.get_files_directory() / path_parameter).resolve()
-    if (
-        files_directory_resolved not in parent.parents
-        and parent != files_directory_resolved
-    ):
+    filename = safe_filename(file_filename)
+    if filename is None:
         abort(400)
+
+    parent = _resolve_or_400(request.args.get("path", "."))
     if not os.path.isdir(parent):
         abort(400)
 
-    dest_path = (parent / filename).resolve()
-    try:
-        dest_path.relative_to(files_directory_resolved)
-    except ValueError:
-        abort(400)
-
-    file.save(str(dest_path))
+    with replacing(parent / filename) as scratch:
+        file.save(str(scratch))
     os.sync()
     return jsonify({"success": True})
 
 
 @api.route("/delete_file", methods=["POST"])
 def delete_file() -> Union[str, Response]:
-    filename = str(request.args.get("filename"))
-    path = (config.get_files_directory() / filename).resolve()
-    files_directory_resolved = config.get_files_directory().resolve()
-    if (
-        files_directory_resolved not in path.parents
-        and path != files_directory_resolved
-    ):
-        abort(400)
+    filename = request.args.get("filename")
+    path = _resolve_or_400(filename)
     # we use os.path.isfile instead of Path.is_file here because pyfakefs doesn't
     # seem to properly mock Path.is_file as of pyfakefs 4.4.0
     if not os.path.isfile(path):
@@ -363,33 +365,14 @@ def delete_file() -> Union[str, Response]:
 
 @api.route("/create_directory", methods=["POST"])
 def create_directory() -> Union[str, Response]:
-    path_parameter = str(request.args.get("path", "."))
-    raw_name = request.args.get("name", type=str)
-    if raw_name is None or not raw_name.strip():
-        abort(400)
-    name_str = raw_name.strip()
-    if "/" in name_str or "\\" in name_str or name_str in (".", ".."):
+    safe_name = safe_filename(request.args.get("name", type=str))
+    if safe_name is None:
         abort(400)
 
-    safe_name = secure_filename(name_str)
-    if not safe_name or safe_name in (".", ".."):
-        abort(400)
-
-    files_directory_resolved = config.get_files_directory().resolve()
-    parent = (config.get_files_directory() / path_parameter).resolve()
-    if (
-        files_directory_resolved not in parent.parents
-        and parent != files_directory_resolved
-    ):
-        abort(400)
+    parent = _resolve_or_400(request.args.get("path", "."))
     if not os.path.isdir(parent):
         abort(400)
-
-    new_path = (parent / safe_name).resolve()
-    try:
-        new_path.relative_to(files_directory_resolved)
-    except ValueError:
-        abort(400)
+    new_path = parent / safe_name
 
     try:
         os.mkdir(new_path)
@@ -400,14 +383,8 @@ def create_directory() -> Union[str, Response]:
 
 @api.route("/file_preview", methods=["GET"])
 def file_preview() -> Response:
-    filename = str(request.args.get("filename"))
-    path = (config.get_files_directory() / filename).resolve()
-    files_directory_resolved = config.get_files_directory().resolve()
-    if (
-        files_directory_resolved not in path.parents
-        and path != files_directory_resolved
-    ):
-        abort(400)
+    filename = request.args.get("filename")
+    path = _resolve_or_400(filename)
     if not os.path.isfile(path):
         abort(400)
 
@@ -430,13 +407,36 @@ class PrinterCommand(Enum):
     REBOOT = "reboot"
 
 
+def _printable_file_or_abort(filename: Optional[str]) -> str:
+    """Check *filename* names a printable file here, before the printer sees it.
+
+    The name is placed verbatim in the command lines sent over serial, so it
+    is refused unless it is free of control characters and points at an
+    existing file of a supported format inside the files directory.
+    """
+    if filename is None or not is_safe_for_printer(filename):
+        abort(400)
+    path = _resolve_or_400(filename)
+    if not os.path.isfile(path):
+        abort(404)
+    if get_file_extension(path.name) not in get_supported_extensions():
+        abort(400)
+    return filename
+
+
 @api.route("/printer/command/<command>", methods=["POST"])
 def printer_command(command: str) -> Union[str, Response]:
-    printer_command = PrinterCommand(command)
+    try:
+        printer_command = PrinterCommand(command)
+    except ValueError:
+        abort(404)
+
+    filename = ""
+    if printer_command == PrinterCommand.START_PRINT:
+        filename = _printable_file_or_abort(request.args.get("filename"))
+
     with ChiTuPrinter() as printer:
         if printer_command == PrinterCommand.START_PRINT:
-            # TODO: validate filename before sending it to the printer
-            filename = str(request.args.get("filename"))
             printer.start_printing(filename)
         elif printer_command == PrinterCommand.PAUSE_PRINT:
             printer.pause_printing()

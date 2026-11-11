@@ -137,6 +137,24 @@ class UVToolsProviderTest(TestCase):
         expect(response.get_json()).to_equal({"success": True})
         self.printer_mock.start_printing.assert_called_once_with("foobar.ctb")
 
+    def test_print_file_refuses_a_quote(self) -> None:
+        self.fs.create_file("/mnt/usb_share/it's.ctb", contents=b"x")
+        response = self.client.get("/uvtools/print/it%27s.ctb")
+        expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_upload_replaces_an_existing_file_in_one_step(self) -> None:
+        response = self.client.post(
+            "/uvtools/upload/foobar.ctb",
+            data=b"new contents",
+            content_type="application/octet-stream",
+        )
+        expect(response.status_code).to_equal(200)
+        with open(config.get_files_directory() / "foobar.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"new contents")
+        leftovers = [n for n in os.listdir("/mnt/usb_share") if n.endswith(".part")]
+        expect(leftovers).to_equal([])
+
     def test_print_file_not_found(self) -> None:
         response = self.client.get("/uvtools/print/missing.ctb")
         expect(response.status_code).to_equal(404)

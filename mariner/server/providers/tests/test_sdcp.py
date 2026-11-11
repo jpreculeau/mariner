@@ -462,6 +462,30 @@ class UploadManagerTest(TestCase):
                 return result
         return result
 
+    def test_upload_id_cannot_name_a_path(self) -> None:
+        self.fs.create_dir("/mnt/outside")
+        for upload_uuid in (
+            "../../outside/escaped",
+            "/mnt/outside/absolute",
+            "a/b",
+            "..",
+            "",
+            "x" * 65,
+        ):
+            result = self._upload(b"x" * 64, upload_uuid=upload_uuid)
+            expect(result.ok).to_equal(False)
+        expect(os.listdir("/mnt/outside")).to_equal([])
+        expect(os.path.exists("/mnt/usb_share/model.ctb")).to_equal(False)
+
+    def test_upload_id_accepts_the_shapes_clients_send(self) -> None:
+        for upload_uuid in (
+            "default",
+            "3f2b8c1e-9d4a-4f6b-8a1c-2e5d7f9b0a13",
+            "3f2b8c1e9d4a4f6b8a1c2e5d7f9b0a13",
+        ):
+            result = self._upload(b"x" * 64, upload_uuid=upload_uuid)
+            expect(result.completed).to_equal(True)
+
     def test_single_chunk_upload(self) -> None:
         payload = b"x" * 512
         result = self._upload(payload)

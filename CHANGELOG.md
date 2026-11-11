@@ -4,6 +4,19 @@
 
 - Add support for SDCP
 
+### 🐛 Bug Fixes
+
+- Validate the file name before a print is started from the web API
+- Validate the upload id of network (SDCP) transfers
+- Keep uploaded file and folder names instead of rewriting them
+- Write uploads to a temporary file and move them into place
+- Answer 404 instead of 500 for a missing folder or an unknown printer command
+- List a folder that contains a dangling symbolic link
+
+### 🚜 Refactor
+
+- Share one path and file name check between the web API, UVtools and SDCP
+
 ### 📚 Documentation
 
 - Update changelog

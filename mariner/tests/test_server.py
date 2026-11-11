@@ -289,6 +289,19 @@ class MarinerServerTest(TestCase):
         # The healthy file alongside it is still reported normally.
         expect(files["foobar.ctb"]["can_be_printed"]).to_equal(True)
 
+    def test_list_files_from_missing_directory(self) -> None:
+        response = self.client.get("/api/list_files?path=no_such_dir")
+        expect(response.status_code).to_equal(404)
+
+    def test_list_files_from_a_file(self) -> None:
+        response = self.client.get("/api/list_files?path=foobar.ctb")
+        expect(response.status_code).to_equal(404)
+
+    def test_list_files_survives_a_broken_symlink(self) -> None:
+        self.fs.create_symlink("/mnt/usb_share/dangling.ctb", "/mnt/usb_share/gone")
+        response = self.client.get("/api/list_files")
+        expect(response.status_code).to_equal(200)
+
     def test_list_files_from_invalid_directory(self) -> None:
         response = self.client.get("/api/list_files?path=../foo/")
         expect(response.status_code).to_equal(400)
@@ -299,6 +312,70 @@ class MarinerServerTest(TestCase):
         )
         expect(response.get_json()).to_equal({"success": True})
         self.printer_mock.start_printing.assert_called_once_with("foobar.ctb")
+
+    def test_command_start_printing_in_subdirectory(self) -> None:
+        self.fs.create_file(
+            "/mnt/usb_share/sub/part.ctb", contents=self.ctb_file_contents
+        )
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=sub/part.ctb"
+        )
+        expect(response.status_code).to_equal(200)
+        self.printer_mock.start_printing.assert_called_once_with("sub/part.ctb")
+
+    def test_command_start_printing_refuses_control_characters(self) -> None:
+        # Anything after a line break would reach the mainboard as a command
+        # of its own.
+        for filename in (
+            "foobar.ctb%0D%0AG0%20Z-50",
+            "foobar.ctb%0AG28",
+            "foobar.ctb%00",
+        ):
+            response = self.client.post(
+                f"/api/printer/command/start_print?filename={filename}"
+            )
+            expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_command_start_printing_refuses_a_quote(self) -> None:
+        self.fs.create_file("/mnt/usb_share/it's.ctb", contents=b"x")
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=it%27s.ctb"
+        )
+        expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_command_start_printing_without_a_filename(self) -> None:
+        response = self.client.post("/api/printer/command/start_print")
+        expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_command_start_printing_outside_files_directory(self) -> None:
+        self.fs.create_file("/mnt/other.ctb", contents=self.ctb_file_contents)
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=../other.ctb"
+        )
+        expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_command_start_printing_a_missing_file(self) -> None:
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=missing.ctb"
+        )
+        expect(response.status_code).to_equal(404)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_command_start_printing_an_unsupported_file(self) -> None:
+        self.fs.create_file("/mnt/usb_share/notes.txt", contents=b"x")
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=notes.txt"
+        )
+        expect(response.status_code).to_equal(400)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_unknown_command(self) -> None:
+        response = self.client.post("/api/printer/command/self_destruct")
+        expect(response.status_code).to_equal(404)
 
     def test_command_pause_print(self) -> None:
         response = self.client.post("/api/printer/command/pause_print")
@@ -399,46 +476,65 @@ class MarinerServerTest(TestCase):
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(400)
 
+    def _stored(self, *parts: str) -> bytes:
+        with open(config.get_files_directory().joinpath(*parts), "rb") as file:
+            return file.read()
+
+    def _leftovers(self, directory: str = "/mnt/usb_share") -> list:
+        return [name for name in os.listdir(directory) if name.endswith(".part")]
+
     def test_upload_file(self) -> None:
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
-        with patch.object(FileStorage, "save") as save_file_mock:
-            response = self.client.post("/api/upload_file", data=data)
+        response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(200)
         expect(response.get_json()).to_equal({"success": True})
-        save_file_mock.assert_called_once_with(
-            str(config.get_files_directory() / "myfile.ctb")
-        )
+        expect(self._stored("myfile.ctb")).to_equal(b"abcdef")
+        expect(self._leftovers()).to_equal([])
 
     def test_upload_file_with_upper_case_extension(self) -> None:
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.CtB")}
-        with patch.object(FileStorage, "save") as save_file_mock:
-            response = self.client.post("/api/upload_file", data=data)
+        response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(200)
-        expect(response.get_json()).to_equal({"success": True})
-        save_file_mock.assert_called_once_with(
-            str(config.get_files_directory() / "myfile.CtB")
-        )
+        expect(self._stored("myfile.CtB")).to_equal(b"abcdef")
 
-    def test_upload_file_with_sanitized_file(self) -> None:
-        data = {"file": (io.BytesIO(b"abcdef"), "../../../etc/passwd.ctb")}
-        with patch.object(FileStorage, "save") as save_file_mock:
+    def test_upload_file_keeps_the_name_it_was_given(self) -> None:
+        # Rewriting names loses the extension of a non-ASCII name entirely
+        # and leaves the user looking for a file that is stored as something
+        # else.
+        for name in ("ma pièce (v2).ctb", "模型.ctb"):
+            data = {"file": (io.BytesIO(b"abcdef"), name)}
             response = self.client.post("/api/upload_file", data=data)
+            expect(response.status_code).to_equal(200)
+            expect(self._stored(name)).to_equal(b"abcdef")
+
+    def test_upload_file_with_unsafe_filename(self) -> None:
+        for name in ("../../../etc/passwd.ctb", "john's model.ctb", "a\rb.ctb"):
+            data = {"file": (io.BytesIO(b"abcdef"), name)}
+            response = self.client.post("/api/upload_file", data=data)
+            expect(response.status_code).to_equal(400)
+        expect(os.path.exists("/etc/passwd.ctb")).to_equal(False)
+
+    def test_upload_file_replaces_an_existing_file_in_one_step(self) -> None:
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(200)
-        expect(response.get_json()).to_equal({"success": True})
-        save_file_mock.assert_called_once_with(
-            str(config.get_files_directory() / "etc_passwd.ctb")
-        )
+        expect(self._stored("foobar.ctb")).to_equal(b"new contents")
+        expect(self._leftovers()).to_equal([])
+
+    def test_upload_file_that_fails_leaves_nothing_behind(self) -> None:
+        data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
+        with patch.object(FileStorage, "save", side_effect=OSError("disk full")):
+            with self.assertRaises(OSError):
+                self.client.post("/api/upload_file", data=data)
+        expect(os.path.exists("/mnt/usb_share/myfile.ctb")).to_equal(False)
+        expect(self._leftovers()).to_equal([])
 
     def test_upload_file_to_subdirectory(self) -> None:
         self.fs.create_dir("/mnt/usb_share/uploads/")
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
-        with patch.object(FileStorage, "save") as save_file_mock:
-            response = self.client.post("/api/upload_file?path=uploads", data=data)
+        response = self.client.post("/api/upload_file?path=uploads", data=data)
         expect(response.status_code).to_equal(200)
-        expect(response.get_json()).to_equal({"success": True})
-        save_file_mock.assert_called_once_with(
-            str(config.get_files_directory() / "uploads" / "myfile.ctb")
-        )
+        expect(self._stored("uploads", "myfile.ctb")).to_equal(b"abcdef")
 
     def test_upload_file_with_invalid_parent_path(self) -> None:
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
@@ -485,6 +581,20 @@ class MarinerServerTest(TestCase):
         expect(os.path.isdir(config.get_files_directory() / "my_project")).to_equal(
             True
         )
+
+    def test_create_directory_keeps_the_name_it_was_given(self) -> None:
+        response = self.client.post(
+            "/api/create_directory?path=.&name=mes%20pi%C3%A8ces"
+        )
+        expect(response.status_code).to_equal(200)
+        expect(os.path.isdir(config.get_files_directory() / "mes pièces")).to_equal(
+            True
+        )
+
+    def test_create_directory_with_unsafe_name(self) -> None:
+        for name in ("..", "a%2Fb", "it%27s", "a%0Ab"):
+            response = self.client.post(f"/api/create_directory?path=.&name={name}")
+            expect(response.status_code).to_equal(400)
 
     def test_create_directory_under_subdirectory(self) -> None:
         self.fs.create_dir("/mnt/usb_share/nested/")

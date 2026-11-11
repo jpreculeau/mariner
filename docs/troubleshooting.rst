@@ -72,6 +72,30 @@ the latest version of mariner. This is an old issue which was fixed on
 ``v0.2.0``. See `Issue #311
 <https://github.com/mariner3d/mariner/issues/311>`_.
 
+File Names
+----------
+
+.. rubric:: An upload is refused with error 400
+
+Mariner stores a file under exactly the name it was given, so that the same
+name works for listing, printing and deleting. It no longer rewrites names
+(spaces, accents, parentheses and non-Latin characters are all kept), and
+refuses the few it cannot use safely:
+
+* names containing ``/`` or ``\``;
+* names containing a single quote (``'``), which the printer uses to delimit
+  the file name in its print command;
+* names containing control characters such as a line break.
+
+Rename the file and upload it again. The same rules apply to folder names and
+to files sent from a slicer.
+
+.. rubric:: Replacing a file
+
+Uploading a file whose name already exists replaces it. The new file is
+written under a temporary name (``.upload-<name>.part``) and moved into place
+once complete, so an interrupted upload leaves the previous file intact.
+
 Other Issues
 ------------
 

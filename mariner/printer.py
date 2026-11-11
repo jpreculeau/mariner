@@ -171,7 +171,21 @@ class ChiTuPrinter:
         # sometimes returned by the printer
         return re.sub("^/", "", selected_file)
 
+    @staticmethod
+    def _check_filename(filename: str) -> None:
+        """Refuse a filename that would not stay inside its command line.
+
+        Callers validate names before they get here. This is the last check
+        before the wire: a line break would start a second command, and a
+        quote would end the M6030 argument early.
+        """
+        if "'" in filename or any(
+            ord(character) < 0x20 or ord(character) == 0x7F for character in filename
+        ):
+            raise ValueError(f"unsafe filename for the printer: {filename!r}")
+
     def select_file(self, filename: str) -> None:
+        self._check_filename(filename)
         response = self._send_and_read((f"M23 /{filename}").encode())
         if "File opened" not in response and "File selected" not in response:
             raise UnexpectedPrinterResponse(response)
@@ -195,6 +209,7 @@ class ChiTuPrinter:
         # the printer's firmware is weird when the file is in a subdirectory. we need to
         # send M23 to select the file with its full path and then M6030 with just the
         # basename.
+        self._check_filename(filename)
         self.select_file(filename)
         response = self._send_and_read(
             (f"M6030 '{os.path.basename(filename)}'").encode(),
