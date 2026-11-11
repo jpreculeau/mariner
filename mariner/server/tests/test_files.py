@@ -17,6 +17,7 @@ from mariner.server.files import (
     is_hidden_entry,
     is_regular_file,
     is_scratch_file,
+    move_aside,
     printable_relative_path,
     remove_entry,
     remove_stale_scratch_files,
@@ -293,6 +294,26 @@ class RealFilesystemHiddenEntryTest(TestCase):
 
             remove_entry(root / "model.ctb")
             expect((root / "model.ctb").exists()).to_equal(False)
+
+    def test_move_aside_leaves_a_hidden_folder_alone(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".sdcp_uploads").mkdir()
+            (root / ".sdcp_uploads" / "abcd.part").write_bytes(b"half an upload")
+            # Another name for the same folder, as a FAT alias is.
+            os.symlink(root / ".sdcp_uploads", root / "SDCP_U~1")
+            (root / "batch").mkdir()
+
+            with self.assertRaises(FileNotFoundError):
+                move_aside(root / "SDCP_U~1")
+            expect((root / ".sdcp_uploads" / "abcd.part").exists()).to_equal(True)
+
+            aside = move_aside(root / "batch")
+            expect((root / "batch").exists()).to_equal(False)
+            expect(aside.is_dir()).to_equal(True)
+            expect(is_scratch_file(aside.name)).to_equal(True)
 
     def test_a_link_that_leads_back_to_itself_is_refused(self) -> None:
         # Before Python 3.13, resolving one raises RuntimeError.

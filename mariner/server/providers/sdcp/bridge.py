@@ -15,16 +15,16 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.exceptions import PrintAlreadyRunning
-from mariner.printer import PrinterState
+from mariner.printer import PrinterState, has_control_character
 from mariner.server.api import _layer_from_byte_offset
 from mariner.server.files import (
     NotPrintable,
     holds_a_transfer_in_progress,
     is_directory,
+    move_aside,
     remove_entry,
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
-    scratch_path_beside,
     stays_in_files_directory,
 )
 from mariner.server.printer_access import (
@@ -92,7 +92,12 @@ def strip_storage_prefix(path: str) -> str:
 
     Mariner has a single files directory, so both roots resolve to it.
     """
-    value = (path or "").strip()
+    value = path or ""
+    if has_control_character(value):
+        # Left as it is, for every caller to refuse. Trimming would quietly
+        # drop a line break at either end.
+        return value
+    value = value.strip()
     for prefix in (constants.LOCAL_PREFIX, constants.USB_PREFIX):
         if value.startswith(prefix):
             return value.removeprefix(prefix)
@@ -450,7 +455,11 @@ class PrinterBridge:
                 for entry in sorted(scan, key=lambda e: e.name):
                     if entry.name.startswith("."):
                         continue
-                    if not stays_in_files_directory(Path(entry.path)):
+                    # Only a link can lead elsewhere, and only links are
+                    # checked: the check looks through the whole folder.
+                    if entry.is_symlink() and not stays_in_files_directory(
+                        Path(entry.path)
+                    ):
                         # A symbolic link leading out of the files
                         # directory, or to a transfer in progress. Not
                         # something a client may be shown.
@@ -538,10 +547,9 @@ class PrinterBridge:
             # print starts and other guarded changes meanwhile. So the
             # folder is only moved aside under the guard, which is instant,
             # and removed once they are no longer held off.
-            doomed = scratch_path_beside(path)
             try:
                 with unless_in_use(path):
-                    os.rename(path, doomed)
+                    doomed = move_aside(path)
             except (FileInUse, OSError) as exc:
                 logger.warning("SDCP: not deleting %r: %s", raw, exc)
                 failures.append(raw)

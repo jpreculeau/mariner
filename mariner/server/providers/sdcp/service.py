@@ -105,6 +105,9 @@ class SDCPService:
             return
 
         discovery_transport = await self._start_discovery(discovery_port)
+        # Not waited for: it can take seconds, and discovery answers
+        # meanwhile with what is known so far.
+        learning = asyncio.ensure_future(self._learn_firmware_version())
 
         logger.info(
             "SDCP: serving on port %d, discovery on port %d (mainboard %s)",
@@ -116,9 +119,22 @@ class SDCPService:
         try:
             await self._poll_status_forever()
         finally:
+            learning.cancel()
             if discovery_transport is not None:
                 discovery_transport.close()
             await runner.cleanup()
+
+    async def _learn_firmware_version(self) -> None:
+        """Read the board's firmware version once, off the event loop.
+
+        Discovery replies are sent from the event loop and only ever give
+        the version already known. Without this, they would carry the
+        placeholder until a first client had connected.
+        """
+        try:
+            await self._in_executor(self._bridge.firmware_version)
+        except Exception:
+            logger.warning("SDCP: could not read the firmware version", exc_info=True)
 
     async def _start_http(self, port: int) -> Optional[web.AppRunner]:
         app = web.Application(client_max_size=MAX_UPLOAD_BODY)
@@ -165,7 +181,8 @@ class SDCPService:
             brand_name=config.get_sdcp_brand_name(),
             mainboard_ip=identity.get_local_ip(peer),
             # Sent from the event loop, which must never wait on the printer.
-            # The real version takes over once an attribute report has read it.
+            # The real version is read once when the service starts (see
+            # _learn_firmware_version) and takes over from then on.
             firmware_version=self._bridge.known_firmware_version(),
             protocol_version=constants.PROTOCOL_VERSION,
             internal_machine_name=config.get_sdcp_internal_machine_name(),

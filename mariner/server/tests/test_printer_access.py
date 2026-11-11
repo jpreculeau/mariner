@@ -245,17 +245,6 @@ class PrinterAccessTest(TestCase):
             expect(status.state).to_equal(PrinterState.CLOSED)
             expect(selected).to_equal("")
 
-    def test_read_status_reports_closed_when_the_terminal_fails(self) -> None:
-        # What the serial library lets through when flushing its buffers
-        # fails. It is not an OSError.
-        import termios
-
-        self.printer_mock.get_print_status.side_effect = termios.error(5, "I/O error")
-        status, selected_file = printer_access.read_status()
-        expect(status.state).to_equal(PrinterState.CLOSED)
-        expect(status.silent).to_equal(False)
-        expect(selected_file).to_equal("")
-
     def test_read_status_does_not_ask_a_silent_printer_for_its_file(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "model.ctb")
         printer_access.read_status()
@@ -720,6 +709,14 @@ class PrinterAccessTest(TestCase):
         expect(ran).to_equal([])
         expect(raised.exception.path).to_equal(Path("/mnt/usb_share/model.ctb"))
         expect(raised.exception.usage).to_equal(printer_access.Usage.PRINTING)
+
+    def test_a_refusal_quotes_the_name_it_is_about(self) -> None:
+        # The message is logged; the name must not break its line.
+        refusal = printer_access.FileInUse(
+            Path("/mnt/usb_share/a\nWARNING forged.ctb"), printer_access.Usage.PRINTING
+        )
+        expect("\n" in str(refusal)).to_equal(False)
+        expect("forged.ctb" in str(refusal)).to_equal(True)
 
     def test_unless_in_use_says_when_the_printer_could_not_be_asked(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "")

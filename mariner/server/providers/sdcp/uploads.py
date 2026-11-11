@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import secrets
+import stat
 import threading
 import time
 from dataclasses import dataclass, field
@@ -119,7 +120,13 @@ class UploadManager:
         # Kept inside the files directory so finalize() is a rename rather
         # than a cross-filesystem copy of a potentially huge file.
         path = config.get_files_directory() / SCRATCH_DIRNAME
-        path.mkdir(parents=True, exist_ok=True)
+        try:
+            os.mkdir(path)
+        except FileExistsError:
+            pass
+        if not stat.S_ISDIR(os.lstat(path).st_mode):
+            # A link, which would lead the transfers elsewhere, or a file.
+            raise NotADirectoryError(path)
         return path
 
     def handle_chunk(
@@ -202,7 +209,7 @@ class UploadManager:
         # Refused before any byte is stored, so the client learns at once
         # instead of after sending the whole file. Checked again when the
         # file is moved into place.
-        if self._starts_a_transfer(key, offset):
+        if offset == 0:
             destination = resolve_entry_in_files_directory(safe_name)
             try:
                 if destination is not None:
@@ -311,10 +318,6 @@ class UploadManager:
             self._sessions.pop(key, None)
 
         return self._finalize(session)
-
-    def _starts_a_transfer(self, key: _SessionKey, offset: int) -> bool:
-        with self._lock:
-            return offset == 0 or key not in self._sessions
 
     def _abandon(self, key: _SessionKey) -> None:
         """Drop whatever was received so far for *key*, if anything."""

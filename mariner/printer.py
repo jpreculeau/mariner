@@ -2,6 +2,7 @@ import errno
 import logging
 import os
 import re
+import termios
 import time
 import unicodedata
 from dataclasses import dataclass
@@ -15,6 +16,11 @@ from mariner import config
 from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+# What can go wrong on the serial line while it is being used: the serial
+# library's own error, and what it lets through as it is when the terminal
+# fails while its buffers are flushed, which is not an OSError.
+_LINE_FAILURES = (OSError, termios.error)
 
 
 # What opening a serial device that is not there fails with.
@@ -163,7 +169,7 @@ class ChiTuPrinter:
                     match = re.search("D:([0-9]+)/([0-9]+)/([0-9]+)", data)
                     if match is not None:
                         break
-            except serial.SerialException as exception:
+            except _LINE_FAILURES as exception:
                 logger.warning(
                     "Serial exception while reading M4000; "
                     "treating printer as CLOSED. error=%s",
@@ -344,7 +350,7 @@ class ChiTuPrinter:
             # flushing it like this
             self._serial_port.read(size=1024)
             return response
-        except serial.SerialException as exception:
+        except _LINE_FAILURES as exception:
             # Cable unplugged / kernel closed the tty mid-read. Mark the port
             # dead so subsequent calls short-circuit, and surface a typed
             # error so callers (and retry()) can react.

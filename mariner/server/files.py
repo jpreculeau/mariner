@@ -94,18 +94,20 @@ def _is_hidden(path: Path) -> bool:
     if is_hidden_entry(path.name):
         return True
     try:
-        target = os.stat(path)
         with os.scandir(path.parent) as entries:
             siblings = [entry for entry in entries if is_hidden_entry(entry.name)]
     except OSError:
-        # The folder or the entry does not exist: nothing to be the same as.
+        # The folder does not exist: nothing to be the same as.
         return False
     for sibling in siblings:
         try:
-            if os.path.samestat(sibling.stat(), target):
+            # Both looked at in one go, so that a transfer beginning or
+            # ending meanwhile cannot make two different files look alike.
+            if os.path.samefile(sibling.path, path):
                 return True
         except OSError:
-            # That one is gone, or leads nowhere. The others still count.
+            # One of the two is gone, or leads nowhere. The other hidden
+            # entries still count.
             continue
     return False
 
@@ -257,6 +259,21 @@ def remove_entry(path: Path) -> None:
     if _is_hidden(path):
         raise FileNotFoundError(path)
     os.remove(path)
+
+
+def move_aside(path: Path) -> Path:
+    """Move the folder at *path* to a scratch name beside it, and give that name.
+
+    For removing a folder in two steps: this one is instant, and the slow
+    removal of its contents can follow without holding anything up. Like
+    ``remove_entry``, it checks once more that *path* is not a hidden entry,
+    and raises FileNotFoundError if it is.
+    """
+    if _is_hidden(path):
+        raise FileNotFoundError(path)
+    aside = scratch_path_beside(path)
+    os.rename(path, aside)
+    return aside
 
 
 def modification_time(dir_entry: "os.DirEntry[str]") -> float:

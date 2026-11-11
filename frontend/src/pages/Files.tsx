@@ -47,6 +47,8 @@ export default function Files() {
     path: string;
     reason: string;
   } | null>(null);
+  // One upload at a time: see handleUpload.
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
@@ -115,10 +117,14 @@ export default function Files() {
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    // A second upload while one is under way is not taken: if both were
+    // refused, the question about the second would replace the first's.
+    if (!file || uploading) return;
+    setUploading(true);
     try {
       await upload(file, currentPath, false);
     } finally {
+      setUploading(false);
       // Lets the same file be picked again after a refusal.
       e.target.value = "";
     }
@@ -159,6 +165,8 @@ export default function Files() {
             variant="outline"
             size="sm"
             className="gap-1.5"
+            disabled={uploading}
+            aria-label="Upload"
             onClick={() => fileInputRef.current?.click()}
           >
             <Upload className="h-3.5 w-3.5" />

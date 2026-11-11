@@ -559,19 +559,58 @@ class SDCPBridgeTest(TestCase):
             ).exists()
         ).to_equal(True)
 
-    def test_a_refused_deletion_cannot_add_lines_to_the_log(self) -> None:
+    def test_a_name_with_a_line_break_is_refused_and_not_logged(self) -> None:
         self.fs.create_file("/mnt/usb_share/x\nWARNING forged.ctb", contents=b"x")
         self.fs.create_dir("/mnt/usb_share/y\nWARNING forged")
-        self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.CLOSED, silent=True
-        )
-        with self.assertLogs("mariner.server.providers.sdcp.bridge", "WARNING") as logs:
-            self.bridge.delete(
+        with self.assertNoLogs("mariner.server.providers.sdcp.bridge", "WARNING"):
+            failures = self.bridge.delete(
                 ["/local/x\nWARNING forged.ctb"], ["/local/y\nWARNING forged"]
             )
-        expect(len(logs.records)).to_equal(2)
-        for record in logs.records:
-            expect("\n" in record.getMessage()).to_equal(False)
+        expect(failures).to_equal(
+            ["/local/x\nWARNING forged.ctb", "/local/y\nWARNING forged"]
+        )
+        expect(os.path.exists("/mnt/usb_share/x\nWARNING forged.ctb")).to_equal(True)
+
+    def test_a_line_break_at_the_end_of_a_name_is_not_trimmed_away(self) -> None:
+        # The other interfaces refuse such a name; so does this one.
+        self.fs.create_file("/mnt/usb_share/sub/part.ctb", contents=b"x")
+        for name in (
+            "/local/foobar.ctb\n",
+            "\u2028/local/foobar.ctb",
+            "foobar.ctb\x85",
+        ):
+            expect(self.bridge.start_print(name)).to_equal(
+                int(constants.PrintCtrlAck.NOT_FOUND)
+            )
+            expect(self.bridge.delete([name], [])).to_equal([name])
+            expect(self.bridge.list_files(name)).to_equal([])
+        expect(self.bridge.delete([], ["/local/sub\r\n"])).to_equal(["/local/sub\r\n"])
+        self.printer_mock.start_printing.assert_not_called()
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+        expect(os.path.exists("/mnt/usb_share/sub/part.ctb")).to_equal(True)
+        # Plain spaces around a name are still trimmed.
+        expect(strip_storage_prefix("  /local/foobar.ctb ")).to_equal("foobar.ctb")
+
+    def test_delete_cannot_move_aside_a_folder_that_became_hidden(self) -> None:
+        # Stands for the short alias FAT gives the transfer folder, asked
+        # for just before the first transfer creates it.
+        self.fs.create_dir("/mnt/usb_share/SDCP_U~1")
+        with patch("mariner.server.providers.sdcp.bridge.move_aside") as move:
+            move.side_effect = FileNotFoundError("hidden by now")
+            failures = self.bridge.delete([], ["/local/SDCP_U~1"])
+        expect(failures).to_equal(["/local/SDCP_U~1"])
+        move.assert_called_once_with(pathlib.Path("/mnt/usb_share/SDCP_U~1"))
+        expect(os.path.isdir("/mnt/usb_share/SDCP_U~1")).to_equal(True)
+
+    def test_list_files_only_follows_links(self) -> None:
+        self.fs.create_file("/mnt/usb_share/second.ctb", contents=b"x")
+        self.fs.create_symlink("/mnt/usb_share/alias.ctb", "/mnt/usb_share/foobar.ctb")
+        with patch(
+            "mariner.server.providers.sdcp.bridge.stays_in_files_directory",
+            return_value=True,
+        ) as followed:
+            self.bridge.list_files("/local/")
+        followed.assert_called_once_with(pathlib.Path("/mnt/usb_share/alias.ctb"))
 
     def test_delete_removes_a_link_to_a_folder_and_leaves_the_folder(self) -> None:
         # Listed as a folder, so a slicer deletes it as one.
@@ -1223,6 +1262,32 @@ class UploadManagerTest(TestCase):
         expect(self._stored("model.ctb")).to_equal(b"BBBBBBBB")
         expect(os.listdir("/mnt/usb_share")).to_equal(["model.ctb"])
 
+    def test_a_chunk_from_the_middle_of_no_transfer_does_not_ask_the_printer(
+        self,
+    ) -> None:
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"old")
+        asked = []
+
+        @contextmanager
+        def guard(path: Any) -> Iterator[None]:
+            asked.append(path)
+            yield
+
+        manager = UploadManager(unless_in_use=guard)
+        result = self._chunk(manager, 4, b"new!", 8)
+        expect(result.error).to_equal(int(constants.UploadError.OFFSET_MISMATCH))
+        expect(asked).to_equal([])
+
+    def test_transfers_are_not_led_elsewhere_by_a_link(self) -> None:
+        # Where .sdcp_uploads is a link, nothing is written through it.
+        self.fs.create_dir("/mnt/elsewhere")
+        self.fs.create_symlink("/mnt/usb_share/.sdcp_uploads", "/mnt/elsewhere")
+        result = self._send(0, b"AAAA")
+        expect(result.ok).to_equal(False)
+        expect(result.error).to_equal(int(constants.UploadError.FILE_OPEN_FAILED))
+        expect(os.listdir("/mnt/elsewhere")).to_equal([])
+        expect(self.manager.is_transferring()).to_equal(False)
+
     def test_a_chunk_from_the_middle_of_no_transfer_leaves_nothing(self) -> None:
         # Its transfer was abandoned or terminated, or never began.
         result = self._send(4, b"AAAA")
@@ -1538,6 +1603,20 @@ class ServiceHousekeepingTest(IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await service._poll_status_forever()
         service._uploads.drop_idle_transfers.assert_called_once_with()
+
+    async def test_the_firmware_version_is_read_when_the_service_starts(
+        self,
+    ) -> None:
+        # Otherwise discovery would announce a placeholder until a first
+        # client had connected.
+        service = self._service()
+        service._bridge = Mock(spec=PrinterBridge)
+        await service._learn_firmware_version()
+        service._bridge.firmware_version.assert_called_once_with()
+
+        service._bridge.firmware_version.side_effect = RuntimeError("no printer")
+        with self.assertLogs("mariner.server.providers.sdcp.service", "WARNING"):
+            await service._learn_firmware_version()
 
     async def test_terminate_is_asked_for_the_client_that_sent_it(self) -> None:
         service = self._service()

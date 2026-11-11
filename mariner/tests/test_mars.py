@@ -1,5 +1,6 @@
 import errno
 import itertools
+import termios
 import unittest.mock
 from unittest import TestCase
 from unittest.mock import MagicMock, Mock, call, patch
@@ -368,6 +369,27 @@ class ChiTuPrinterTest(TestCase):
         self.printer.close()
         expect(status.state).to_equal(PrinterState.CLOSED)
         expect(status.silent).to_equal(False)
+
+    def test_a_terminal_that_fails_is_a_line_that_fails(self) -> None:
+        # What the serial library lets through, as it is, when flushing
+        # its buffers fails. It is not an OSError.
+        self.serial_port_mock.reset_input_buffer.side_effect = termios.error(
+            5, "Input/output error"
+        )
+        self.printer.open()
+        status = self.printer.get_print_status()
+        expect(status.state).to_equal(PrinterState.CLOSED)
+        expect(status.silent).to_equal(False)
+
+        self.printer.open()
+        with self.assertRaises(UnexpectedPrinterResponse):
+            self.printer.pause_printing()
+
+        # Nothing was sent, so the file was not selected.
+        self.printer.open()
+        with self.assertRaises(FileNotSelected):
+            self.printer.start_printing("model.ctb")
+        self.serial_port_mock.write.assert_not_called()
 
     def test_a_printer_never_opened_is_not_known_to_be_silent(self) -> None:
         expect(self.printer.get_print_status().silent).to_equal(False)

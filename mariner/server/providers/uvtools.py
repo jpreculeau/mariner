@@ -148,8 +148,8 @@ class UVToolsProvider(NetworkPrintProvider):
     def _printer_error(error: MarinerException) -> Tuple[Response, int]:
         """Answer 500 when the printer turns a command down or does not answer.
 
-        Handled here so that Flask does not log it as an unhandled error,
-        which would put the request path, client text, into the log as is.
+        Handled here so that it is not left to be logged as an unhandled
+        error, with the request path, client text, as it came.
         """
         logger.warning("UVTools: printer command failed: %s", error)
         return jsonify({"success": False}), 500

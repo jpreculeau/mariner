@@ -355,6 +355,9 @@ class MarinerServerTest(TestCase):
             def is_dir(self) -> bool:
                 raise OSError(40, "Too many levels of symbolic links")
 
+            def is_symlink(self) -> bool:
+                return True
+
             def stat(self) -> None:
                 raise OSError(40, "Too many levels of symbolic links")
 
@@ -380,6 +383,17 @@ class MarinerServerTest(TestCase):
                 ],
             }
         )
+
+    def test_list_files_only_follows_links(self) -> None:
+        # Following an entry means looking through its whole folder. Only
+        # a link can lead elsewhere, so only links are followed.
+        self.fs.create_file("/mnt/usb_share/second.ctb", contents=b"x")
+        self.fs.create_symlink("/mnt/usb_share/alias.ctb", "/mnt/usb_share/foobar.ctb")
+        with patch(
+            "mariner.server.api.stays_in_files_directory", return_value=True
+        ) as followed:
+            self.client.get("/api/list_files")
+        followed.assert_called_once_with(pathlib.Path("/mnt/usb_share/alias.ctb"))
 
     def test_list_files_hides_uploads_in_progress(self) -> None:
         self.fs.create_file(
@@ -935,6 +949,15 @@ class MarinerServerTest(TestCase):
             response = self.client.post("/api/delete_file?filename=UPLOAD~1.PAR")
         expect(response.status_code).to_equal(404)
         remove.assert_called_once_with(pathlib.Path("/mnt/usb_share/UPLOAD~1.PAR"))
+
+    def test_upload_file_trims_the_name_before_looking_at_its_extension(
+        self,
+    ) -> None:
+        # As UVtools and slicers have it: "model.ctb " is model.ctb.
+        data = {"file": (io.BytesIO(self.ctb_file_contents), "trimmed.ctb ")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(200)
+        expect(self._stored("trimmed.ctb")).to_equal(self.ctb_file_contents)
 
     def test_an_upload_can_override_a_silent_printer_too(self) -> None:
         self._printer_is_silent()

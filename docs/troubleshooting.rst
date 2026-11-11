@@ -94,6 +94,10 @@ removed. Names it cannot use safely are refused instead of being rewritten:
 Rename the file and upload it again. The same rules apply to folder names and
 to files sent from a slicer.
 
+A file stored before these rules existed, under a name they no longer allow,
+can still be deleted from the web interface. A slicer can only name it if the
+name has no control character.
+
 An upload is also refused with error 400 when the file is not in a format
 Mariner can print, when a folder already has that name, or when the name is
 one Mariner keeps for transfers in progress (``.upload-<random>.part`` and
@@ -225,7 +229,8 @@ and by the transfer id the slicer chose:
   was received is removed. Send the file again.
 
 Two slicers on the **same** computer that send the same file name and size
-at the same time, both without a transfer id, cannot be told apart: the
+at the same time, under the same transfer id or both without one, cannot be
+told apart: the
 second one to start takes over, and pieces still arriving from the first
 can end up in its file. Slicers that ask for the checksum to be verified
 are protected: the file is then refused.

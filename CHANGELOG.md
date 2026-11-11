@@ -1,5 +1,8 @@
 ## [unreleased]
 
+<!-- This section is written by hand, one line per change in behaviour.
+     Regenerating it from the commit subjects would lose that detail. -->
+
 ### 🚀 Features
 
 - Add support for SDCP
@@ -24,23 +27,31 @@
 - Keep line breaks in client-supplied names out of the logs
 - Answer 404 when a file or folder disappears during a deletion or an upload
 - Refuse to start a print while the printer reports one under way
+- Treat a terminal failure on the serial line like any other line failure, in every printer command
+- Refuse, over SDCP too, a name with a line break at either end instead of trimming it
+- Trim an uploaded file's name before looking at its extension, as UVtools and SDCP do
+- Follow only symbolic links when listing a folder, so that large folders list quickly
+- Check once more that a folder is not a transfer folder right before removing it over SDCP
+- Do not let a link named like the SDCP transfer folder lead transfers elsewhere
+- Do not ask the printer about a stray SDCP chunk
+- Read the firmware version when the SDCP service starts, so that discovery announces it from the first reply
 - Refuse to start a second print until the printer reports the first, with its own explanation (`print_just_started`)
 - Check that the file can be printed at the moment the command is sent, with file changes held off
 - Count as silence only a printer from which not one byte came, late answers included
 - Ask again a moment later after an unclear answer, instead of keeping it for half a minute
 - Refuse a file name with a line break at either end instead of trimming it
-- Answer a UVtools upload that cannot be stored without logging the request path
 - Let a slicer delete a symbolic link to a folder; the folder itself stays
 - Check once more that an entry is not a transfer in progress right before removing it
 - Keep listings whole when they hold a symbolic link that leads back to itself
 - Remove what an SDCP transfer received even when moving it into place fails unexpectedly
 - Explain apart a file whose print was only just started (`print_just_started`)
 - Allow the "printer is off" override only when the printer was asked and stayed silent, not when the serial port could not be used or failed
-- Confirm "delete anyway" for the file the question was about, even if another file is shown by then
+- Withdraw the "delete anyway" question when another file is shown, and ignore an answer that comes back for a file no longer on screen
+- Take one upload at a time in the web interface
 - Refuse an SDCP chunk from the middle of a transfer that is not under way, and let a client end its own transfer only
 - Drop unfinished SDCP transfers with no client connected
 - Keep an SDCP listing whole when it holds a link whose target is gone
-- Answer a UVtools command the printer turned down without logging the request path
+- Answer a UVtools command the printer turned down, or an upload that cannot be stored, instead of leaving it unhandled
 - Keep SDCP transfers apart by client address as well as id, and refuse a chunk that names another file or size
 - Abandon an SDCP transfer that has received nothing for five minutes
 - Refuse a declared MD5 that is not one

@@ -32,7 +32,6 @@ long as the printer takes to answer: seconds when it is silent.
 """
 
 import os
-import termios
 import threading
 import time
 from contextlib import contextmanager
@@ -84,7 +83,8 @@ _SILENCE_MAX_AGE_SECS = 30.0
 # this long, or until the printer reports a print itself.
 _START_GRACE_SECS = 30.0
 
-# Reentrant, so that code holding one of them can call the helpers below.
+# The first two are reentrant, so that code holding one of them can call the
+# helpers below. The third is never held across a call.
 _change_lock = threading.RLock()
 _serial_lock = threading.RLock()
 _memory_lock = threading.Lock()
@@ -267,9 +267,7 @@ def read_status() -> Tuple[PrintStatus, str]:
     with _serial_lock:
         try:
             status, selected_file = _query_printer()
-        except TRANSIENT_ERRORS + (OSError, termios.error):
-            # termios.error: what the serial library lets through, as it
-            # is, when the terminal fails while its buffers are flushed.
+        except TRANSIENT_ERRORS + (OSError,):
             status, selected_file = PrintStatus(state=PrinterState.CLOSED), ""
         with _memory_lock:
             _last_status = (time.monotonic(), status, selected_file)

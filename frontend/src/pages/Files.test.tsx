@@ -71,6 +71,28 @@ describe("Files", () => {
     expect(api.listFiles).toHaveBeenCalledTimes(1);
   });
 
+  it("takes one upload at a time", async () => {
+    // With a silent printer the answer takes seconds. A second upload sent
+    // meanwhile could have its question replace the first one's unseen.
+    let finish: () => void = () => {};
+    vi.spyOn(api, "uploadFile").mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const input = renderFiles();
+    await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+    const button = screen.getByRole("button", { name: "Upload" });
+
+    pick(input, new File(["x"], "first.ctb"));
+    await waitFor(() => expect(button).toHaveProperty("disabled", true));
+    pick(input, new File(["x"], "second.ctb"));
+    finish();
+
+    await waitFor(() => expect(button).toHaveProperty("disabled", false));
+    expect(api.uploadFile).toHaveBeenCalledTimes(1);
+  });
+
   it("lets the same file be picked again after a refusal", async () => {
     // A file input reports no change when the same file is chosen twice,
     // unless it was emptied in between.

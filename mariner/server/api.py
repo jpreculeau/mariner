@@ -263,9 +263,11 @@ def _refuse_early_if_in_use(destination: Path) -> None:
     """Raise FileInUse before anything is written, when that is already known.
 
     A refusal then costs nothing. A silent printer the user vouched for is
-    let through without being asked again here: giving up on it takes
-    seconds, and the guard asks it at the moment the file is moved into
-    place, which is the answer that counts.
+    not refused here: the guard asks it again at the moment the file is
+    moved into place, which is the answer that counts. The silence
+    remembered from the request that was refused spares asking here; if
+    nothing recent is remembered, this check asks too, and such a request
+    waits for the printer twice.
     """
     try:
         with unless_in_use(destination):
@@ -393,12 +395,17 @@ def list_files() -> Union[str, Response]:
                 sliced_model_file: Optional[SlicedModelFile] = None
                 # A link leading out of the files directory is listed, so
                 # that it can be removed, but what it leads to is not read.
-                # (A link to a transfer in progress is listed too, although
-                # no route will touch it.)
-                if get_file_extension(
-                    dir_entry.name
-                ) in get_supported_extensions() and stays_in_files_directory(
-                    path / dir_entry.name
+                # (A link to a transfer in progress, or another name for
+                # one, is listed too, although no route will touch it.)
+                # Only a link can lead elsewhere, and only links are
+                # checked: the check looks through the whole folder.
+                leads_elsewhere = (
+                    dir_entry.is_symlink()
+                    and not stays_in_files_directory(path / dir_entry.name)
+                )
+                if (
+                    get_file_extension(dir_entry.name) in get_supported_extensions()
+                    and not leads_elsewhere
                 ):
                     # A file with a supported extension can still fail to
                     # parse: truncated, corrupted in transfer, or a format
@@ -477,11 +484,13 @@ def upload_file() -> Union[str, Response]:
     file = request.files.get("file")
     if file is None or file.filename == "":
         abort(400)
-    file_filename: str = none_throws(file.filename)
-    if get_file_extension(file_filename) not in get_supported_extensions():
-        abort(400)
-    filename = safe_filename(file_filename)
+    # The name as it will be stored, then its extension: the same order as
+    # the other interfaces, so that all three agree on a name with spaces
+    # around it.
+    filename = safe_filename(none_throws(file.filename))
     if filename is None:
+        abort(400)
+    if get_file_extension(filename) not in get_supported_extensions():
         abort(400)
 
     folder = request.args.get("path", ".")
