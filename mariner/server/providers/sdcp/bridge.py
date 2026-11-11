@@ -8,19 +8,23 @@ WebSocket while the printer is being polled.
 import logging
 import os
 import shutil
-import threading
 import uuid as uuid_module
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type
-
-import serial
+from typing import Any, Dict, List, Optional, Tuple
 
 from mariner import config
-from mariner.exceptions import UnexpectedPrinterResponse
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import ChiTuPrinter, PrinterState
+from mariner.printer import PrinterState
 from mariner.server.api import _layer_from_byte_offset
 from mariner.server.files import is_safe_for_printer, resolve_in_files_directory
+from mariner.server.printer_access import (
+    TRANSIENT_ERRORS as _TRANSIENT_ERRORS,
+    file_being_printed,
+    is_inside,
+    printer_session,
+    read_status,
+    same_file,
+)
 from mariner.server.providers.sdcp import constants, identity
 from mariner.server.utils import (
     read_cached_preview,
@@ -45,11 +49,6 @@ OPTIONAL_DEVICES: Dict[str, str] = {
     "x_motor": "XMotorStatus",
     "rotate_motor": "RotateMotorStatus",
 }
-
-_TRANSIENT_ERRORS: Tuple[Type[Exception], ...] = (
-    UnexpectedPrinterResponse,
-    serial.SerialException,
-)
 
 # Mariner's printer state maps onto an SDCP top-level status plus a printing
 # sub-status. Mariner cannot see the lift/drop phases the protocol models, so
@@ -93,10 +92,7 @@ def strip_storage_prefix(path: str) -> str:
 class PrinterBridge:
     """Serializes access to the printer and renders SDCP payloads."""
 
-    _lock: threading.Lock
-
     def __init__(self) -> None:
-        self._lock = threading.Lock()
         self._previous_status: int = int(constants.MachineStatus.IDLE)
         # Read once from the board and kept: it cannot change while running,
         # and every attribute report would otherwise cost a serial round trip.
@@ -105,21 +101,7 @@ class PrinterBridge:
     # -- printer reads -------------------------------------------------
 
     def _read_printer(self) -> Tuple[PrinterState, str, int, int, Optional[float]]:
-        with self._lock:
-            try:
-                with ChiTuPrinter() as printer:
-                    status = retry(
-                        printer.get_print_status, _TRANSIENT_ERRORS, num_retries=3
-                    )
-                    selected = retry(
-                        printer.get_selected_file, _TRANSIENT_ERRORS, num_retries=3
-                    )
-            except _TRANSIENT_ERRORS:
-                return (PrinterState.CLOSED, "", 0, 0, None)
-            except OSError as exc:
-                logger.debug("SDCP: printer unreachable: %s", exc)
-                return (PrinterState.CLOSED, "", 0, 0, None)
-
+        status, selected = read_status()
         return (
             status.state,
             selected or "",
@@ -238,19 +220,18 @@ class PrinterBridge:
         return self._firmware_version or FALLBACK_FIRMWARE_VERSION
 
     def _read_firmware_version(self) -> Optional[str]:
-        with self._lock:
-            try:
-                with ChiTuPrinter() as printer:
-                    version = retry(
-                        printer.get_firmware_version,
-                        _TRANSIENT_ERRORS,
-                        num_retries=2,
-                    )
-            except _TRANSIENT_ERRORS:
-                return None
-            except OSError as exc:
-                logger.debug("SDCP: could not read firmware version: %s", exc)
-                return None
+        try:
+            with printer_session() as printer:
+                version = retry(
+                    printer.get_firmware_version,
+                    _TRANSIENT_ERRORS,
+                    num_retries=2,
+                )
+        except _TRANSIENT_ERRORS:
+            return None
+        except OSError as exc:
+            logger.debug("SDCP: could not read firmware version: %s", exc)
+            return None
         logger.info("SDCP: printer firmware version is %s", version)
         return str(version)
 
@@ -382,9 +363,8 @@ class PrinterBridge:
             return int(constants.PrintCtrlAck.UNKNOWN_FORMAT)
 
         try:
-            with self._lock:
-                with ChiTuPrinter() as printer:
-                    printer.start_printing(relative)
+            with printer_session() as printer:
+                printer.start_printing(relative)
         except _TRANSIENT_ERRORS as exc:
             logger.warning("SDCP: start print failed: %s", exc)
             return int(constants.PrintCtrlAck.FILEIO_FAILED)
@@ -395,9 +375,8 @@ class PrinterBridge:
 
     def _simple_command(self, action: str) -> int:
         try:
-            with self._lock:
-                with ChiTuPrinter() as printer:
-                    getattr(printer, action)()
+            with printer_session() as printer:
+                getattr(printer, action)()
         except _TRANSIENT_ERRORS as exc:
             logger.warning("SDCP: %s failed: %s", action, exc)
             return int(constants.PrintCtrlAck.BUSY)
@@ -470,10 +449,17 @@ class PrinterBridge:
     def delete(self, file_list: List[str], folder_list: List[str]) -> List[str]:
         """Delete the given paths, returning the ones that could not be removed."""
         failures: List[str] = []
+        # Asked once: the printer reads this file for the whole print, so
+        # neither it nor a folder holding it may go.
+        printing = file_being_printed()
 
         for raw in file_list or []:
             path = resolve_in_files_directory(strip_storage_prefix(raw))
             if path is None or not os.path.isfile(path):
+                failures.append(raw)
+                continue
+            if printing is not None and same_file(printing, path):
+                logger.warning("SDCP: refusing to delete %s while it prints", raw)
                 failures.append(raw)
                 continue
             try:
@@ -486,6 +472,10 @@ class PrinterBridge:
             path = resolve_in_files_directory(relative)
             files_dir = config.get_files_directory().resolve()
             if path is None or not os.path.isdir(path) or path == files_dir:
+                failures.append(raw)
+                continue
+            if printing is not None and is_inside(printing, path):
+                logger.warning("SDCP: refusing to delete %s while it prints", raw)
                 failures.append(raw)
                 continue
             try:

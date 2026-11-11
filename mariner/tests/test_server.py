@@ -66,7 +66,7 @@ class MarinerServerTest(TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
-        self.printer_patcher = patch("mariner.server.api.ChiTuPrinter")
+        self.printer_patcher = patch("mariner.server.printer_access.ChiTuPrinter")
         printer_constructor_mock = self.printer_patcher.start()
         printer_constructor_mock.return_value = self.printer_mock
         self.printer_mock.__enter__ = Mock(return_value=self.printer_mock)
@@ -528,6 +528,66 @@ class MarinerServerTest(TestCase):
                 self.client.post("/api/upload_file", data=data)
         expect(os.path.exists("/mnt/usb_share/myfile.ctb")).to_equal(False)
         expect(self._leftovers()).to_equal([])
+
+    def _printer_is_printing(self, selected_file: str) -> None:
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING, current_byte=5000, total_bytes=10000
+        )
+        self.printer_mock.get_selected_file.return_value = selected_file
+
+    def test_upload_file_refuses_to_replace_the_file_being_printed(self) -> None:
+        # The printer reads the file layer by layer for the whole print, so
+        # swapping it underneath would ruin the print in progress.
+        self._printer_is_printing("foobar.ctb")
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["title"]).to_equal("File In Use")
+        expect(self._stored("foobar.ctb")).to_equal(self.ctb_file_contents)
+        expect(self._leftovers()).to_equal([])
+
+    def test_upload_file_with_another_name_while_printing(self) -> None:
+        self._printer_is_printing("foobar.ctb")
+        data = {"file": (io.BytesIO(b"abcdef"), "other.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(200)
+        expect(self._stored("other.ctb")).to_equal(b"abcdef")
+
+    def test_upload_file_replaces_a_file_that_is_selected_but_not_printing(
+        self,
+    ) -> None:
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE
+        )
+        self.printer_mock.get_selected_file.return_value = "foobar.ctb"
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(200)
+        expect(self._stored("foobar.ctb")).to_equal(b"new contents")
+
+    def test_delete_file_refuses_the_file_being_printed(self) -> None:
+        self._printer_is_printing("foobar.ctb")
+        response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+
+    def test_print_status_when_the_file_being_printed_is_not_here(self) -> None:
+        # Started from the printer's own screen, from a file Mariner cannot
+        # see. The dashboard must keep working, without layer details.
+        self._printer_is_printing("elsewhere.ctb")
+        response = self.client.get("/api/print_status")
+        expect(response.status_code).to_equal(200)
+        expect(response.get_json()).to_equal(
+            {"state": "PRINTING", "selected_file": "elsewhere.ctb", "progress": 50.0}
+        )
+
+    def test_print_status_when_the_file_being_printed_cannot_be_parsed(self) -> None:
+        self.fs.create_file("/mnt/usb_share/corrupt.ctb", contents=b"not a ctb")
+        self._printer_is_printing("corrupt.ctb")
+        response = self.client.get("/api/print_status")
+        expect(response.status_code).to_equal(200)
+        expect(response.get_json()["state"]).to_equal("PRINTING")
+        expect(response.get_json()["progress"]).to_equal(50.0)
 
     def test_upload_file_to_subdirectory(self) -> None:
         self.fs.create_dir("/mnt/usb_share/uploads/")

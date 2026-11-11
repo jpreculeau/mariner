@@ -75,9 +75,9 @@ class ChiTuPrinter:
 
     def get_firmware_version(self) -> str:
         data = self._send_and_read(b"M4002")
-        return self._extract_response_with_regex("^ok ([a-zA-Z0-9_.]+)\n$", data).group(
-            1
-        )
+        return self._extract_response_with_regex(
+            "^ok ([a-zA-Z0-9_.]+)\r?\n$", data
+        ).group(1)
 
     def get_state(self) -> str:
         return self._send_and_read(b"M4000")
@@ -259,7 +259,7 @@ class ChiTuPrinter:
             max_empty_line_reads = 15
             response = ""
             for _ in range(max_empty_line_reads):
-                line = self._serial_port.readline().decode("utf-8")
+                line = self._serial_port.readline().decode("utf-8", errors="replace")
                 if line:
                     response = line
                     break
@@ -301,7 +301,7 @@ class ChiTuPrinter:
         response = ""
         attempts = 0
         while attempts < max_readline_attempts and time.monotonic() < deadline:
-            line = self._serial_port.readline().decode("utf-8")
+            line = self._serial_port.readline().decode("utf-8", errors="replace")
             attempts += 1
             if expected_substring in line:
                 response = line

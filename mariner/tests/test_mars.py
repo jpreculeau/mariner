@@ -235,6 +235,23 @@ class ChiTuPrinterTest(TestCase):
 
         self.serial_port_mock.write.assert_not_called()
 
+    def test_get_firmware_version_with_either_line_ending(self) -> None:
+        for line in (b"ok V4.4.3_LCDC\n", b"ok V4.4.3_LCDC\r\n"):
+            self.serial_port_mock.readline.return_value = line
+            self.printer.open()
+            expect(self.printer.get_firmware_version()).to_equal("V4.4.3_LCDC")
+            self.printer.close()
+
+    def test_line_noise_is_not_a_crash(self) -> None:
+        # Bytes that are not UTF-8 show up with a wrong baud rate or a loose
+        # wire. They must read as an unusable answer, not raise.
+        self.serial_port_mock.readline.return_value = b"\xff\xfe\x80 noise\r\n"
+        self.printer.open()
+        expect(self.printer.get_print_status().state).to_equal(PrinterState.CLOSED)
+        with self.assertRaises(UnexpectedPrinterResponse):
+            self.printer.get_selected_file()
+        self.printer.close()
+
     def test_get_selected_file(self) -> None:
         self.serial_port_mock.readline.return_value = b"ok 'LittleBBC.ctb'\r\n"
 

@@ -13,11 +13,12 @@ import shutil
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Dict, Optional
+from typing import Any, BinaryIO, Callable, Dict, Optional
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.server.files import resolve_in_files_directory, safe_filename
+from mariner.server.printer_access import is_being_printed
 from mariner.server.providers.sdcp import constants
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -62,9 +63,19 @@ class UploadManager:
 
     _lock: threading.Lock
 
-    def __init__(self) -> None:
+    def __init__(
+        self, is_being_printed: Callable[[Path], bool] = is_being_printed
+    ) -> None:
         self._lock = threading.Lock()
         self._sessions: Dict[str, _Session] = {}
+        self._is_being_printed = is_being_printed
+
+    def _would_replace_file_being_printed(self, filename: str) -> bool:
+        destination = resolve_in_files_directory(filename)
+        if destination is None or not self._is_being_printed(destination):
+            return False
+        logger.warning("SDCP: refusing to replace %s while it prints", filename)
+        return True
 
     def is_transferring(self) -> bool:
         with self._lock:
@@ -121,6 +132,12 @@ class UploadManager:
             if session is None or offset == 0:
                 if session is not None:
                     self._discard(upload_uuid, session)
+                # Refused before any byte is stored, so the client learns at
+                # once instead of after sending the whole file.
+                if self._would_replace_file_being_printed(safe_name):
+                    return ChunkResult(
+                        ok=False, error=constants.UploadError.FILE_OPEN_FAILED
+                    )
                 try:
                     scratch = self._scratch_dir() / f"{upload_uuid}.part"
                     handle = open(scratch, "wb")
@@ -212,6 +229,10 @@ class UploadManager:
                     md5_failed=True,
                     filename=session.filename,
                 )
+
+        if self._would_replace_file_being_printed(session.filename):
+            self._unlink(session.scratch_path)
+            return ChunkResult(ok=False, error=constants.UploadError.FILE_OPEN_FAILED)
 
         destination = resolve_in_files_directory(session.filename)
         if destination is None:

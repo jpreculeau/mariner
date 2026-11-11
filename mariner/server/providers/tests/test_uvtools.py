@@ -43,7 +43,7 @@ class UVToolsProviderTest(TestCase):
         app.config["WTF_CSRF_ENABLED"] = False
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
-        self.printer_patcher = patch("mariner.server.providers.uvtools.ChiTuPrinter")
+        self.printer_patcher = patch("mariner.server.printer_access.ChiTuPrinter")
         printer_constructor_mock = self.printer_patcher.start()
         printer_constructor_mock.return_value = self.printer_mock
         self.printer_mock.__enter__ = Mock(return_value=self.printer_mock)
@@ -154,6 +154,31 @@ class UVToolsProviderTest(TestCase):
             expect(file.read()).to_equal(b"new contents")
         leftovers = [n for n in os.listdir("/mnt/usb_share") if n.endswith(".part")]
         expect(leftovers).to_equal([])
+
+    def _printer_is_printing(self, selected_file: str) -> None:
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING, current_byte=5000, total_bytes=10000
+        )
+        self.printer_mock.get_selected_file.return_value = selected_file
+
+    def test_upload_refuses_to_replace_the_file_being_printed(self) -> None:
+        self._printer_is_printing("foobar.ctb")
+        response = self.client.post(
+            "/uvtools/upload/foobar.ctb",
+            data=b"new contents",
+            content_type="application/octet-stream",
+        )
+        expect(response.status_code).to_equal(409)
+        with open(config.get_files_directory() / "foobar.ctb", "rb") as file:
+            expect(file.read()).to_equal(self.ctb_file_contents)
+
+    def test_delete_refuses_the_file_being_printed(self) -> None:
+        self._printer_is_printing("foobar.ctb")
+        response = self.client.get("/uvtools/delete/foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
+            True
+        )
 
     def test_print_file_not_found(self) -> None:
         response = self.client.get("/uvtools/print/missing.ctb")

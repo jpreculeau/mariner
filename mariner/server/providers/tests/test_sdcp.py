@@ -175,9 +175,7 @@ class SDCPBridgeTest(TestCase):
         )
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
-        self.printer_patcher = patch(
-            "mariner.server.providers.sdcp.bridge.ChiTuPrinter"
-        )
+        self.printer_patcher = patch("mariner.server.printer_access.ChiTuPrinter")
         constructor = self.printer_patcher.start()
         constructor.return_value = self.printer_mock
         self.printer_mock.__enter__ = Mock(return_value=self.printer_mock)
@@ -358,7 +356,7 @@ class SDCPBridgeTest(TestCase):
         NOT_FOUND even though the file was sitting in the directory.
         """
         name = "a-precise-chimney_6(1).stl_1_0.050_2.500_2026_09_07.ctb"
-        manager = UploadManager()
+        manager = UploadManager(is_being_printed=lambda path: False)
         result = manager.handle_chunk(
             upload_uuid="abc",
             filename=name,
@@ -420,6 +418,25 @@ class SDCPBridgeTest(TestCase):
         failures = self.bridge.delete(["/local/missing.ctb"], [])
         expect(failures).to_equal(["/local/missing.ctb"])
 
+    def test_delete_refuses_the_file_being_printed(self) -> None:
+        self.printer_mock.get_selected_file.return_value = "foobar.ctb"
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING, current_byte=10, total_bytes=100
+        )
+        failures = self.bridge.delete(["/local/foobar.ctb"], [])
+        expect(failures).to_equal(["/local/foobar.ctb"])
+        expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(True)
+
+    def test_delete_refuses_a_folder_holding_the_file_being_printed(self) -> None:
+        self.fs.create_file("/mnt/usb_share/batch/part.ctb", contents=b"x")
+        self.printer_mock.get_selected_file.return_value = "batch/part.ctb"
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PAUSED, current_byte=10, total_bytes=100
+        )
+        failures = self.bridge.delete([], ["/local/batch"])
+        expect(failures).to_equal(["/local/batch"])
+        expect(pathlib.Path("/mnt/usb_share/batch/part.ctb").exists()).to_equal(True)
+
     def test_delete_refuses_to_remove_root(self) -> None:
         failures = self.bridge.delete([], ["/local/"])
         expect(failures).to_equal(["/local/"])
@@ -433,7 +450,7 @@ class UploadManagerTest(TestCase):
         _get_config.cache_clear()
         self.setUpPyfakefs(additional_skip_names=["importlib.metadata"])
         self.fs.create_dir("/mnt/usb_share")
-        self.manager = UploadManager()
+        self.manager = UploadManager(is_being_printed=lambda path: False)
 
     def _upload(
         self,
@@ -461,6 +478,42 @@ class UploadManagerTest(TestCase):
             if not result.ok:
                 return result
         return result
+
+    def test_upload_refuses_to_replace_the_file_being_printed(self) -> None:
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
+        manager = UploadManager(is_being_printed=lambda path: path.name == "model.ctb")
+        result = manager.handle_chunk(
+            upload_uuid="abc",
+            filename="model.ctb",
+            offset=0,
+            total_size=4,
+            expected_md5="",
+            verify=False,
+            data=b"new!",
+        )
+        expect(result.ok).to_equal(False)
+        expect(result.error).to_equal(constants.UploadError.FILE_OPEN_FAILED)
+        with open("/mnt/usb_share/model.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"printing")
+        expect(manager.is_transferring()).to_equal(False)
+
+    def test_upload_refuses_when_the_print_starts_during_the_transfer(self) -> None:
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
+        printing = {"now": False}
+        manager = UploadManager(is_being_printed=lambda path: printing["now"])
+        common = dict(
+            upload_uuid="abc",
+            filename="model.ctb",
+            total_size=8,
+            expected_md5="",
+            verify=False,
+        )
+        expect(manager.handle_chunk(offset=0, data=b"new!", **common).ok).to_equal(True)
+        printing["now"] = True
+        result = manager.handle_chunk(offset=4, data=b"new!", **common)
+        expect(result.ok).to_equal(False)
+        with open("/mnt/usb_share/model.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"printing")
 
     def test_upload_id_cannot_name_a_path(self) -> None:
         self.fs.create_dir("/mnt/outside")

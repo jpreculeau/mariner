@@ -96,6 +96,28 @@ Uploading a file whose name already exists replaces it. The new file is
 written under a temporary name (``.upload-<name>.part``) and moved into place
 once complete, so an interrupted upload leaves the previous file intact.
 
+.. rubric:: A file cannot be replaced or deleted during a print
+
+The printer reads the file layer by layer for the whole print. While a print
+is starting, running or paused, Mariner therefore refuses to replace or delete
+the file being printed, or a folder that contains it. The web interface and
+UVtools answer with error 409, and a slicer sending over the network sees its
+transfer fail. Other files can still be uploaded and deleted as usual.
+
+Wait for the print to finish or cancel it, then try again. To print a new
+version without waiting, upload it under another name.
+
+Printing
+--------
+
+.. rubric:: The dashboard shows progress but no layer count
+
+When a print was started from the printer's own screen with a file Mariner
+cannot find or cannot read, the dashboard still shows the state and a
+progress figure worked out from how much of the file the printer has read.
+Layer numbers and the remaining time need the file itself, so they are left
+out.
+
 Other Issues
 ------------
 

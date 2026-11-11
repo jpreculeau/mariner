@@ -1,12 +1,12 @@
 import logging
 import os
 import subprocess
+import threading
 import traceback
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import serial
 from flask import (
     Blueprint,
     Response,
@@ -18,21 +18,22 @@ from flask import (
 from pyre_extensions import none_throws
 
 from mariner import config
-from mariner.exceptions import MarinerException, UnexpectedPrinterResponse
+from mariner.exceptions import MarinerException
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
+from mariner.printer import PrinterState
 from mariner.server.files import (
     is_safe_for_printer,
     replacing,
     resolve_in_files_directory,
     safe_filename,
 )
-from mariner.server.utils import (
-    read_cached_preview,
-    read_cached_sliced_model_file,
-    retry,
+from mariner.server.printer_access import (
+    is_being_printed,
+    printer_session,
+    read_status,
 )
+from mariner.server.utils import read_cached_preview, read_cached_sliced_model_file
 
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -44,13 +45,16 @@ api = Blueprint("api", __name__, url_prefix="/api")
 # meaningless for layer estimation, so we hold the last known value.
 _last_z_layer: Optional[int] = None
 _last_z_total_bytes: Optional[int] = None
+# Requests are served by several threads, and each poll updates the estimate.
+_progress_lock = threading.Lock()
 
 
 def reset_progress_tracking() -> None:
     """Clear progress tracking state (e.g. between tests)."""
     global _last_z_layer, _last_z_total_bytes
-    _last_z_layer = None
-    _last_z_total_bytes = None
+    with _progress_lock:
+        _last_z_layer = None
+        _last_z_total_bytes = None
 
 
 def _layer_from_z_position(
@@ -66,6 +70,18 @@ def _layer_from_z_position(
     we can't infer the layer and the caller should fall back to the last
     known value.
     """
+    with _progress_lock:
+        return _layer_from_z_position_locked(
+            z_pos_mm, layer_height_mm, layer_count, total_bytes
+        )
+
+
+def _layer_from_z_position_locked(
+    z_pos_mm: Optional[float],
+    layer_height_mm: float,
+    layer_count: int,
+    total_bytes: int,
+) -> Optional[int]:
     global _last_z_layer, _last_z_total_bytes
 
     if _last_z_total_bytes != total_bytes:
@@ -125,107 +141,126 @@ def handle_mariner_exception(exception: MarinerException) -> Tuple[Response, int
     )
 
 
+def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
+    """The parsed file the printer says it is printing, or None if unusable."""
+    if not selected_file:
+        return None
+    path = resolve_in_files_directory(selected_file)
+    if path is None or not os.path.isfile(path):
+        return None
+    try:
+        return read_cached_sliced_model_file(path)
+    except Exception:
+        logger.warning(
+            "Could not read %s, which is being printed", selected_file, exc_info=True
+        )
+        return None
+
+
+def _abort_if_being_printed(path: Path) -> None:
+    """Refuse to touch the file the printer is reading for the current print."""
+    if is_being_printed(path):
+        abort(
+            make_response(
+                jsonify(
+                    {
+                        "title": "File In Use",
+                        "description": f"{path.name} is being printed. "
+                        "Wait for the print to finish, or cancel it first.",
+                    }
+                ),
+                409,
+            )
+        )
+
+
 @api.route("/print_status", methods=["GET"])
 def print_status() -> Union[str, Response]:
-    with ChiTuPrinter() as printer:
+    print_status, selected_file = read_status()
+    if print_status.state == PrinterState.CLOSED:
+        # A printer that stopped answering may come back on another print.
+        reset_progress_tracking()
 
-        # the printer sends periodic "ok" responses over serial. this means that
-        # sometimes we get an unexpected response from the printer (an "ok" instead of
-        # the print status we expected). due to this, we retry at most 3 times here
-        # until we have a successful response. see issue #180
-        transient_errors = (UnexpectedPrinterResponse, serial.SerialException)
-        try:
-            print_status = retry(
-                printer.get_print_status,
-                transient_errors,
-                num_retries=3,
-            )
+    sliced_model_file: Optional[SlicedModelFile] = None
+    if print_status.state not in (PrinterState.IDLE, PrinterState.CLOSED):
+        sliced_model_file = _read_selected_file(selected_file)
 
-            selected_file = retry(
-                printer.get_selected_file,
-                transient_errors,
-                num_retries=3,
-            )
-        except transient_errors:
-            # Treat repeated bad/empty serial responses as a temporary disconnect
-            # so the UI can keep polling and recover without surfacing a 500.
-            reset_progress_tracking()
-            print_status = PrintStatus(state=PrinterState.CLOSED)
-            selected_file = ""
-
-        # An empty selected_file means the printer serial call failed or the
-        # board returned no filename — we can't look up layer metadata without
-        # it, so degrade gracefully like IDLE/CLOSED instead of crashing in
-        # read_cached_sliced_model_file's isfile assert.
-        if (
-            print_status.state == PrinterState.IDLE
-            or print_status.state == PrinterState.CLOSED
-            or not selected_file
-        ):
-            progress = 0.0
-            print_details = {}
-        else:
-            sliced_model_file = read_cached_sliced_model_file(
-                config.get_files_directory() / selected_file
-            )
-
-            current_byte = print_status.current_byte or 0
-            layer_count = none_throws(sliced_model_file.layer_count)
-            layer_height_mm = sliced_model_file.layer_height_mm
-
-            # Z-derived layer is the ground-truth physical layer. ChiTu D: byte
-            # position runs ahead of actual exposure (firmware reads/buffers
-            # layers before exposing them), so Z is preferred; byte offset is
-            # only a fallback for the pre-exposure ramp where Z isn't usable.
-            z_layer: Optional[int] = None
-            if print_status.state in (PrinterState.PRINTING, PrinterState.PAUSED):
-                z_layer = _layer_from_z_position(
-                    print_status.z_pos_mm,
-                    layer_height_mm,
-                    layer_count,
-                    print_status.total_bytes or 0,
-                )
-
-            if z_layer is not None:
-                current_layer = z_layer
-            else:
-                current_layer = _layer_from_byte_offset(
-                    current_byte, sliced_model_file.end_byte_offset_by_layer
-                )
-
-            progress = 100.0 * (current_layer - 1) / layer_count
-
-            print_details = {
-                "current_layer": current_layer,
-                "layer_count": sliced_model_file.layer_count,
-                "print_time_secs": sliced_model_file.print_time_secs,
-                "time_left_secs": round(
-                    sliced_model_file.print_time_secs * (100.0 - progress) / 100.0
-                ),
-            }
-
-            logger.debug(
-                "print_status debug: state=%s file=%r D=(%s/%s) "
-                "z=%s z_layer=%s progress=%.3f layer=%s/%s",
-                print_status.state.name,
-                selected_file,
-                current_byte,
-                print_status.total_bytes,
-                print_status.z_pos_mm,
-                z_layer,
-                progress,
-                current_layer,
-                layer_count,
-            )
-
-        return jsonify(
-            {
-                "state": print_status.state.value,
-                "selected_file": selected_file,
-                "progress": progress,
-                **print_details,
-            }
+    if (
+        print_status.state == PrinterState.IDLE
+        or print_status.state == PrinterState.CLOSED
+    ):
+        progress = 0.0
+        print_details = {}
+    elif sliced_model_file is None:
+        # A print is running from a file that cannot be read here: started
+        # from the printer's own screen, removed since, or in a format
+        # variant this build does not parse. The bytes the printer has
+        # consumed still say how far along it is.
+        total_bytes = print_status.total_bytes or 0
+        progress = (
+            100.0 * (print_status.current_byte or 0) / total_bytes
+            if total_bytes
+            else 0.0
         )
+        print_details = {}
+    else:
+        current_byte = print_status.current_byte or 0
+        layer_count = none_throws(sliced_model_file.layer_count)
+        layer_height_mm = sliced_model_file.layer_height_mm
+
+        # Z-derived layer is the ground-truth physical layer. ChiTu D: byte
+        # position runs ahead of actual exposure (firmware reads/buffers
+        # layers before exposing them), so Z is preferred; byte offset is
+        # only a fallback for the pre-exposure ramp where Z isn't usable.
+        z_layer: Optional[int] = None
+        if print_status.state in (PrinterState.PRINTING, PrinterState.PAUSED):
+            z_layer = _layer_from_z_position(
+                print_status.z_pos_mm,
+                layer_height_mm,
+                layer_count,
+                print_status.total_bytes or 0,
+            )
+
+        if z_layer is not None:
+            current_layer = z_layer
+        else:
+            current_layer = _layer_from_byte_offset(
+                current_byte, sliced_model_file.end_byte_offset_by_layer
+            )
+
+        progress = 100.0 * (current_layer - 1) / layer_count
+
+        print_details = {
+            "current_layer": current_layer,
+            "layer_count": sliced_model_file.layer_count,
+            "print_time_secs": sliced_model_file.print_time_secs,
+            "time_left_secs": round(
+                sliced_model_file.print_time_secs * (100.0 - progress) / 100.0
+            ),
+        }
+
+        logger.debug(
+            "print_status debug: state=%s file=%r D=(%s/%s) "
+            "z=%s z_layer=%s progress=%.3f layer=%s/%s",
+            print_status.state.name,
+            selected_file,
+            current_byte,
+            print_status.total_bytes,
+            print_status.z_pos_mm,
+            z_layer,
+            progress,
+            current_layer,
+            layer_count,
+        )
+
+    return jsonify(
+        {
+            "state": print_status.state.value,
+            "selected_file": selected_file,
+            "progress": progress,
+            **print_details,
+        }
+    )
 
 
 def _modification_time(dir_entry: "os.DirEntry[str]") -> float:
@@ -345,6 +380,7 @@ def upload_file() -> Union[str, Response]:
     if not os.path.isdir(parent):
         abort(400)
 
+    _abort_if_being_printed(parent / filename)
     with replacing(parent / filename) as scratch:
         file.save(str(scratch))
     os.sync()
@@ -359,6 +395,7 @@ def delete_file() -> Union[str, Response]:
     # seem to properly mock Path.is_file as of pyfakefs 4.4.0
     if not os.path.isfile(path):
         abort(400)
+    _abort_if_being_printed(path)
     os.remove(path)
     return jsonify({"success": True})
 
@@ -435,7 +472,7 @@ def printer_command(command: str) -> Union[str, Response]:
     if printer_command == PrinterCommand.START_PRINT:
         filename = _printable_file_or_abort(request.args.get("filename"))
 
-    with ChiTuPrinter() as printer:
+    with printer_session() as printer:
         if printer_command == PrinterCommand.START_PRINT:
             printer.start_printing(filename)
         elif printer_command == PrinterCommand.PAUSE_PRINT:

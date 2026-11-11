@@ -31,16 +31,15 @@ import logging
 import os
 from typing import Union
 
-import serial
 from flask import Blueprint, Response, abort, jsonify, request
 
 from mariner import config
-from mariner.exceptions import UnexpectedPrinterResponse
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import ChiTuPrinter, PrinterState
+from mariner.printer import PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
 from mariner.server.files import replacing, resolve_in_files_directory, safe_filename
-from mariner.server.utils import read_cached_sliced_model_file, retry
+from mariner.server.printer_access import is_being_printed, printer_session, read_status
+from mariner.server.utils import read_cached_sliced_model_file
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -151,6 +150,9 @@ class UVToolsProvider(NetworkPrintProvider):
         data = request.get_data()
         if not data:
             abort(400)
+        if is_being_printed(dest):
+            logger.warning("UVTools: refusing to replace %s while it prints", safe_name)
+            abort(409)
 
         with replacing(dest) as scratch:
             scratch.write_bytes(data)
@@ -174,7 +176,7 @@ class UVToolsProvider(NetworkPrintProvider):
         if not os.path.isfile(file_path):
             abort(404)
 
-        with ChiTuPrinter() as printer:
+        with printer_session() as printer:
             printer.start_printing(safe_name)
 
         logger.info("UVTools print: %s", safe_name)
@@ -192,25 +194,28 @@ class UVToolsProvider(NetworkPrintProvider):
 
         if not os.path.isfile(path):
             abort(404)
+        if is_being_printed(path):
+            logger.warning("UVTools: refusing to delete %s while it prints", safe_name)
+            abort(409)
 
         os.remove(path)
         logger.info("UVTools delete: %s", safe_name)
         return jsonify({"success": True})
 
     def _pause_print(self, filename: str = "") -> Union[str, Response]:
-        with ChiTuPrinter() as printer:
+        with printer_session() as printer:
             printer.pause_printing()
         logger.info("UVTools pause")
         return jsonify({"success": True})
 
     def _resume_print(self, filename: str = "") -> Union[str, Response]:
-        with ChiTuPrinter() as printer:
+        with printer_session() as printer:
             printer.resume_printing()
         logger.info("UVTools resume")
         return jsonify({"success": True})
 
     def _stop_print(self, filename: str = "") -> Union[str, Response]:
-        with ChiTuPrinter() as printer:
+        with printer_session() as printer:
             printer.stop_printing()
         logger.info("UVTools stop")
         return jsonify({"success": True})
@@ -228,16 +233,8 @@ class UVToolsProvider(NetworkPrintProvider):
         return jsonify({"files": file_list})
 
     def _print_status(self) -> Union[str, Response]:
-        transient_errors = (UnexpectedPrinterResponse, serial.SerialException)
-        try:
-            with ChiTuPrinter() as printer:
-                status = retry(
-                    printer.get_print_status, transient_errors, num_retries=3
-                )
-                selected_file = retry(
-                    printer.get_selected_file, transient_errors, num_retries=3
-                )
-        except transient_errors:
+        status, selected_file = read_status()
+        if status.state == PrinterState.CLOSED:
             return jsonify({"state": PrinterState.CLOSED.value})
 
         result = {
@@ -250,9 +247,10 @@ class UVToolsProvider(NetworkPrintProvider):
             and selected_file
         ):
             try:
-                sliced = read_cached_sliced_model_file(
-                    config.get_files_directory() / selected_file
-                )
+                path = resolve_in_files_directory(selected_file)
+                if path is None:
+                    raise FileNotFoundError(selected_file)
+                sliced = read_cached_sliced_model_file(path)
                 layer_count = sliced.layer_count or 0
                 progress = 0.0
                 if (
@@ -280,7 +278,7 @@ class UVToolsProvider(NetworkPrintProvider):
         }
 
         try:
-            with ChiTuPrinter() as printer:
+            with printer_session() as printer:
                 info["firmware"] = printer.get_firmware_version()
         except Exception:
             pass
