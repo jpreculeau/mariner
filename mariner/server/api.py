@@ -4,8 +4,19 @@ import subprocess
 import threading
 import traceback
 from enum import Enum
+from functools import partial
 from pathlib import Path
-from typing import Any, Dict, List, NoReturn, Optional, Tuple, Union
+from typing import (
+    Any,
+    Callable,
+    ContextManager,
+    Dict,
+    List,
+    NoReturn,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from flask import (
     Blueprint,
@@ -21,16 +32,19 @@ from mariner import config
 from mariner.exceptions import MarinerException
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import PrinterState, is_safe_for_printer
+from mariner.printer import PrinterState
 from mariner.server.files import (
-    is_scratch_file,
+    NotPrintable,
+    is_hidden_entry,
     modification_time,
+    printable_relative_path,
     replacing,
     resolve_in_files_directory,
     safe_filename,
 )
 from mariner.server.printer_access import (
     FileInUse,
+    Usage,
     printer_session,
     read_status,
     start_print,
@@ -160,33 +174,65 @@ def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
         return None
 
 
-def _abort_file_in_use(error: FileInUse) -> NoReturn:
+# What to tell the user for each reason a file cannot change, keyed by
+# FileInUse.usage. ``code`` lets a client tell the cases apart; the sentence
+# is completed with what can be done about it, which depends on the
+# operation (see _abort_file_in_use).
+_IN_USE_ANSWERS: Dict[Usage, Tuple[str, str, str]] = {
+    Usage.PRINTING: (
+        "file_in_use",
+        "File In Use",
+        "{name} is in use by the print in progress. Wait for the print to "
+        "finish or cancel it first",
+    ),
+    Usage.UNIDENTIFIED_PRINT: (
+        "print_file_unknown",
+        "Print In Progress",
+        "A print is in progress and the printer did not say from which file, "
+        "so {name} was left untouched. Wait for the print to finish or cancel "
+        "it first",
+    ),
+    Usage.PRINTER_UNREACHABLE: (
+        "printer_not_answering",
+        "Printer Not Answering",
+        "The printer did not say whether {name} is being printed, so it was "
+        "left untouched. Check that the printer is on and connected, then "
+        "try again",
+    ),
+}
+
+
+def _abort_file_in_use(error: FileInUse, *, replacing_it: bool) -> NoReturn:
     """Answer 409: the file cannot change now, and say what to do about it.
 
-    ``code`` tells clients the two cases apart: ``file_in_use`` when the
-    printer is reading the file, ``printer_not_answering`` when it could not
-    be asked. In the second case the client can read the status again (GET
-    /api/print_status asks the printer anew) and retry.
+    *replacing_it* is True for an upload, which has one more way out than a
+    deletion: storing the file under another name.
+
+    ``can_be_overridden`` tells the client whether repeating the request
+    with ``ignore_unreachable_printer=1`` would go through, which is only
+    the case when the printer could not be asked.
     """
-    name = error.path.name
-    if error.printer_is_silent:
-        body = {
-            "code": "printer_not_answering",
-            "title": "Printer Not Answering",
-            "description": f"The printer did not say whether {name} is being "
-            "printed, so it was left untouched. Check that the printer is on "
-            "and connected, then try again, or store the file under another "
-            "name.",
-        }
-    else:
-        body = {
-            "code": "file_in_use",
-            "title": "File In Use",
-            "description": f"{name} is in use by the print in progress. Wait "
-            "for the print to finish or cancel it first, or store the file "
-            "under another name.",
-        }
+    code, title, sentence = _IN_USE_ANSWERS[error.usage]
+    description = sentence.format(name=error.path.name)
+    description += ", or store the file under another name." if replacing_it else "."
+    body = {
+        "code": code,
+        "title": title,
+        "description": description,
+        "can_be_overridden": error.usage is Usage.PRINTER_UNREACHABLE,
+    }
     abort(make_response(jsonify(body), 409))
+
+
+def _guard_for_this_request() -> Callable[[Path], ContextManager[None]]:
+    """The in-use guard, relaxed if the user vouched that the printer is off.
+
+    A client sends ``ignore_unreachable_printer=1`` after the user was told
+    the printer does not answer and confirmed that it is switched off. The
+    file is still refused if the printer does answer and is printing it.
+    """
+    even_if_unreachable = request.args.get("ignore_unreachable_printer") == "1"
+    return partial(unless_in_use, even_if_unreachable=even_if_unreachable)
 
 
 @api.route("/print_status", methods=["GET"])
@@ -293,9 +339,9 @@ def list_files() -> Union[str, Response]:
         files = []
         directories = []
         for dir_entry in sorted(dir_entries, key=modification_time, reverse=True):
-            if is_scratch_file(dir_entry.name):
-                # An upload still on its way in; it appears under its real
-                # name once complete.
+            if is_hidden_entry(dir_entry.name):
+                # A transfer still on its way in; the file appears under its
+                # real name once complete.
                 continue
             if dir_entry.is_dir():
                 directories.append({"dirname": dir_entry.name})
@@ -397,16 +443,17 @@ def upload_file() -> Union[str, Response]:
     if os.path.isdir(destination):
         # A folder already has that name; a file cannot take its place.
         abort(400)
+    guard = _guard_for_this_request()
     try:
-        # Checked first so a refusal comes before the upload is stored, and
-        # again by the guard at the moment the file is moved into place, in
-        # case the print started while it was being received.
-        with unless_in_use(destination):
+        # Checked first so that a refusal costs nothing: nothing is written.
+        # Checked again by the guard at the moment the file is moved into
+        # place, in case a print started while it was being written to disk.
+        with guard(destination):
             pass
-        with replacing(destination, guard=unless_in_use) as scratch:
+        with replacing(destination, guard=guard) as scratch:
             file.save(str(scratch))
     except FileInUse as error:
-        _abort_file_in_use(error)
+        _abort_file_in_use(error, replacing_it=True)
     os.sync()
     return jsonify({"success": True})
 
@@ -420,10 +467,10 @@ def delete_file() -> Union[str, Response]:
     if not os.path.isfile(path):
         abort(400)
     try:
-        with unless_in_use(path):
+        with _guard_for_this_request()(path):
             os.remove(path)
     except FileInUse as error:
-        _abort_file_in_use(error)
+        _abort_file_in_use(error, replacing_it=False)
     return jsonify({"success": True})
 
 
@@ -472,27 +519,13 @@ class PrinterCommand(Enum):
 
 
 def _printable_file_or_abort(filename: Optional[str]) -> str:
-    """The path to give the printer for *filename*, or an error response.
-
-    The path ends up verbatim in the command lines sent over serial, so the
-    request is refused unless the name is free of control characters and
-    points at an existing file of a supported format inside the files
-    directory. What is returned is that file's path relative to the files
-    directory, which is how the printer knows it, whatever form the client
-    used (``./a.ctb``, ``sub/../a.ctb`` or an absolute path).
-    """
-    if filename is None or not is_safe_for_printer(filename):
+    """The path to give the printer for *filename*, or an error response."""
+    if filename is None:
         abort(400)
-    path = _resolve_or_400(filename)
-    if not os.path.isfile(path):
-        abort(404)
-    if get_file_extension(path.name) not in get_supported_extensions():
-        abort(400)
-    relative = path.relative_to(config.get_files_directory().resolve()).as_posix()
-    if not is_safe_for_printer(relative):
-        # Possible only through a symbolic link whose target has such a name.
-        abort(400)
-    return relative
+    try:
+        return printable_relative_path(filename)
+    except NotPrintable as error:
+        abort(404 if error.reason == NotPrintable.MISSING else 400)
 
 
 @api.route("/printer/command/<command>", methods=["POST"])

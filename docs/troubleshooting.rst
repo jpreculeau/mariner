@@ -99,33 +99,41 @@ Uploading a file whose name already exists replaces it. The new file is first
 written under a temporary name (``.upload-<random>.part``), which the file
 list does not show, and moved into place once complete. An interrupted upload
 therefore leaves the previous file intact. Files sent from a slicer over SDCP
-are assembled the same way, in a hidden ``.sdcp_uploads`` folder. Anything of
-the kind left behind by a power cut is removed the next time Mariner starts.
+are assembled the same way, in a ``.sdcp_uploads`` folder that the file lists
+do not show either. Anything of the kind left behind by a power cut is
+removed the next time Mariner starts.
 
 .. rubric:: A file cannot be replaced or deleted (error 409)
 
 The printer reads its file layer by layer for the whole print. Mariner
-therefore refuses to replace or delete an existing file in two cases, in the
-web interface, from UVtools and from a slicer sending over the network alike:
+therefore changes an existing file only when the printer confirms it is not
+reading it, and refuses in three cases, in the web interface, from UVtools
+and from a slicer sending over the network alike:
 
 * **The file is being printed** (the print is starting, running or paused).
   The same goes for a folder that contains it, which slicers can delete. This
   holds however the print was started: from Mariner, from a slicer or from
   the printer's own screen. Wait for the print to finish, or cancel it.
 
-* **The printer gave no clear answer**, so Mariner cannot tell whether the
-  file is being printed: the printer is off, the serial cable is loose, or a
-  print is running from a file Mariner could not identify. Switch the printer
-  on or check the cable, then try again; opening the dashboard asks the
-  printer again.
+* **A print is running from a file Mariner could not identify**, for example
+  one started from the printer's own screen under a name Mariner does not
+  find. Every existing file is then left alone until that print is over.
 
-In both cases a file can always be stored under a **new name**, since nothing
-can be reading a file that does not exist yet.
+* **The printer is not answering**, or not clearly: it is off, or the serial
+  cable is loose. Switch the printer on or check the cable, then try again;
+  opening the dashboard asks the printer again. If the printer is off on
+  purpose, this refusal alone can be overridden: a client of the web API
+  repeats the request with ``ignore_unreachable_printer=1``. Use it only when
+  certain that nothing is printing.
+
+In all three cases a file can still be stored under a **new name**, since
+nothing can be reading a file that does not exist yet.
 
 The web interface shows the reason in a notification. The web API answers
-with status 409 and a ``code`` of ``file_in_use`` or ``printer_not_answering``.
-UVtools receives a 409, and a slicer using SDCP sees its transfer or deletion
-fail.
+with status 409, a ``code`` of ``file_in_use``, ``print_file_unknown`` or
+``printer_not_answering``, and ``can_be_overridden``, which is true for the
+last one only. UVtools receives a 409, and a slicer using SDCP
+sees its transfer or deletion fail.
 
 .. note::
 

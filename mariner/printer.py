@@ -24,10 +24,17 @@ def is_safe_for_printer(path: str) -> bool:
     """Whether *path* can be placed in a command line sent to the printer.
 
     A line break would start a second command, and a single quote would end
-    the quoted file name of the print command early. ``/`` is fine: a file in
-    a subdirectory is selected by its relative path.
+    the quoted file name of the print command early. Text that is not valid
+    Unicode cannot be sent at all. ``/`` is fine: a file in a subdirectory
+    is selected by its relative path.
     """
-    return bool(path) and "'" not in path and not has_control_character(path)
+    if not path or "'" in path or has_control_character(path):
+        return False
+    try:
+        path.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 class PrinterState(Enum):
@@ -162,14 +169,18 @@ class ChiTuPrinter:
             else:
                 state = PrinterState.PRINTING
         else:
-            state = PrinterState.CLOSED
+            return PrintStatus(
+                state=PrinterState.CLOSED,
+                current_byte=current_byte,
+                total_bytes=total_bytes,
+            )
 
         return PrintStatus(
             state=state,
             current_byte=current_byte,
             total_bytes=total_bytes,
             z_pos_mm=z_pos_mm,
-            counters_seen=self._is_connected,
+            counters_seen=True,
         )
 
     def get_z_pos(self) -> float:

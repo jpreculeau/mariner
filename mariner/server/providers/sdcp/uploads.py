@@ -108,8 +108,9 @@ class UploadManager:
         if offset < 0 or total_size < 0:
             return ChunkResult(ok=False, error=constants.UploadError.OFFSET_ERROR)
 
-        # The id is client input used as a key and written to the log. Clients
-        # send a UUID, with or without dashes; nothing else is accepted.
+        # The id is client input, used as a key and written to the log. Only
+        # a short token of letters, digits, "-" and "_" is accepted: clients
+        # send a UUID, and the service passes "default" when they send none.
         if not _UPLOAD_ID.fullmatch(upload_uuid):
             logger.warning("SDCP: refusing malformed upload id %r", upload_uuid)
             return ChunkResult(ok=False, error=constants.UploadError.UNKNOWN)

@@ -7,7 +7,7 @@ interface can forget a check another one has.
 
 The rule for what may appear in a command line sent to the printer lives in
 ``mariner.printer`` (``is_safe_for_printer``), next to the code that builds
-those lines, and is reused here.
+those lines. ``safe_filename`` and ``printable_relative_path`` both apply it.
 """
 
 import logging
@@ -19,14 +19,14 @@ from pathlib import Path
 from typing import Callable, ContextManager, Iterator, Optional
 
 from mariner import config
-from mariner.printer import has_control_character
+from mariner.file_formats.utils import get_file_extension, get_supported_extensions
+from mariner.printer import is_safe_for_printer
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# Path separators would let a name escape its directory. The single quote
-# delimits the file name in the printer's print command. The rest cannot be
+# Path separators would let a name escape its directory. The rest cannot be
 # stored on the FAT filesystem the printer reads the files from.
-_FORBIDDEN_CHARACTERS = frozenset("/\\'" + ':*?"<>|')
+_FORBIDDEN_CHARACTERS = frozenset("/\\" + ':*?"<>|')
 
 # The longest name Linux filesystems accept. Deliberately conservative: FAT
 # counts in UTF-16 units and could store somewhat longer non-ASCII names.
@@ -55,11 +55,12 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
     ``model_61.ctb``. Validating and rejecting instead of rewriting keeps
     exactly one name in play across upload, listing, printing and deletion.
 
-    Refused: empty names, ``.`` and ``..``, names with a path separator, a
-    single quote, a control character or a character FAT cannot store, names
-    ending with a dot (FAT drops it, so the stored name would differ), names
-    longer than a filesystem entry can be, and names reserved for files on
-    their way in or out (see ``is_scratch_file``), which listings hide.
+    Refused: empty names, ``.`` and ``..``; names the printer could not be
+    told to print (``is_safe_for_printer``: a single quote, a control
+    character, text that is not valid Unicode); names with a path separator
+    or a character FAT cannot store; names ending with a dot (FAT drops it,
+    so the stored name would differ); names longer than a filesystem entry
+    can be; and names that listings hide (``is_hidden_entry``).
 
     This is not on its own sufficient to contain a path: callers must still
     resolve it with ``resolve_in_files_directory``.
@@ -67,13 +68,13 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
     name = (filename or "").strip()
     if not name or name in (".", "..") or name.endswith("."):
         return None
+    if not is_safe_for_printer(name):
+        return None
     if not _FORBIDDEN_CHARACTERS.isdisjoint(name):
         return None
-    if has_control_character(name):
+    if len(name.encode("utf-8")) > _MAX_NAME_BYTES:
         return None
-    if len(name.encode("utf-8", errors="replace")) > _MAX_NAME_BYTES:
-        return None
-    if is_scratch_file(name) or name == SDCP_SCRATCH_DIRNAME:
+    if is_hidden_entry(name):
         return None
     return name
 
@@ -85,14 +86,61 @@ def resolve_in_files_directory(relative: str) -> Optional[Path]:
     are followed before the check, so a link pointing outside is refused too.
     """
     if "\x00" in relative:
-        # No path can carry a NUL byte; refuse it here instead of letting the
-        # filesystem call raise.
+        # No path can carry a NUL byte.
         return None
     files_directory = config.get_files_directory().resolve()
-    candidate = (files_directory / relative).resolve()
+    try:
+        candidate = (files_directory / relative).resolve()
+    except (ValueError, OSError):
+        # Text the filesystem cannot take as a path at all, such as the lone
+        # surrogates a JSON client can send.
+        return None
     if candidate != files_directory and files_directory not in candidate.parents:
         return None
     return candidate
+
+
+class NotPrintable(Exception):
+    """Why a name cannot be handed to the printer. See the class constants."""
+
+    # The name itself is unusable, or points outside the files directory.
+    UNSAFE = "unsafe"
+    # No such file.
+    MISSING = "missing"
+    # The file exists but is not in a format the printer can print.
+    UNSUPPORTED = "unsupported"
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def printable_relative_path(name: str) -> str:
+    """The path to give the printer for the file a client calls *name*.
+
+    Every interface that starts a print goes through here. The result is the
+    file's path relative to the files directory, which is how the printer
+    knows it, whatever form the client used (``./a.ctb``, ``sub/../a.ctb``
+    or an absolute path). It is safe to place in a command line sent to the
+    printer.
+
+    Raises NotPrintable, with the reason, if *name* does not lead to an
+    existing file of a supported format inside the files directory.
+    """
+    if not is_safe_for_printer(name):
+        raise NotPrintable(NotPrintable.UNSAFE)
+    path = resolve_in_files_directory(name)
+    if path is None:
+        raise NotPrintable(NotPrintable.UNSAFE)
+    if not os.path.isfile(path):
+        raise NotPrintable(NotPrintable.MISSING)
+    if get_file_extension(path.name) not in get_supported_extensions():
+        raise NotPrintable(NotPrintable.UNSUPPORTED)
+    relative = path.relative_to(config.get_files_directory().resolve()).as_posix()
+    if not is_safe_for_printer(relative):
+        # Possible only through a symbolic link whose target has such a name.
+        raise NotPrintable(NotPrintable.UNSAFE)
+    return relative
 
 
 def modification_time(dir_entry: "os.DirEntry[str]") -> float:
@@ -110,6 +158,16 @@ def modification_time(dir_entry: "os.DirEntry[str]") -> float:
 def is_scratch_file(name: str) -> bool:
     """Whether *name* is something on its way in or out, not an entry to list."""
     return name.startswith(_SCRATCH_PREFIX) and name.endswith(_SCRATCH_SUFFIX)
+
+
+def is_hidden_entry(name: str) -> bool:
+    """Whether a directory entry called *name* is kept out of listings.
+
+    True for anything on its way in or out, and for the folder in which the
+    SDCP provider assembles its transfers. Such names cannot be given to a
+    file or folder either, since the entry would then vanish from view.
+    """
+    return is_scratch_file(name) or name == SDCP_SCRATCH_DIRNAME
 
 
 def scratch_path_beside(path: Path) -> Path:

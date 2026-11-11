@@ -1,12 +1,13 @@
 import json
 from typing import Any
 from unittest import TestCase
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from pyexpect import expect
 
+from mariner.printer import ChiTuPrinter
 from mariner.server.providers.sdcp import constants
-from mariner.server.providers.sdcp.service import _DiscoveryProtocol
+from mariner.server.providers.sdcp.service import SDCPService, _DiscoveryProtocol
 
 
 class DiscoveryProtocolTest(TestCase):
@@ -75,3 +76,24 @@ class DiscoveryProtocolTest(TestCase):
             constants.DISCOVERY_MAGIC, ("192.168.1.5", 3000)
         )
         self.transport.sendto.assert_not_called()
+
+
+class DiscoveryResponseTest(TestCase):
+    """What the reply is built from."""
+
+    def test_building_the_reply_never_waits_on_the_printer(self) -> None:
+        # It is built on the event loop. Asking the printer there would stall
+        # every connected client for as long as the serial line is busy.
+        printer_mock = Mock(spec=ChiTuPrinter)
+        printer_mock.__enter__ = Mock(return_value=printer_mock)
+        printer_mock.__exit__ = Mock(return_value=None)
+        with patch(
+            "mariner.server.printer_access.ChiTuPrinter", return_value=printer_mock
+        ) as constructor, patch(
+            "mariner.server.providers.sdcp.service.config.get_sdcp_history_enabled",
+            return_value=False,
+        ):
+            reply = SDCPService().build_discovery_response("192.168.1.5")
+
+        constructor.assert_not_called()
+        expect(reply["Data"]["FirmwareVersion"]).to_equal("V1.0.0")

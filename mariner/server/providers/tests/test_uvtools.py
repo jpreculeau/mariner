@@ -204,6 +204,33 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(200)
         expect("foobar.ctb" in response.get_json()["files"]).to_equal(True)
 
+    def test_delete_works_for_a_file_whose_name_could_no_longer_be_uploaded(
+        self,
+    ) -> None:
+        # Stored before names were restricted. It must not be stuck there.
+        self.fs.create_file("/mnt/usb_share/it's (v2).ctb", contents=b"x")
+        response = self.client.get("/uvtools/delete/it%27s%20(v2).ctb")
+        expect(response.status_code).to_equal(200)
+        expect(os.path.exists("/mnt/usb_share/it's (v2).ctb")).to_equal(False)
+
+    def test_delete_refuses_to_leave_the_files_directory(self) -> None:
+        self.fs.create_file("/mnt/outside.ctb", contents=b"x")
+        for name in ("..", "..%5Coutside.ctb"):
+            response = self.client.get(f"/uvtools/delete/{name}")
+            expect(response.status_code).to_equal(400)
+        expect(os.path.exists("/mnt/outside.ctb")).to_equal(True)
+
+    def test_upload_refusal_writes_nothing(self) -> None:
+        self._printer_is_printing("foobar.ctb")
+        with patch.object(pathlib.Path, "write_bytes") as write_mock:
+            response = self.client.post(
+                "/uvtools/upload/foobar.ctb",
+                data=b"new contents",
+                content_type="application/octet-stream",
+            )
+        expect(response.status_code).to_equal(409)
+        write_mock.assert_not_called()
+
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(

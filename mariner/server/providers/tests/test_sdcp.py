@@ -478,12 +478,65 @@ class SDCPBridgeTest(TestCase):
         real_rmtree = shutil.rmtree
 
         def rmtree(path: Any, *args: Any, **kwargs: Any) -> None:
-            held.append(printer_access._printer_lock._is_owned())
+            held.append(printer_access._change_lock._is_owned())
             real_rmtree(path, *args, **kwargs)
 
         with patch("mariner.server.providers.sdcp.bridge.shutil.rmtree", rmtree):
             self.bridge.delete([], ["/local/batch"])
         expect(held).to_equal([False])
+
+    def test_a_folder_only_partly_removed_gets_its_name_back(self) -> None:
+        self.fs.create_file("/mnt/usb_share/batch/a.ctb", contents=b"x")
+
+        def rmtree(path: Any, *args: Any, **kwargs: Any) -> None:
+            raise OSError("device busy")
+
+        with patch("mariner.server.providers.sdcp.bridge.shutil.rmtree", rmtree):
+            failures = self.bridge.delete([], ["/local/batch"])
+
+        expect(failures).to_equal(["/local/batch"])
+        # Still there under its own name, not stranded under a hidden one.
+        expect(sorted(os.listdir("/mnt/usb_share"))).to_equal(["batch", "foobar.ctb"])
+        expect(os.listdir("/mnt/usb_share/batch")).to_equal(["a.ctb"])
+
+    def test_delete_refuses_a_name_that_is_not_valid_unicode(self) -> None:
+        # A lone surrogate, which JSON can carry. The rest of the batch must
+        # still be dealt with.
+        failures = self.bridge.delete(["/local/\ud800.ctb", "/local/foobar.ctb"], [])
+        expect(failures).to_equal(["/local/\ud800.ctb"])
+        expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(False)
+
+    def test_start_print_refuses_a_name_that_is_not_valid_unicode(self) -> None:
+        ack = self.bridge.start_print("/local/\ud800.ctb")
+        expect(ack).to_equal(int(constants.PrintCtrlAck.NOT_FOUND))
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_start_print_sends_the_path_the_printer_knows(self) -> None:
+        self.fs.create_file(
+            "/mnt/usb_share/sub/part.ctb", contents=self.ctb_file_contents
+        )
+        for given, sent in (
+            ("/local/foobar.ctb", "foobar.ctb"),
+            ("/local/sub/../foobar.ctb", "foobar.ctb"),
+            ("/local/./foobar.ctb", "foobar.ctb"),
+            ("/local//mnt/usb_share/sub/part.ctb", "sub/part.ctb"),
+        ):
+            self.printer_mock.start_printing.reset_mock()
+            expect(self.bridge.start_print(given)).to_equal(
+                int(constants.PrintCtrlAck.OK)
+            )
+            self.printer_mock.start_printing.assert_called_once_with(sent)
+
+    def test_the_known_firmware_version_never_asks_the_printer(self) -> None:
+        # It is what the discovery reply uses, from the event loop.
+        self.printer_mock.get_firmware_version.return_value = "V4.4.3_LCDC"
+        expect(self.bridge.known_firmware_version()).to_equal("V1.0.0")
+        self.printer_mock.get_firmware_version.assert_not_called()
+
+        # Once something else has read it, the real one is known.
+        expect(self.bridge.firmware_version()).to_equal("V4.4.3_LCDC")
+        expect(self.bridge.known_firmware_version()).to_equal("V4.4.3_LCDC")
+        self.printer_mock.get_firmware_version.assert_called_once_with()
 
     def test_delete_asks_the_printer_once_for_a_whole_batch(self) -> None:
         self.fs.create_file("/mnt/usb_share/a.ctb", contents=b"x")

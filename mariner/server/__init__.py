@@ -65,8 +65,6 @@ class CacheBootstrapper(multiprocessing.Process):
 
 
 def main() -> None:
-    CacheBootstrapper().start()
-
     # Global log level applies to mariner.* and waitress output.
     log_level = getattr(logging, config.get_log_level(), logging.INFO)
     if not logging.getLogger().handlers:
@@ -76,10 +74,12 @@ def main() -> None:
     logging.getLogger("mariner").setLevel(log_level)
     logging.getLogger("waitress").setLevel(log_level)
 
-    # Before anything can start a transfer, and after logging is set up so
-    # that what was removed is reported.
+    # First of all the work on the files directory: nothing else is reading
+    # or writing it yet. After logging is set up, so that what was removed
+    # is reported.
     remove_stale_scratch_files()
 
+    CacheBootstrapper().start()
     start_providers()
 
     serve(flask_app, host=config.get_http_host(), port=config.get_http_port())

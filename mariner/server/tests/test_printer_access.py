@@ -88,6 +88,62 @@ class PrinterAccessTest(TestCase):
         with printer_access.printer_session() as printer:
             expect(printer).to_equal(self.printer_mock)
 
+    # ---- file operations do not queue behind the serial line ----
+
+    def _while_a_conversation_is_under_way(self, check: Any) -> None:
+        """Run *check* while another thread is talking to the printer."""
+        talking = threading.Event()
+        hang_up = threading.Event()
+
+        def talk() -> None:
+            with printer_access.printer_session():
+                talking.set()
+                hang_up.wait(timeout=5)
+
+        talker = threading.Thread(target=talk)
+        talker.start()
+        talking.wait(timeout=5)
+        try:
+            checker = threading.Thread(target=check)
+            checker.start()
+            checker.join(timeout=2)
+            expect(checker.is_alive()).to_equal(False)
+        finally:
+            hang_up.set()
+            talker.join()
+
+    def test_storing_a_new_file_does_not_wait_for_the_printer(self) -> None:
+        ran = []
+
+        def store_a_new_file() -> None:
+            with printer_access.unless_in_use(Path("/mnt/usb_share/new.ctb")):
+                ran.append(True)
+
+        self._while_a_conversation_is_under_way(store_a_new_file)
+        expect(ran).to_equal([True])
+
+    def test_a_remembered_status_is_used_without_waiting_for_the_printer(
+        self,
+    ) -> None:
+        # Remembered as silent: the refusal must come at once, not after
+        # waiting for whoever is talking to the printer.
+        self._printer_reports(PrinterState.CLOSED, "")
+        printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))
+        answers = []
+
+        def check() -> None:
+            # The conversation under way dropped the remembered status, as
+            # any conversation does; put back what a poll would have stored.
+            printer_access._last_status = (
+                printer_access.time.monotonic(),
+                PrintStatus(state=PrinterState.CLOSED),
+                "",
+            )
+            answers.append(printer_access.usage_of(Path("/mnt/usb_share/model.ctb")))
+
+        self._while_a_conversation_is_under_way(check)
+        expect(answers).to_equal([printer_access.Usage.PRINTER_UNREACHABLE])
+
     # ---- reading the status ----
 
     def test_read_status(self) -> None:
@@ -157,7 +213,7 @@ class PrinterAccessTest(TestCase):
         # way to tell, so the file is left alone until the printer answers.
         self._printer_reports(PrinterState.CLOSED, "")
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            printer_access.Usage.UNKNOWN
+            printer_access.Usage.PRINTER_UNREACHABLE
         )
         expect(printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))).to_equal(
             True
@@ -172,10 +228,16 @@ class PrinterAccessTest(TestCase):
             )
         self.printer_mock.get_print_status.assert_not_called()
 
-    def test_case_is_ignored_like_the_fat_filesystem_does(self) -> None:
+    def test_the_file_is_recognised_whatever_the_case_of_its_name(self) -> None:
+        # As on the FAT filesystem the printer reads, where the printer may
+        # well report MODEL.CTB for a file stored as model.ctb.
+        self.fs.is_case_sensitive = False
         self._printer_reports(PrinterState.PRINTING, "MODEL.CTB")
-        expect(printer_access.is_in_use(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            True
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.PRINTING
+        )
+        expect(printer_access.usage_of(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
+            printer_access.Usage.FREE
         )
 
     def test_everything_is_in_use_when_the_printing_file_is_unknown(self) -> None:
@@ -185,7 +247,7 @@ class PrinterAccessTest(TestCase):
         )
         printer_access.forget_status()
         expect(printer_access.usage_of(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
-            printer_access.Usage.UNKNOWN
+            printer_access.Usage.UNIDENTIFIED_PRINT
         )
 
     # ---- one status read serves several checks ----
@@ -295,10 +357,22 @@ class PrinterAccessTest(TestCase):
                 printer_access.Usage.FREE
             )
 
-    def test_a_print_that_fails_to_start_is_not_remembered(self) -> None:
+    def test_a_start_whose_answer_was_lost_still_protects_the_file(self) -> None:
+        # The command went out; only the printer's answer was not read. The
+        # print may well be starting.
         self._printer_still_says_idle()
         self.printer_mock.start_printing.side_effect = UnexpectedPrinterResponse("")
         with self.assertRaises(UnexpectedPrinterResponse):
+            printer_access.start_print("model.ctb")
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.PRINTING
+        )
+
+    def test_a_start_that_was_never_sent_is_not_remembered(self) -> None:
+        # The printer class refused the name before anything went out.
+        self._printer_still_says_idle()
+        self.printer_mock.start_printing.side_effect = ValueError("unsafe name")
+        with self.assertRaises(ValueError):
             printer_access.start_print("model.ctb")
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
             printer_access.Usage.FREE
@@ -315,7 +389,7 @@ class PrinterAccessTest(TestCase):
         )
         self.printer_mock.get_selected_file.return_value = "model.ctb"
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            printer_access.Usage.UNKNOWN
+            printer_access.Usage.PRINTER_UNREACHABLE
         )
 
     def test_a_print_from_a_file_that_cannot_be_found_settles_nothing(self) -> None:
@@ -323,7 +397,7 @@ class PrinterAccessTest(TestCase):
         # being printed is one of those here, but which one is not known.
         self._printer_reports(PrinterState.PRINTING, "MODEL~1.CTB")
         expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
-            printer_access.Usage.UNKNOWN
+            printer_access.Usage.UNIDENTIFIED_PRINT
         )
 
     # ---- guarding a change ----
@@ -343,14 +417,34 @@ class PrinterAccessTest(TestCase):
                 ran.append(True)
         expect(ran).to_equal([])
         expect(raised.exception.path).to_equal(Path("/mnt/usb_share/model.ctb"))
-        expect(raised.exception.printer_is_silent).to_equal(False)
+        expect(raised.exception.usage).to_equal(printer_access.Usage.PRINTING)
 
     def test_unless_in_use_says_when_the_printer_could_not_be_asked(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "")
         with self.assertRaises(printer_access.FileInUse) as raised:
             with printer_access.unless_in_use(Path("/mnt/usb_share/model.ctb")):
                 pass
-        expect(raised.exception.printer_is_silent).to_equal(True)
+        expect(raised.exception.usage).to_equal(
+            printer_access.Usage.PRINTER_UNREACHABLE
+        )
+
+    def test_a_silent_printer_can_be_overridden_on_request(self) -> None:
+        self._printer_reports(PrinterState.CLOSED, "")
+        ran = []
+        with printer_access.unless_in_use(
+            Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+        ):
+            ran.append(True)
+        expect(ran).to_equal([True])
+
+    def test_a_reported_print_cannot_be_overridden(self) -> None:
+        for selected in ("model.ctb", "MODEL~1.CTB"):
+            self._printer_reports(PrinterState.PRINTING, selected)
+            with self.assertRaises(printer_access.FileInUse):
+                with printer_access.unless_in_use(
+                    Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+                ):
+                    pass
 
     def test_no_print_can_start_while_a_guarded_change_is_under_way(self) -> None:
         self._printer_reports(PrinterState.IDLE, "")
@@ -364,9 +458,8 @@ class PrinterAccessTest(TestCase):
                 leave_guard.wait(timeout=5)
 
         def start_a_print() -> None:
-            with printer_access.printer_session() as printer:
-                printer.start_printing("model.ctb")
-                print_started.set()
+            printer_access.start_print("model.ctb")
+            print_started.set()
 
         changer = threading.Thread(target=change_the_file)
         changer.start()

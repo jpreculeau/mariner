@@ -6,7 +6,7 @@ import serial
 from pyexpect import expect
 
 from mariner.exceptions import UnexpectedPrinterResponse
-from mariner.printer import ChiTuPrinter, PrinterState
+from mariner.printer import ChiTuPrinter, PrinterState, is_safe_for_printer
 
 
 class ChiTuPrinterTest(TestCase):
@@ -251,6 +251,28 @@ class ChiTuPrinterTest(TestCase):
         with self.assertRaises(UnexpectedPrinterResponse):
             self.printer.get_selected_file()
         self.printer.close()
+
+    def test_a_print_in_progress_is_backed_by_the_print_counters(self) -> None:
+        for line in (
+            b"ok B:0/0 X:0.000 Y:0.000 Z:1.000 F:0/0 D:0/100/0 ",
+            b"ok B:0/0 X:0.000 Y:0.000 Z:1.000 F:0/0 D:10/100/0 ",
+            b"ok B:0/0 X:0.000 Y:0.000 Z:1.000 F:0/0 D:10/100/1 ",
+        ):
+            self.serial_port_mock.readline.return_value = line
+            self.printer.open()
+            status = self.printer.get_print_status()
+            self.printer.close()
+            expect(status.counters_seen).to_equal(True)
+
+    def test_a_printer_that_is_not_connected_has_no_counters(self) -> None:
+        expect(self.printer.get_print_status().state).to_equal(PrinterState.CLOSED)
+        expect(self.printer.get_print_status().counters_seen).to_equal(False)
+
+    def test_text_that_is_not_valid_unicode_is_not_safe_for_the_printer(self) -> None:
+        expect(is_safe_for_printer("model.ctb")).to_equal(True)
+        expect(is_safe_for_printer("sub/model.ctb")).to_equal(True)
+        expect(is_safe_for_printer("\ud800.ctb")).to_equal(False)
+        expect(is_safe_for_printer("")).to_equal(False)
 
     def test_idle_is_backed_by_the_print_counters_or_not(self) -> None:
         # Both answers read as IDLE. Only the first one says so.

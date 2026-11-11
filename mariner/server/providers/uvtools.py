@@ -38,7 +38,9 @@ from mariner.file_formats.utils import get_file_extension, get_supported_extensi
 from mariner.printer import PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
 from mariner.server.files import (
+    NotPrintable,
     modification_time,
+    printable_relative_path,
     replacing,
     resolve_in_files_directory,
     safe_filename,
@@ -172,7 +174,9 @@ class UVToolsProvider(NetworkPrintProvider):
             with replacing(dest, guard=unless_in_use) as scratch:
                 scratch.write_bytes(data)
         except FileInUse as error:
-            logger.warning("UVTools: not replacing %s: %s", safe_name, error.usage)
+            logger.warning(
+                "UVTools: not replacing %s: %s", safe_name, error.usage.value
+            )
             abort(409)
         try:
             os.sync()
@@ -183,32 +187,24 @@ class UVToolsProvider(NetworkPrintProvider):
         return jsonify({"success": True, "filename": safe_name})
 
     def _print_file(self, filename: str) -> Union[str, Response]:
-        safe_name = safe_filename(filename)
-        if safe_name is None:
-            logger.warning("UVTools: refusing unsafe filename %r", filename)
-            abort(400)
+        try:
+            relative = printable_relative_path(filename)
+        except NotPrintable as error:
+            logger.warning("UVTools: not printing %r: %s", filename, error.reason)
+            abort(404 if error.reason == NotPrintable.MISSING else 400)
 
-        file_path = resolve_in_files_directory(safe_name)
-        if file_path is None:
-            abort(400)
-        if not os.path.isfile(file_path):
-            abort(404)
-        if get_file_extension(safe_name) not in get_supported_extensions():
-            abort(400)
+        start_print(relative)
 
-        start_print(safe_name)
-
-        logger.info("UVTools print: %s", safe_name)
+        logger.info("UVTools print: %s", relative)
         return jsonify({"success": True})
 
     def _delete_file(self, filename: str) -> Union[str, Response]:
-        safe_name = safe_filename(filename)
-        if safe_name is None:
+        # Not safe_filename: that decides which names may be stored. A file
+        # that is already there must stay deletable whatever its name, as
+        # long as the path stays inside the files directory.
+        path = resolve_in_files_directory(filename)
+        if path is None or "/" in filename or "\\" in filename:
             logger.warning("UVTools: refusing unsafe filename %r", filename)
-            abort(400)
-
-        path = resolve_in_files_directory(safe_name)
-        if path is None:
             abort(400)
 
         if not os.path.isfile(path):
@@ -217,9 +213,9 @@ class UVToolsProvider(NetworkPrintProvider):
             with unless_in_use(path):
                 os.remove(path)
         except FileInUse as error:
-            logger.warning("UVTools: not deleting %s: %s", safe_name, error.usage)
+            logger.warning("UVTools: not deleting %s: %s", filename, error.usage.value)
             abort(409)
-        logger.info("UVTools delete: %s", safe_name)
+        logger.info("UVTools delete: %s", filename)
         return jsonify({"success": True})
 
     def _pause_print(self, filename: str = "") -> Union[str, Response]:

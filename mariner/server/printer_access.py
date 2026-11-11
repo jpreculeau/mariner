@@ -13,7 +13,19 @@ replacing or removing a file: is the printer reading it right now? See
 The answer comes from the printer itself, so it is the same whether the print
 was started from Mariner, from a slicer or from the printer's own screen. When
 the printer does not give a clear answer, the question cannot be settled, and
-an existing file is treated as in use until it can be: see ``Usage.UNKNOWN``.
+an existing file is treated as in use until it can be.
+
+Three locks, always taken in this order, never the other way round:
+
+1. ``_change_lock`` makes "check that a file is free, then change it" and
+   "start a print" exclude each other.
+2. ``_serial_lock`` is held for the length of one conversation with the
+   printer, which can be seconds.
+3. ``_memory_lock`` guards the two things remembered between conversations,
+   and is never held while anything else happens.
+
+A status poll takes only the second, so file operations that do not need to
+ask the printer anything never wait behind one.
 """
 
 import os
@@ -49,10 +61,11 @@ _ACTIVE_STATES = (
 # almost at once.
 _STATUS_MAX_AGE_SECS = 1.0
 
-# Giving up on a printer that does not answer takes several seconds, every
-# time. That answer is kept longer so repeated attempts are told at once.
-# Keeping it errs on the safe side: while it lasts, existing files stay
-# protected. Reading the status again (see ``read_status``) replaces it.
+# Giving up on a printer that does not answer takes several seconds. That
+# answer is kept longer, so that a refusal is repeated at once instead of
+# after the same wait each time. Keeping it errs on the safe side: while it
+# lasts, existing files stay protected. Any new conversation with the
+# printer, a status poll included, replaces it.
 _CLOSED_STATUS_MAX_AGE_SECS = 30.0
 
 # For a moment after being told to print, the printer still reports that it
@@ -60,59 +73,69 @@ _CLOSED_STATUS_MAX_AGE_SECS = 30.0
 # this long, or until the printer reports the print itself.
 _START_GRACE_SECS = 30.0
 
-# Reentrant, so a caller that already holds the port can use the helpers
-# below without deadlocking on itself.
-_printer_lock = threading.RLock()
+# Reentrant, so that code holding one of them can call the helpers below.
+_change_lock = threading.RLock()
+_serial_lock = threading.RLock()
+_memory_lock = threading.Lock()
 
-# The last status read and when. Guarded by _printer_lock.
+# The last status read and when. Guarded by _memory_lock.
 _last_status: Optional[Tuple[float, PrintStatus, str]] = None
 
 # The file Mariner last started printing and when, until the printer reports
-# the print itself. Guarded by _printer_lock.
+# the print itself. Guarded by _memory_lock.
 _just_started: Optional[Tuple[Path, float]] = None
 
 
 class Usage(Enum):
     """What the print in progress means for a file or folder."""
 
+    # Positively not being read by the printer.
     FREE = "free"
     # The printer is reading it, or something inside it.
     PRINTING = "printing"
-    # The printer gave no clear answer, so whether it is being read is not
-    # known.
-    UNKNOWN = "unknown"
+    # A print is running, but which file it reads could not be established.
+    UNIDENTIFIED_PRINT = "unidentified print"
+    # The printer did not answer, or not clearly enough to tell.
+    PRINTER_UNREACHABLE = "printer unreachable"
 
 
 class FileInUse(Exception):
-    """Raised when a file operation could disturb a print in progress."""
+    """Raised when a file operation could disturb a print in progress.
+
+    ``usage`` says why, and is never ``Usage.FREE``.
+    """
 
     def __init__(self, path: Path, usage: Usage) -> None:
         super().__init__(f"{path.name}: {usage.value}")
         self.path = path
         self.usage = usage
 
-    @property
-    def printer_is_silent(self) -> bool:
-        """Whether the refusal comes from not knowing, not from a known print."""
-        return self.usage is Usage.UNKNOWN
-
 
 def forget_status() -> None:
-    """Drop what is remembered about the printer, so the next check asks it."""
+    """Drop everything remembered about the printer.
+
+    The next check then asks the printer, and a print started a moment ago
+    is no longer assumed. Used by tests to start from a clean slate.
+    """
     global _last_status, _just_started
-    with _printer_lock:
+    with _memory_lock:
         _last_status = None
         _just_started = None
+
+
+def _forget_last_status() -> None:
+    global _last_status
+    with _memory_lock:
+        _last_status = None
 
 
 @contextmanager
 def printer_session() -> Iterator[ChiTuPrinter]:
     """Open the printer for one conversation, exclusively."""
-    global _last_status
-    with _printer_lock:
+    with _serial_lock:
         # Whatever is said next may change what the printer is doing, so the
         # remembered status can no longer be trusted.
-        _last_status = None
+        _forget_last_status()
         with ChiTuPrinter() as printer:
             yield printer
 
@@ -120,17 +143,37 @@ def printer_session() -> Iterator[ChiTuPrinter]:
 def start_print(relative_path: str) -> None:
     """Tell the printer to print the file at *relative_path*.
 
-    Every interface starts a print through here, so that the file is known
-    to be in use from this instant, before the printer reports it.
-    *relative_path* is relative to the files directory, as the printer knows
-    it. Raises whatever ``ChiTuPrinter.start_printing`` raises; nothing is
-    remembered if it does.
+    Every interface starts a print through here. *relative_path* is relative
+    to the files directory, as the printer knows it; see
+    ``files.printable_relative_path``.
+
+    The file counts as in use from the moment the command is sent, before
+    the printer reports the print. That holds even if the printer's answer
+    is lost and this raises: the command may have gone through, and wrongly
+    protecting a file for a moment is harmless. Only a name the printer
+    class refuses outright (``ValueError``), which is never sent, is not
+    remembered.
+
+    Raises whatever ``ChiTuPrinter.start_printing`` raises.
     """
+    with _change_lock:
+        with printer_session() as printer:
+            sent = True
+            try:
+                printer.start_printing(relative_path)
+            except ValueError:
+                sent = False
+                raise
+            finally:
+                if sent:
+                    _remember_started(relative_path)
+
+
+def _remember_started(relative_path: str) -> None:
     global _just_started
-    with printer_session() as printer:
-        printer.start_printing(relative_path)
-        started = resolve_in_files_directory(relative_path)
-        if started is not None:
+    started = resolve_in_files_directory(relative_path)
+    if started is not None:
+        with _memory_lock:
             _just_started = (started, time.monotonic())
 
 
@@ -149,7 +192,7 @@ def _query_printer() -> Tuple[PrintStatus, str]:
 
 
 def read_status() -> Tuple[PrintStatus, str]:
-    """The print status and the selected file, as the printer reports them.
+    """Ask the printer for its print status and its selected file.
 
     A printer that cannot be reached, or whose answers cannot be read after
     a few attempts, is reported as CLOSED with no selected file, so callers
@@ -160,34 +203,41 @@ def read_status() -> Tuple[PrintStatus, str]:
     running matters even when its file is unknown.
     """
     global _last_status
-    with _printer_lock:
+    with _serial_lock:
         try:
             status, selected_file = _query_printer()
         except TRANSIENT_ERRORS + (OSError,):
             status, selected_file = PrintStatus(state=PrinterState.CLOSED), ""
-        _last_status = (time.monotonic(), status, selected_file)
+        with _memory_lock:
+            _last_status = (time.monotonic(), status, selected_file)
         return (status, selected_file)
 
 
+def _remembered_status() -> Optional[Tuple[PrintStatus, str]]:
+    """The last status read, if it is recent enough to rely on."""
+    with _memory_lock:
+        if _last_status is None:
+            return None
+        read_at, status, selected_file = _last_status
+    max_age = (
+        _CLOSED_STATUS_MAX_AGE_SECS
+        if status.state == PrinterState.CLOSED
+        else _STATUS_MAX_AGE_SECS
+    )
+    if time.monotonic() - read_at >= max_age:
+        return None
+    return (status, selected_file)
+
+
 def _recent_status() -> Tuple[PrintStatus, str]:
-    """The status, read again only if the last read is too old to rely on."""
-    with _printer_lock:
-        if _last_status is not None:
-            read_at, status, selected_file = _last_status
-            max_age = (
-                _CLOSED_STATUS_MAX_AGE_SECS
-                if status.state == PrinterState.CLOSED
-                else _STATUS_MAX_AGE_SECS
-            )
-            if time.monotonic() - read_at < max_age:
-                return (status, selected_file)
-        return read_status()
+    """The status, asking the printer only if nothing recent is remembered."""
+    return _remembered_status() or read_status()
 
 
 def _file_just_started(status: PrintStatus) -> Optional[Path]:
     """The file Mariner started printing, while the printer has yet to say so."""
     global _just_started
-    with _printer_lock:
+    with _memory_lock:
         if _just_started is None:
             return None
         started, started_at = _just_started
@@ -204,8 +254,9 @@ def same_file(a: Path, b: Path) -> bool:
 
     The printer reads a FAT filesystem, where one file answers to several
     names: any mix of upper and lower case, and a short ``MODEL~1.CTB``
-    alias. When both paths exist the filesystem is asked; otherwise names
-    are compared without regard to case.
+    alias. So the filesystem is asked whether the two paths lead to the same
+    file. Only when it cannot say, because one of them does not exist, are
+    the names compared instead, without regard to case.
     """
     try:
         return os.path.samefile(a, b)
@@ -240,14 +291,14 @@ def usage_of(path: Path) -> Usage:
     file, and any folder holding it, must stay as they are until the print is
     over. *path* may be a file or a folder.
 
-    A path that does not exist yet is always FREE: nothing can be reading
-    it, so a new file can be stored whatever the printer is doing.
+    A path that does not exist yet is always FREE, without asking the
+    printer: nothing can be reading it, so a new file can be stored whatever
+    the printer is doing.
 
-    For an existing path the printer is asked, and the result is FREE only
-    on positive evidence: the printer reports that it is idle, or reports a
-    print whose file is found and is another one. Anything less is UNKNOWN:
-    no answer, an answer without the print counters, or a print whose file
-    was not named or cannot be found. Refusing a harmless change costs a
+    For an existing path the result is FREE only on positive evidence: the
+    printer reports that it is idle, or reports a print whose file is found
+    and is another one. Otherwise the path is in use, for one of three
+    reasons the result tells apart. Refusing a harmless change costs a
     retry; allowing a harmful one costs the print.
     """
     if not os.path.lexists(path):
@@ -259,14 +310,14 @@ def usage_of(path: Path) -> Usage:
     if status.state in _ACTIVE_STATES:
         printing = resolve_in_files_directory(selected_file) if selected_file else None
         if printing is None or not os.path.lexists(printing):
-            return Usage.UNKNOWN
+            return Usage.UNIDENTIFIED_PRINT
         return Usage.PRINTING if _concerns(printing, path) else Usage.FREE
 
     if just_started is not None and _concerns(just_started, path):
         return Usage.PRINTING
     if _is_confirmed_idle(status):
         return Usage.FREE
-    return Usage.UNKNOWN
+    return Usage.PRINTER_UNREACHABLE
 
 
 def is_in_use(path: Path) -> bool:
@@ -275,17 +326,21 @@ def is_in_use(path: Path) -> bool:
 
 
 @contextmanager
-def unless_in_use(path: Path) -> Iterator[None]:
+def unless_in_use(path: Path, *, even_if_unreachable: bool = False) -> Iterator[None]:
     """Run the block only if *path* is free, raising FileInUse otherwise.
 
-    The printer lock is held for the whole block. Starting a print through
-    Mariner needs the same lock, so a print cannot begin on *path* between
-    the check and the change the block makes. Keep the block short, a rename
-    or a single removal: every other conversation with the printer waits for
-    it.
+    Starting a print through Mariner is held off for the whole block, so a
+    print cannot begin on *path* between the check and the change the block
+    makes. Keep the block short, a rename or a single removal.
+
+    *even_if_unreachable* lets the block run although the printer could not
+    be asked (``Usage.PRINTER_UNREACHABLE``). It is for a user who knows the
+    printer is switched off and says so explicitly; it never overrides a
+    print the printer did report.
     """
-    with _printer_lock:
+    with _change_lock:
         usage = usage_of(path)
-        if usage is not Usage.FREE:
+        overridden = even_if_unreachable and usage is Usage.PRINTER_UNREACHABLE
+        if usage is not Usage.FREE and not overridden:
             raise FileInUse(path, usage)
         yield

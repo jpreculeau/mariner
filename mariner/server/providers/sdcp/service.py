@@ -161,7 +161,9 @@ class SDCPService:
             machine_name=config.get_sdcp_machine_name(),
             brand_name=config.get_sdcp_brand_name(),
             mainboard_ip=identity.get_local_ip(peer),
-            firmware_version=self._bridge.firmware_version(),
+            # Sent from the event loop, which must never wait on the printer.
+            # The real version takes over once an attribute report has read it.
+            firmware_version=self._bridge.known_firmware_version(),
             protocol_version=constants.PROTOCOL_VERSION,
             internal_machine_name=config.get_sdcp_internal_machine_name(),
         )

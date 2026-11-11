@@ -14,9 +14,14 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import PrinterState, is_safe_for_printer
+from mariner.printer import PrinterState
 from mariner.server.api import _layer_from_byte_offset
-from mariner.server.files import resolve_in_files_directory, scratch_path_beside
+from mariner.server.files import (
+    NotPrintable,
+    printable_relative_path,
+    resolve_in_files_directory,
+    scratch_path_beside,
+)
 from mariner.server.printer_access import (
     TRANSIENT_ERRORS as _TRANSIENT_ERRORS,
     FileInUse,
@@ -222,6 +227,19 @@ class PrinterBridge:
             self._firmware_version = self._read_firmware_version()
         return self._firmware_version or FALLBACK_FIRMWARE_VERSION
 
+    def known_firmware_version(self) -> str:
+        """The firmware version if it is already known, without asking.
+
+        For callers that must not wait on the printer, such as the discovery
+        reply, which is sent from the event loop. Returns the placeholder
+        until ``firmware_version`` has read the real one.
+        """
+        return (
+            config.get_sdcp_firmware_version()
+            or self._firmware_version
+            or FALLBACK_FIRMWARE_VERSION
+        )
+
     def _read_firmware_version(self) -> Optional[str]:
         try:
             with printer_session() as printer:
@@ -354,16 +372,12 @@ class PrinterBridge:
     # -- print control -------------------------------------------------
 
     def start_print(self, filename: str, start_layer: int = 0) -> int:
-        relative = strip_storage_prefix(filename)
-        if not is_safe_for_printer(relative):
+        try:
+            relative = printable_relative_path(strip_storage_prefix(filename))
+        except NotPrintable as error:
+            if error.reason == NotPrintable.UNSUPPORTED:
+                return int(constants.PrintCtrlAck.UNKNOWN_FORMAT)
             return int(constants.PrintCtrlAck.NOT_FOUND)
-
-        path = resolve_in_files_directory(relative)
-        if path is None or not os.path.isfile(path):
-            return int(constants.PrintCtrlAck.NOT_FOUND)
-
-        if get_file_extension(relative) not in get_supported_extensions():
-            return int(constants.PrintCtrlAck.UNKNOWN_FORMAT)
 
         try:
             start_print(relative)
@@ -479,10 +493,22 @@ class PrinterBridge:
             try:
                 with unless_in_use(path):
                     os.rename(path, doomed)
-                shutil.rmtree(doomed)
             except (FileInUse, OSError) as exc:
                 logger.warning("SDCP: not deleting %s: %s", raw, exc)
                 failures.append(raw)
+                continue
+            try:
+                shutil.rmtree(doomed)
+            except OSError as exc:
+                # Part of it could not be removed. What is left goes back
+                # under its own name, so it stays visible and can be dealt
+                # with, instead of lingering under a hidden one.
+                logger.warning("SDCP: could not delete all of %s: %s", raw, exc)
+                failures.append(raw)
+                try:
+                    os.rename(doomed, path)
+                except OSError:
+                    pass
 
         return failures
 

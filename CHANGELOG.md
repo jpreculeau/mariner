@@ -15,11 +15,14 @@
 - Let only one request at a time talk to the printer's serial port
 - Refuse to replace or delete the file being printed, however the print was started
 - Leave existing files alone while the printer does not answer; new names are still accepted
+- Let a web API client override that refusal when the user confirms the printer is switched off
 - Refuse file names the printer's FAT filesystem cannot store
 - Give each upload its own temporary file and remove leftovers at startup
-- Send the printer the path it knows when a print is started with another form of it
+- Send the printer the path it knows when a print is started with another form of it, from any interface
 - Check the file extension before printing from UVtools
-- Ignore malformed file lists in SDCP delete requests
+- Treat a bare string in an SDCP delete request as one path, and report entries that are not paths as failures
+- Answer the SDCP discovery broadcast without waiting on the printer
+- Refuse names that are not valid Unicode instead of dropping the SDCP connection
 - Protect a file from the moment its print is started through Mariner
 - Show in the web interface why an upload or a deletion was refused
 - Keep overlapping SDCP transfers apart, even when they share an id
