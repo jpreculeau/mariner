@@ -40,7 +40,9 @@ describe("FileDetailDialog", () => {
     fireEvent.click(screen.getByText("Delete"));
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
-    expect(api.deleteFile).toHaveBeenCalledWith("model.txt");
+    expect(api.deleteFile).toHaveBeenCalledWith("model.txt", {
+      ignoreUnreachablePrinter: false,
+    });
     expect(toast.error).not.toHaveBeenCalled();
   });
 

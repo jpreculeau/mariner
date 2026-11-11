@@ -1,8 +1,9 @@
 """Chunked file upload handling for the SDCP HTTP server.
 
 SDCP clients send a file as a sequence of ~1MB multipart POSTs that all share
-a ``Uuid`` and carry an ``Offset``. Chunks are appended to a scratch file next
-to the destination so the final move is an atomic same-filesystem rename.
+a ``Uuid`` and carry an ``Offset``. Chunks are appended to a scratch file in
+``.sdcp_uploads/``, on the same filesystem as the destination, so the final
+move is a rename.
 """
 
 import hashlib
@@ -11,15 +12,16 @@ import os
 import re
 import secrets
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO, Callable, ContextManager, Dict, Optional
+from typing import Any, BinaryIO, Callable, ContextManager, Dict, Optional, Tuple
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.server.files import (
     SDCP_SCRATCH_DIRNAME,
-    resolve_in_files_directory,
+    resolve_entry_in_files_directory,
     safe_filename,
 )
 from mariner.server.printer_access import FileInUse, unless_in_use
@@ -41,6 +43,15 @@ class ChunkResult:
 
 
 _UPLOAD_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+_MD5 = re.compile(r"[0-9a-fA-F]{32}")
+
+# A transfer that has received nothing for this long is given up on: the
+# client is gone. Chunks are about 1 MB, seconds apart on the slowest link.
+IDLE_TRANSFER_SECS = 300.0
+
+# A transfer belongs to the client that sent its first chunk, known by its
+# address, and goes by the id that client chose.
+_SessionKey = Tuple[str, str]
 
 
 @dataclass
@@ -52,6 +63,7 @@ class _Session:
     scratch_path: Path
     handle: BinaryIO
     offset: int = 0
+    last_chunk_at: float = field(default_factory=time.monotonic)
     # hashlib's hash objects have no public type to name here.
     hasher: Any = field(default_factory=hashlib.md5)
 
@@ -78,12 +90,26 @@ class UploadManager:
         the SDCP event loop takes that lock itself.
         """
         self._lock = threading.Lock()
-        self._sessions: Dict[str, _Session] = {}
+        self._sessions: Dict[_SessionKey, _Session] = {}
         self._unless_in_use = unless_in_use
 
     def is_transferring(self) -> bool:
+        self._drop_idle_transfers()
         with self._lock:
             return bool(self._sessions)
+
+    def _drop_idle_transfers(self) -> None:
+        """Give up on transfers whose client stopped sending."""
+        with self._lock:
+            now = time.monotonic()
+            for key, session in list(self._sessions.items()):
+                if now - session.last_chunk_at >= IDLE_TRANSFER_SECS:
+                    logger.warning(
+                        "SDCP: giving up on the unfinished transfer of %s",
+                        session.filename,
+                    )
+                    self._discard(key, session)
+        self._cleanup_scratch_dir()
 
     def _scratch_dir(self) -> Path:
         # Kept inside the files directory so finalize() is a rename rather
@@ -102,7 +128,41 @@ class UploadManager:
         expected_md5: str,
         verify: bool,
         data: bytes,
+        client: str = "",
     ) -> ChunkResult:
+        """Store one chunk, and move the file into place if it was the last.
+
+        *client* is the address the chunk came from. Two clients may well
+        choose the same id, "default" when they send none, and must not
+        feed each other's transfer.
+        """
+        self._drop_idle_transfers()
+        try:
+            return self._handle_chunk(
+                key=(client, upload_uuid),
+                filename=filename,
+                offset=offset,
+                total_size=total_size,
+                expected_md5=expected_md5,
+                verify=verify,
+                data=data,
+            )
+        finally:
+            # However the chunk went, no empty scratch folder stays behind.
+            self._cleanup_scratch_dir()
+
+    def _handle_chunk(
+        self,
+        *,
+        key: _SessionKey,
+        filename: str,
+        offset: int,
+        total_size: int,
+        expected_md5: str,
+        verify: bool,
+        data: bytes,
+    ) -> ChunkResult:
+        upload_uuid = key[1]
         if offset < 0 or total_size < 0:
             return ChunkResult(ok=False, error=constants.UploadError.OFFSET_ERROR)
 
@@ -111,6 +171,12 @@ class UploadManager:
         # send a UUID, and the service passes "default" when they send none.
         if not _UPLOAD_ID.fullmatch(upload_uuid):
             logger.warning("SDCP: refusing malformed upload id %r", upload_uuid)
+            return ChunkResult(ok=False, error=constants.UploadError.UNKNOWN)
+
+        # Client input too, compared with the file's own MD5 and written to
+        # the log.
+        if expected_md5 and not _MD5.fullmatch(expected_md5):
+            logger.warning("SDCP: refusing malformed MD5 %r", expected_md5)
             return ChunkResult(ok=False, error=constants.UploadError.UNKNOWN)
 
         safe_name = safe_filename(filename)
@@ -132,8 +198,8 @@ class UploadManager:
         # Refused before any byte is stored, so the client learns at once
         # instead of after sending the whole file. Checked again when the
         # file is moved into place.
-        if self._starts_a_transfer(upload_uuid, offset):
-            destination = resolve_in_files_directory(safe_name)
+        if self._starts_a_transfer(key, offset):
+            destination = resolve_entry_in_files_directory(safe_name)
             try:
                 if destination is not None:
                     with self._unless_in_use(destination):
@@ -142,19 +208,19 @@ class UploadManager:
                 logger.warning(
                     "SDCP: not replacing %s: %s", safe_name, error.usage.value
                 )
-                self._abandon(upload_uuid)
+                self._abandon(key)
                 return ChunkResult(
                     ok=False, error=constants.UploadError.FILE_OPEN_FAILED
                 )
 
         with self._lock:
-            session = self._sessions.get(upload_uuid)
+            session = self._sessions.get(key)
 
             # Offset 0 always (re)starts a transfer, so a client retrying from
             # the beginning discards whatever was buffered before.
             if session is None or offset == 0:
                 if session is not None:
-                    self._discard(upload_uuid, session)
+                    self._discard(key, session)
                 try:
                     # Its own random name, not the client's id: a transfer
                     # that reuses an id must not reopen the file of one that
@@ -174,7 +240,7 @@ class UploadManager:
                     scratch_path=scratch,
                     handle=handle,
                 )
-                self._sessions[upload_uuid] = session
+                self._sessions[key] = session
                 logger.info(
                     "SDCP: upload starting: %s uuid=%s total_size=%d "
                     "check=%s declared_md5=%s",
@@ -185,10 +251,18 @@ class UploadManager:
                     expected_md5 or "<none>",
                 )
 
-            if offset != session.offset:
+            # A chunk continues the transfer it names in full: same file,
+            # same size, next offset. Anything else is another transfer
+            # that happens to use the same id, and gets nothing in.
+            if (
+                offset != session.offset
+                or safe_name != session.filename
+                or total_size != session.total_size
+            ):
                 return ChunkResult(
                     ok=False, error=constants.UploadError.OFFSET_MISMATCH
                 )
+            session.last_chunk_at = time.monotonic()
 
             # Clients may pad the final packet. TotalSize is authoritative, so
             # anything past it is dropped: writing it produces a file longer
@@ -205,7 +279,7 @@ class UploadManager:
                 session.handle.write(data)
             except OSError as exc:
                 logger.warning("SDCP: write failed: %s", exc)
-                self._discard(upload_uuid, session)
+                self._discard(key, session)
                 return ChunkResult(
                     ok=False, error=constants.UploadError.FILE_OPEN_FAILED
                 )
@@ -219,21 +293,20 @@ class UploadManager:
             # Complete. The session leaves the table here, under the lock;
             # the rest happens outside it because it talks to the printer.
             session.close()
-            self._sessions.pop(upload_uuid, None)
+            self._sessions.pop(key, None)
 
         return self._finalize(session)
 
-    def _starts_a_transfer(self, upload_uuid: str, offset: int) -> bool:
+    def _starts_a_transfer(self, key: _SessionKey, offset: int) -> bool:
         with self._lock:
-            return offset == 0 or upload_uuid not in self._sessions
+            return offset == 0 or key not in self._sessions
 
-    def _abandon(self, upload_uuid: str) -> None:
-        """Drop whatever was received so far under *upload_uuid*, if anything."""
+    def _abandon(self, key: _SessionKey) -> None:
+        """Drop whatever was received so far for *key*, if anything."""
         with self._lock:
-            session = self._sessions.get(upload_uuid)
+            session = self._sessions.get(key)
             if session is not None:
-                self._discard(upload_uuid, session)
-        self._cleanup_scratch_dir()
+                self._discard(key, session)
 
     def _finalize(self, session: _Session) -> ChunkResult:
         """Verify a completed transfer and move it into the files directory.
@@ -242,7 +315,15 @@ class UploadManager:
         printer. *session* is already out of the table and owns a scratch
         file no other transfer can be given, so nothing else touches it;
         ``_cleanup_scratch_dir`` only ever removes the directory once empty.
+
+        Whatever was received is removed unless it was moved into place.
         """
+        result = self._verify_and_move(session)
+        if not result.completed:
+            self._unlink(session.scratch_path)
+        return result
+
+    def _verify_and_move(self, session: _Session) -> ChunkResult:
         computed = session.hasher.hexdigest()
         logger.info(
             "SDCP: upload finished: %s bytes=%d declared_total=%d check=%s "
@@ -263,7 +344,6 @@ class UploadManager:
                     session.expected_md5,
                     computed,
                 )
-                self._unlink(session.scratch_path)
                 return ChunkResult(
                     ok=False,
                     error=constants.UploadError.UNKNOWN,
@@ -271,9 +351,10 @@ class UploadManager:
                     filename=session.filename,
                 )
 
-        destination = resolve_in_files_directory(session.filename)
+        # The entry of that name, not what it leads to: a file stored onto a
+        # symbolic link takes the place of the link.
+        destination = resolve_entry_in_files_directory(session.filename)
         if destination is None:
-            self._unlink(session.scratch_path)
             return ChunkResult(
                 ok=False,
                 error=constants.UploadError.UNKNOWN,
@@ -281,39 +362,46 @@ class UploadManager:
             )
 
         try:
-            # The guard holds the printer for the move, so a print cannot
-            # start on this file between the check and the replacement.
+            # The guard holds off print starts for the move, so a print
+            # cannot start on this file between the check and the
+            # replacement.
             with self._unless_in_use(destination):
                 os.replace(session.scratch_path, destination)
         except FileInUse as error:
             logger.warning(
                 "SDCP: not replacing %s: %s", session.filename, error.usage.value
             )
-            self._unlink(session.scratch_path)
             return ChunkResult(ok=False, error=constants.UploadError.FILE_OPEN_FAILED)
         except OSError as exc:
             logger.warning("SDCP: could not move upload into place: %s", exc)
-            self._unlink(session.scratch_path)
             return ChunkResult(ok=False, error=constants.UploadError.FILE_OPEN_FAILED)
 
         self._sync()
-        self._cleanup_scratch_dir()
         logger.info("SDCP: received %s (%d bytes)", session.filename, session.offset)
         return ChunkResult(ok=True, completed=True, filename=session.filename)
 
     def terminate(self, upload_uuid: str, filename: str = "") -> int:
-        """Handle Cmd 255, returning the matching ack code."""
+        """Handle Cmd 255, returning the matching ack code.
+
+        The command names a transfer by its id alone, so every transfer
+        that goes by that id ends, whichever client began it.
+        """
         with self._lock:
-            session = self._sessions.get(upload_uuid)
-            if session is None:
-                return int(constants.FileTransferAck.NOT_TRANSFER)
-            self._discard(upload_uuid, session)
+            ended = [
+                (key, session)
+                for key, session in self._sessions.items()
+                if key[1] == upload_uuid
+            ]
+            for key, session in ended:
+                self._discard(key, session)
         self._cleanup_scratch_dir()
+        if not ended:
+            return int(constants.FileTransferAck.NOT_TRANSFER)
         return int(constants.FileTransferAck.SUCCESS)
 
-    def _discard(self, upload_uuid: str, session: _Session) -> None:
+    def _discard(self, key: _SessionKey, session: _Session) -> None:
         session.close()
-        self._sessions.pop(upload_uuid, None)
+        self._sessions.pop(key, None)
         self._unlink(session.scratch_path)
 
     @staticmethod

@@ -331,6 +331,20 @@ class MarinerServerTest(TestCase):
         expect(listing["directories"]).to_equal([])
         expect([f["filename"] for f in listing["files"]]).to_equal(["dangling.ctb"])
 
+    def test_list_files_does_not_open_what_a_link_leads_to_elsewhere(self) -> None:
+        self.fs.create_file("/mnt/outside.ctb", contents=self.ctb_file_contents)
+        self.fs.create_symlink("/mnt/usb_share/way-out.ctb", "/mnt/outside.ctb")
+        with patch(
+            "mariner.server.api.read_cached_sliced_model_file",
+            wraps=read_cached_sliced_model_file,
+        ) as reader:
+            response = self.client.get("/api/list_files")
+        listed = {entry["filename"]: entry for entry in response.get_json()["files"]}
+        expect(listed["way-out.ctb"]["can_be_printed"]).to_equal(False)
+        expect(listed["foobar.ctb"]["can_be_printed"]).to_equal(True)
+        opened = [str(call.args[0]) for call in reader.call_args_list]
+        expect([path for path in opened if "out" in path]).to_equal([])
+
     def test_list_files_hides_uploads_in_progress(self) -> None:
         self.fs.create_file(
             "/mnt/usb_share/.upload-0123456789abcdef.part", contents=b"partial"
@@ -447,6 +461,32 @@ class MarinerServerTest(TestCase):
         response = self.client.post("/api/printer/command/resume_print")
         expect(response.get_json()).to_equal({"success": True})
         self.printer_mock.resume_printing.assert_called_once_with()
+
+    def test_command_start_printing_while_a_print_is_running(self) -> None:
+        self._printer_is_printing("other.ctb")
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=foobar.ctb"
+        )
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()).to_equal(
+            {
+                "code": "print_in_progress",
+                "title": "Print In Progress",
+                "description": "The printer is already printing. Wait for the "
+                "print to finish or cancel it first.",
+            }
+        )
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_a_file_can_be_deleted_once_its_print_is_cancelled(self) -> None:
+        # Started and cancelled at once, before the printer reported it.
+        self.client.post("/api/printer/command/start_print?filename=foobar.ctb")
+        refused = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(refused.status_code).to_equal(409)
+
+        self.client.post("/api/printer/command/cancel_print")
+        response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(200)
 
     def test_command_cancel_print(self) -> None:
         response = self.client.post("/api/printer/command/cancel_print")

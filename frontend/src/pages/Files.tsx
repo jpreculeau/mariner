@@ -96,11 +96,7 @@ export default function Files() {
   ) => {
     setRefusedUpload(null);
     try {
-      if (ignoreUnreachablePrinter) {
-        await api.uploadFile(file, path, { ignoreUnreachablePrinter });
-      } else {
-        await api.uploadFile(file, path);
-      }
+      await api.uploadFile(file, path, { ignoreUnreachablePrinter });
       queryClient.invalidateQueries({ queryKey: ["files", path] });
     } catch (err) {
       if (

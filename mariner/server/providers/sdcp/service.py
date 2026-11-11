@@ -546,6 +546,7 @@ class SDCPService:
                 expected_md5=expected_md5,
                 verify=verify,
                 data=data,
+                client=request.remote or "",
             )
 
         result = await self._in_executor(read_and_store)

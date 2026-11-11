@@ -31,6 +31,13 @@ class FileNotSelected(UnexpectedPrinterResponse):
     """
 
 
+class PrintAlreadyRunning(MarinerException):
+    """A print was asked for while the printer reports one under way."""
+
+    def __str__(self) -> str:
+        return "The printer is already printing."
+
+
 class UnexpectedResponseLineNumber(MarinerException):
     def __init__(self, response: str, expected: str) -> None:
         self.response = response

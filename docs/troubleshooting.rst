@@ -88,7 +88,8 @@ removed. Names it cannot use safely are refused instead of being rewritten:
 * names containing ``: * ? " < > |``, which the FAT filesystem read by the
   printer cannot store;
 * names ending with a dot, or longer than 255 bytes;
-* names containing control characters such as a line break.
+* names containing control characters such as a line break, or the Unicode
+  line and paragraph separators.
 
 Rename the file and upload it again. The same rules apply to folder names and
 to files sent from a slicer.
@@ -167,8 +168,8 @@ with status 409 and a JSON body:
 * ``can_be_overridden``: true for ``printer_not_answering`` only.
 
 UVtools receives a 409, and a slicer using SDCP sees its transfer or
-deletion fail. A slicer deleting a folder is also turned down while a file
-is being uploaded into that folder through another interface.
+deletion fail. A slicer deleting a folder is also turned down when a file is
+being uploaded into that folder through another interface at that moment.
 
 .. note::
 
@@ -180,6 +181,31 @@ is being uploaded into that folder through another interface.
 
 Printing
 --------
+
+.. rubric:: A print cannot be started (error 409)
+
+Mariner does not start a print while the printer reports one that is
+starting, running or paused. Wait for it to finish, or cancel it first. The
+web API answers 409 with the code ``print_in_progress``, UVtools receives a
+409, and a slicer using SDCP is told that the printer is busy.
+
+Cancelling a print frees its file at once, including a print started through
+Mariner a moment earlier that the printer had not reported yet.
+
+.. rubric:: A transfer from a slicer is refused or disappears
+
+Slicers send a file over the network (SDCP) in pieces. Mariner keeps the
+pieces of each transfer apart by the address of the computer that sends them
+and by the transfer id the slicer chose:
+
+* a piece that names another file, or another size, than the transfer it
+  claims to continue is refused;
+* a declared MD5 checksum that is not 32 hexadecimal digits is refused;
+* a transfer that receives nothing for five minutes is abandoned and what
+  was received is removed. Send the file again.
+
+Two slicers on the **same** computer that both send without a transfer id
+cannot be told apart: the second one to start replaces the first.
 
 .. rubric:: The dashboard shows progress but no layer count
 

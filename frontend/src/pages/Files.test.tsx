@@ -43,7 +43,9 @@ describe("Files", () => {
     pick(input, new File(["x"], "model.ctb"));
 
     await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(2));
-    expect(api.uploadFile).toHaveBeenCalledWith(expect.any(File), ".");
+    expect(api.uploadFile).toHaveBeenCalledWith(expect.any(File), ".", {
+      ignoreUnreachablePrinter: false,
+    });
     expect(toast.error).not.toHaveBeenCalled();
   });
 

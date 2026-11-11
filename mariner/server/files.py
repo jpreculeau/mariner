@@ -151,8 +151,17 @@ def resolve_entry_in_files_directory(relative: str) -> Optional[Path]:
     Returns None if the path escapes, or does not name an entry (``""``,
     ``.``, a path ending in ``..``).
     """
+    if "\x00" in relative:
+        # No path can carry a NUL byte.
+        return None
     name = os.path.basename(relative.rstrip("/"))
     if name in ("", ".", ".."):
+        return None
+    try:
+        os.fsencode(name)
+    except ValueError:
+        # Text no entry can be named after, such as the lone surrogates a
+        # JSON client can send.
         return None
     parent = resolve_in_files_directory(os.path.dirname(relative.rstrip("/")))
     if parent is None:
@@ -216,6 +225,22 @@ def modification_time(dir_entry: "os.DirEntry[str]") -> float:
         return dir_entry.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def stays_in_files_directory(entry: Path) -> bool:
+    """Whether *entry* leads, links followed, to something clients may reach.
+
+    For a listing, which finds entries by scanning a folder: a symbolic
+    link is an entry of that folder wherever it points, and one that leads
+    out of the files directory, or to a hidden entry, must be neither
+    opened nor shown under the name of its target.
+    """
+    files_directory = config.get_files_directory().resolve()
+    try:
+        target = entry.resolve()
+    except (ValueError, OSError):
+        return False
+    return _is_inside_files_directory(target, files_directory)
 
 
 def is_scratch_file(name: str) -> bool:

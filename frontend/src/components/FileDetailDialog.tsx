@@ -48,11 +48,7 @@ export function FileDetailDialog({
   const deleteFile = async (ignoreUnreachablePrinter: boolean) => {
     setPrinterOffReason(null);
     try {
-      if (ignoreUnreachablePrinter) {
-        await api.deleteFile(file.path, { ignoreUnreachablePrinter });
-      } else {
-        await api.deleteFile(file.path);
-      }
+      await api.deleteFile(file.path, { ignoreUnreachablePrinter });
     } catch (err) {
       if (
         err instanceof ApiError &&

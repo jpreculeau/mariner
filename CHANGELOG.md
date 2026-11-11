@@ -23,6 +23,16 @@
 - Recognise the names reserved for transfers in progress whatever their case
 - Keep line breaks in client-supplied names out of the logs
 - Answer 404 when a file or folder disappears during a deletion or an upload
+- Refuse to start a print while the printer reports one under way
+- Free a file as soon as its print is cancelled
+- Keep SDCP transfers apart by client address as well as id, and refuse a chunk that names another file or size
+- Abandon an SDCP transfer that has received nothing for five minutes
+- Refuse a declared MD5 that is not one
+- Leave no empty transfer folder behind after a refused or failed SDCP transfer
+- Replace a symbolic link itself, not its target, when a file is uploaded onto it from UVtools or SDCP
+- Do not read or show what a symbolic link leads to outside the files directory or in a transfer in progress
+- Refuse a deletion name containing a NUL byte or invalid Unicode while a transfer is in progress
+- Refuse file names containing C1 control characters or Unicode line separators
 - Refuse file names the printer's FAT filesystem cannot store
 - Give each upload its own temporary file and remove leftovers at startup
 - Send the printer the path it knows when a print is started with another form of it, from any interface
@@ -32,7 +42,7 @@
 - Refuse names that are not valid Unicode instead of dropping the SDCP connection
 - Protect a file from the moment its print is started through Mariner
 - Show in the web interface why an upload or a deletion was refused
-- Keep overlapping SDCP transfers apart, even when they share an id
+- Give each SDCP transfer its own temporary file, even when ids are reused
 - Refuse to upload a file onto the name of a folder
 - Keep transfers in progress out of reach of every file route
 - Delete a symbolic link itself, not the file it points to, including a link whose target is gone

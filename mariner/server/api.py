@@ -29,7 +29,7 @@ from flask import (
 from pyre_extensions import none_throws
 
 from mariner import config
-from mariner.exceptions import MarinerException
+from mariner.exceptions import MarinerException, PrintAlreadyRunning
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import PrinterState
@@ -42,6 +42,7 @@ from mariner.server.files import (
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
     safe_filename,
+    stays_in_files_directory,
 )
 from mariner.server.printer_access import (
     FileInUse,
@@ -49,6 +50,7 @@ from mariner.server.printer_access import (
     printer_session,
     read_status,
     start_print,
+    stop_print,
     unless_in_use,
 )
 from mariner.server.utils import read_cached_preview, read_cached_sliced_model_file
@@ -357,7 +359,13 @@ def list_files() -> Union[str, Response]:
                 # dangling symbolic link included: it is reported as
                 # unprintable instead of as a folder that cannot be opened.
                 sliced_model_file: Optional[SlicedModelFile] = None
-                if get_file_extension(dir_entry.name) in get_supported_extensions():
+                # A link leading out of the files directory is listed, so
+                # that it can be removed, but what it leads to is not read.
+                if get_file_extension(
+                    dir_entry.name
+                ) in get_supported_extensions() and stays_in_files_directory(
+                    path / dir_entry.name
+                ):
                     # A file with a supported extension can still fail to
                     # parse: truncated, corrupted in transfer, or a format
                     # variant this build does not understand. That must not
@@ -551,7 +559,21 @@ def printer_command(command: str) -> Union[str, Response]:
         abort(404)
 
     if printer_command == PrinterCommand.START_PRINT:
-        start_print(_printable_file_or_abort(request.args.get("filename")))
+        relative = _printable_file_or_abort(request.args.get("filename"))
+        try:
+            start_print(relative)
+        except PrintAlreadyRunning:
+            body = {
+                "code": "print_in_progress",
+                "title": "Print In Progress",
+                "description": "The printer is already printing. Wait for the "
+                "print to finish or cancel it first.",
+            }
+            abort(make_response(jsonify(body), 409))
+        return jsonify({"success": True})
+
+    if printer_command == PrinterCommand.CANCEL_PRINT:
+        stop_print()
         return jsonify({"success": True})
 
     with printer_session() as printer:
@@ -559,8 +581,6 @@ def printer_command(command: str) -> Union[str, Response]:
             printer.pause_printing()
         elif printer_command == PrinterCommand.RESUME_PRINT:
             printer.resume_printing()
-        elif printer_command == PrinterCommand.CANCEL_PRINT:
-            printer.stop_printing()
         elif printer_command == PrinterCommand.REBOOT:
             printer.reboot()
         return jsonify({"success": True})

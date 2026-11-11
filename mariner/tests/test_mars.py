@@ -6,7 +6,12 @@ import serial
 from pyexpect import expect
 
 from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
-from mariner.printer import ChiTuPrinter, PrinterState, is_safe_for_printer
+from mariner.printer import (
+    ChiTuPrinter,
+    PrinterState,
+    has_control_character,
+    is_safe_for_printer,
+)
 
 
 class ChiTuPrinterTest(TestCase):
@@ -317,6 +322,12 @@ class ChiTuPrinterTest(TestCase):
             self.printer.close()
         expect(status.state).to_equal(PrinterState.CLOSED)
         expect(status.answered).to_equal(True)
+
+    def test_line_separators_of_any_kind_count_as_control_characters(self) -> None:
+        for character in ("\n", "\r", "\x7f", "\x85", "\x9b", "\u2028", "\u2029"):
+            expect(has_control_character(f"a{character}b")).to_equal(True)
+        for text in ("model.ctb", "pièce (v2).ctb", "模型.ctb", "a b"):
+            expect(has_control_character(text)).to_equal(False)
 
     def test_text_that_is_not_valid_unicode_is_not_safe_for_the_printer(self) -> None:
         expect(is_safe_for_printer("model.ctb")).to_equal(True)

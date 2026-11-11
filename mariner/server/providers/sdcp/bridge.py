@@ -10,10 +10,11 @@ import os
 import shutil
 import uuid as uuid_module
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
+from mariner.exceptions import PrintAlreadyRunning
 from mariner.printer import PrinterState
 from mariner.server.api import _layer_from_byte_offset
 from mariner.server.files import (
@@ -23,6 +24,7 @@ from mariner.server.files import (
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
     scratch_path_beside,
+    stays_in_files_directory,
 )
 from mariner.server.printer_access import (
     TRANSIENT_ERRORS as _TRANSIENT_ERRORS,
@@ -30,6 +32,7 @@ from mariner.server.printer_access import (
     printer_session,
     read_status,
     start_print,
+    stop_print,
     unless_in_use,
 )
 from mariner.server.providers.sdcp import constants, identity
@@ -383,6 +386,9 @@ class PrinterBridge:
 
         try:
             start_print(relative)
+        except PrintAlreadyRunning:
+            logger.warning("SDCP: start print refused: a print is running")
+            return int(constants.PrintCtrlAck.BUSY)
         except _TRANSIENT_ERRORS as exc:
             logger.warning("SDCP: start print failed: %s", exc)
             return int(constants.PrintCtrlAck.FILEIO_FAILED)
@@ -391,26 +397,36 @@ class PrinterBridge:
             return int(constants.PrintCtrlAck.BUSY)
         return int(constants.PrintCtrlAck.OK)
 
-    def _simple_command(self, action: str) -> int:
+    @staticmethod
+    def _acknowledged(action: str, command: Callable[[], None]) -> int:
+        """Run *command* and give the ack code for how it went."""
         try:
-            with printer_session() as printer:
-                getattr(printer, action)()
-        except _TRANSIENT_ERRORS as exc:
-            logger.warning("SDCP: %s failed: %s", action, exc)
-            return int(constants.PrintCtrlAck.BUSY)
-        except OSError as exc:
+            command()
+        except _TRANSIENT_ERRORS + (OSError,) as exc:
             logger.warning("SDCP: %s failed: %s", action, exc)
             return int(constants.PrintCtrlAck.BUSY)
         return int(constants.PrintCtrlAck.OK)
 
+    @staticmethod
+    def _pause() -> None:
+        with printer_session() as printer:
+            printer.pause_printing()
+
+    @staticmethod
+    def _resume() -> None:
+        with printer_session() as printer:
+            printer.resume_printing()
+
     def pause_print(self) -> int:
-        return self._simple_command("pause_printing")
+        return self._acknowledged("pause", self._pause)
 
     def stop_print(self) -> int:
-        return self._simple_command("stop_printing")
+        # Through printer_access, which also stops assuming the print that
+        # was started a moment ago.
+        return self._acknowledged("stop", stop_print)
 
     def resume_print(self) -> int:
-        return self._simple_command("resume_printing")
+        return self._acknowledged("resume", self._resume)
 
     # -- file management -----------------------------------------------
 
@@ -434,12 +450,14 @@ class PrinterBridge:
                 for entry in sorted(scan, key=lambda e: e.name):
                     if entry.name.startswith("."):
                         continue
-                    try:
-                        rel = Path(entry.path).resolve().relative_to(files_dir)
-                    except ValueError:
+                    if not stays_in_files_directory(Path(entry.path)):
                         # A symbolic link leading out of the files
-                        # directory. Not something a client may be shown.
+                        # directory, or to a transfer in progress. Not
+                        # something a client may be shown.
                         continue
+                    # Under its own name, which is the one a client can
+                    # print or delete it by, not the name of its target.
+                    rel = (directory / entry.name).relative_to(files_dir)
                     display = f"{constants.LOCAL_PREFIX}{rel.as_posix()}"
                     if entry.is_dir():
                         entries.append(
@@ -495,12 +513,15 @@ class PrinterBridge:
             if holds_a_transfer_in_progress(path):
                 # An upload through another interface is being written in
                 # there. Removing the folder would take it away with it.
+                # (One that begins after this check is not seen; it then
+                # fails for want of its folder, and nothing else is lost.)
                 logger.warning("SDCP: not deleting %r: a transfer is in progress", raw)
                 failures.append(raw)
                 continue
-            # Removing a large folder takes time, and the guard holds the
-            # printer. So the folder is only moved aside under the guard,
-            # which is instant, and removed once the printer is released.
+            # Removing a large folder takes time, and the guard holds off
+            # print starts and other guarded changes meanwhile. So the
+            # folder is only moved aside under the guard, which is instant,
+            # and removed once they are no longer held off.
             doomed = scratch_path_beside(path)
             try:
                 with unless_in_use(path):

@@ -9,7 +9,11 @@ from pyfakefs.fake_filesystem import FakeFilesystem
 from pyfakefs.fake_filesystem_unittest import TestCase
 
 from mariner.config import _get_config
-from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
+from mariner.exceptions import (
+    FileNotSelected,
+    PrintAlreadyRunning,
+    UnexpectedPrinterResponse,
+)
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
 from mariner.server import printer_access
 
@@ -199,6 +203,29 @@ class PrinterAccessTest(TestCase):
         status, selected = printer_access.read_status()
         expect(status.state).to_equal(PrinterState.PRINTING)
         expect(selected).to_equal("model.ctb")
+
+    def test_read_status_remembers_the_answer_before_anyone_else_can_talk(
+        self,
+    ) -> None:
+        # Otherwise an answer read just before a print was started could be
+        # stored just after, and say "idle" for a second too long.
+        free_when_stored = []
+
+        def try_to_talk() -> None:
+            got_it = printer_access._serial_lock.acquire(blocking=False)
+            if got_it:
+                printer_access._serial_lock.release()
+            free_when_stored.append(got_it)
+
+        def clock() -> float:
+            other = threading.Thread(target=try_to_talk)
+            other.start()
+            other.join(timeout=5)
+            return 1000.0
+
+        with patch("mariner.server.printer_access.time.monotonic", side_effect=clock):
+            printer_access.read_status()
+        expect(free_when_stored).to_equal([False])
 
     def test_read_status_reports_closed_when_the_printer_does_not_answer(self) -> None:
         for error in (
@@ -491,6 +518,57 @@ class PrinterAccessTest(TestCase):
             expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
                 printer_access.Usage.FREE
             )
+
+    def test_a_print_is_not_started_over_another(self) -> None:
+        # The printer might select the new file while still reading the
+        # old one, and what it reports would then protect the wrong file.
+        for state in (
+            PrinterState.STARTING_PRINT,
+            PrinterState.PRINTING,
+            PrinterState.PAUSED,
+        ):
+            self._printer_reports(state, "model.ctb")
+            with self.assertRaises(PrintAlreadyRunning):
+                printer_access.start_print("sub/part.ctb")
+        self.printer_mock.start_printing.assert_not_called()
+        expect(printer_access.usage_of(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
+            printer_access.Usage.FREE
+        )
+
+    def test_a_print_is_still_attempted_when_the_printer_says_nothing_clear(
+        self,
+    ) -> None:
+        # Only a reported print stands in the way. The printer itself
+        # turns the command down if it cannot print.
+        for status in (
+            PrintStatus(state=PrinterState.CLOSED),
+            PrintStatus(state=PrinterState.IDLE, answered=True),
+        ):
+            printer_access.forget_status()
+            self.printer_mock.start_printing.reset_mock()
+            self.printer_mock.get_print_status.return_value = status
+            printer_access.start_print("model.ctb")
+            self.printer_mock.start_printing.assert_called_once_with("model.ctb")
+
+    def test_a_cancelled_print_no_longer_protects_its_file(self) -> None:
+        # Cancelled before the printer ever reported it.
+        self._printer_still_says_idle()
+        printer_access.start_print("model.ctb")
+        printer_access.stop_print()
+        self.printer_mock.stop_printing.assert_called_once_with()
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.FREE
+        )
+
+    def test_a_cancellation_the_printer_turned_down_changes_nothing(self) -> None:
+        self._printer_still_says_idle()
+        printer_access.start_print("model.ctb")
+        self.printer_mock.stop_printing.side_effect = UnexpectedPrinterResponse("")
+        with self.assertRaises(UnexpectedPrinterResponse):
+            printer_access.stop_print()
+        expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
+            printer_access.Usage.PRINTING
+        )
 
     # ---- answers that settle nothing ----
 

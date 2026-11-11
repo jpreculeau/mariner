@@ -23,6 +23,7 @@ from mariner.server.providers.sdcp.bridge import PrinterBridge, strip_storage_pr
 from mariner.server.providers.sdcp.service import SDCPService
 from mariner.server import printer_access
 from mariner.server.printer_access import FileInUse
+from mariner.server.providers.sdcp import uploads
 from mariner.server.providers.sdcp.uploads import UploadManager
 
 
@@ -419,6 +420,28 @@ class SDCPBridgeTest(TestCase):
         expect(self.bridge.stop_print()).to_equal(int(constants.PrintCtrlAck.OK))
         self.printer_mock.stop_printing.assert_called_once()
 
+    def test_start_print_is_refused_while_a_print_is_running(self) -> None:
+        self.printer_mock.get_selected_file.return_value = "other.ctb"
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING, current_byte=10, total_bytes=100
+        )
+        expect(self.bridge.start_print("/local/foobar.ctb")).to_equal(
+            int(constants.PrintCtrlAck.BUSY)
+        )
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_a_file_can_be_deleted_once_its_print_is_stopped(self) -> None:
+        self.bridge.start_print("/local/foobar.ctb")
+        expect(self.bridge.delete(["/local/foobar.ctb"], [])).to_equal(
+            ["/local/foobar.ctb"]
+        )
+        expect(self.bridge.stop_print()).to_equal(int(constants.PrintCtrlAck.OK))
+        expect(self.bridge.delete(["/local/foobar.ctb"], [])).to_equal([])
+
+    def test_stop_print_reports_a_printer_that_turned_it_down(self) -> None:
+        self.printer_mock.stop_printing.side_effect = UnexpectedPrinterResponse("")
+        expect(self.bridge.stop_print()).to_equal(int(constants.PrintCtrlAck.BUSY))
+
     def test_list_files(self) -> None:
         self.fs.create_dir("/mnt/usb_share/nested")
         self.fs.create_file("/mnt/usb_share/notes.txt", contents="ignored")
@@ -443,6 +466,27 @@ class SDCPBridgeTest(TestCase):
 
         expect("/local/foobar.ctb" in names).to_equal(True)
         expect([name for name in names if "out" in name]).to_equal([])
+
+    def test_list_files_shows_a_link_under_its_own_name(self) -> None:
+        self.fs.create_symlink("/mnt/usb_share/alias.ctb", "/mnt/usb_share/foobar.ctb")
+        names = [entry["name"] for entry in self.bridge.list_files("/local/")]
+        expect("/local/alias.ctb" in names).to_equal(True)
+
+    def test_list_files_leaves_out_a_link_to_a_transfer_in_progress(self) -> None:
+        self.fs.create_file(
+            "/mnt/usb_share/.upload-0123456789abcdef.part", contents=b"x"
+        )
+        self.fs.create_dir("/mnt/usb_share/.sdcp_uploads")
+        self.fs.create_symlink(
+            "/mnt/usb_share/peek.ctb", "/mnt/usb_share/.upload-0123456789abcdef.part"
+        )
+        self.fs.create_symlink("/mnt/usb_share/peek", "/mnt/usb_share/.sdcp_uploads")
+
+        names = [entry["name"] for entry in self.bridge.list_files("/local/")]
+
+        expect([name for name in names if "upload" in name or "peek" in name]).to_equal(
+            []
+        )
 
     def test_list_files_rejects_escape(self) -> None:
         expect(self.bridge.list_files("/local/../../etc")).to_equal([])
@@ -709,6 +753,8 @@ class UploadManagerTest(TestCase):
         with open("/mnt/usb_share/model.ctb", "rb") as file:
             expect(file.read()).to_equal(b"printing")
         expect(manager.is_transferring()).to_equal(False)
+        # What was received is gone, and so is the folder it was kept in.
+        expect(os.listdir("/mnt/usb_share")).to_equal(["model.ctb"])
 
     def test_the_log_says_why_a_transfer_was_refused(self) -> None:
         self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"old")
@@ -1045,7 +1091,152 @@ class UploadManagerTest(TestCase):
         result = self._upload(b"q" * 256, md5="0" * 32)
         expect(result.ok).to_equal(False)
         expect(result.md5_failed).to_equal(True)
-        expect(pathlib.Path("/mnt/usb_share/model.ctb").exists()).to_equal(False)
+        # Neither the file nor anything it was assembled from remains.
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
+    def _send(
+        self,
+        offset: int,
+        data: bytes,
+        *,
+        filename: str = "model.ctb",
+        total: int = 8,
+        client: str = "",
+        md5: str = "",
+    ) -> Any:
+        return self.manager.handle_chunk(
+            upload_uuid="default",
+            filename=filename,
+            offset=offset,
+            total_size=total,
+            expected_md5=md5,
+            verify=False,
+            data=data,
+            client=client,
+        )
+
+    def _stored(self, name: str) -> bytes:
+        with open(f"/mnt/usb_share/{name}", "rb") as file:
+            return file.read()
+
+    def test_a_chunk_for_another_file_does_not_join_a_transfer(self) -> None:
+        expect(self._send(0, b"AAAA", filename="one.ctb").ok).to_equal(True)
+
+        stray = self._send(4, b"BBBB", filename="two.ctb")
+        expect(stray.ok).to_equal(False)
+        expect(stray.error).to_equal(int(constants.UploadError.OFFSET_MISMATCH))
+        other_size = self._send(4, b"BBBB", filename="one.ctb", total=12)
+        expect(other_size.ok).to_equal(False)
+
+        # The transfer it tried to join is unharmed.
+        expect(self._send(4, b"AAAA", filename="one.ctb").completed).to_equal(True)
+        expect(self._stored("one.ctb")).to_equal(b"AAAAAAAA")
+
+    def test_a_transfer_restarted_for_another_file_gets_none_of_the_first(
+        self,
+    ) -> None:
+        # Two clients, neither of which sends an id, behind one address.
+        expect(self._send(0, b"AAAA", filename="one.ctb").ok).to_equal(True)
+        expect(self._send(0, b"BBBB", filename="two.ctb").ok).to_equal(True)
+
+        late = self._send(4, b"AAAA", filename="one.ctb")
+        expect(late.ok).to_equal(False)
+
+        expect(self._send(4, b"BBBB", filename="two.ctb").completed).to_equal(True)
+        expect(self._stored("two.ctb")).to_equal(b"BBBBBBBB")
+        expect(os.path.exists("/mnt/usb_share/one.ctb")).to_equal(False)
+
+    def test_two_clients_sharing_an_id_do_not_share_a_transfer(self) -> None:
+        # Same id, same name, same size: only the address tells them apart.
+        expect(self._send(0, b"AAAA", client="10.0.0.1").ok).to_equal(True)
+        expect(self._send(0, b"BBBB", client="10.0.0.2").ok).to_equal(True)
+        expect(self._send(4, b"AAAA", client="10.0.0.1").completed).to_equal(True)
+        expect(self._stored("model.ctb")).to_equal(b"AAAAAAAA")
+        expect(self._send(4, b"BBBB", client="10.0.0.2").completed).to_equal(True)
+        expect(self._stored("model.ctb")).to_equal(b"BBBBBBBB")
+        expect(os.listdir("/mnt/usb_share")).to_equal(["model.ctb"])
+
+    def test_terminate_ends_the_transfers_of_that_id_for_every_client(self) -> None:
+        self._send(0, b"AAAA", client="10.0.0.1")
+        self._send(0, b"BBBB", client="10.0.0.2")
+        expect(self.manager.terminate("default")).to_equal(
+            int(constants.FileTransferAck.SUCCESS)
+        )
+        expect(self.manager.is_transferring()).to_equal(False)
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
+    def test_a_transfer_left_unfinished_is_dropped_after_a_while(self) -> None:
+        with patch("mariner.server.providers.sdcp.uploads.time.monotonic") as clock:
+            clock.return_value = 1000.0
+            expect(self._send(0, b"AAAA").ok).to_equal(True)
+
+            clock.return_value = 1000.0 + uploads.IDLE_TRANSFER_SECS - 1
+            expect(self.manager.is_transferring()).to_equal(True)
+
+            clock.return_value = 1000.0 + uploads.IDLE_TRANSFER_SECS + 1
+            expect(self.manager.is_transferring()).to_equal(False)
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
+    def test_each_chunk_gives_a_transfer_more_time(self) -> None:
+        with patch("mariner.server.providers.sdcp.uploads.time.monotonic") as clock:
+            clock.return_value = 1000.0
+            self._send(0, b"AAAA", total=12)
+            clock.return_value = 1000.0 + uploads.IDLE_TRANSFER_SECS - 1
+            self._send(4, b"AAAA", total=12)
+            clock.return_value = 1000.0 + uploads.IDLE_TRANSFER_SECS + 10
+            expect(self._send(8, b"AAAA", total=12).completed).to_equal(True)
+        expect(self._stored("model.ctb")).to_equal(b"AAAAAAAAAAAA")
+
+    def test_a_new_transfer_clears_out_the_ones_left_unfinished(self) -> None:
+        with patch("mariner.server.providers.sdcp.uploads.time.monotonic") as clock:
+            clock.return_value = 1000.0
+            self._send(0, b"AAAA", client="10.0.0.1")
+            clock.return_value = 1000.0 + uploads.IDLE_TRANSFER_SECS + 1
+            self._send(0, b"BBBB", client="10.0.0.2")
+            expect(len(os.listdir("/mnt/usb_share/.sdcp_uploads"))).to_equal(1)
+
+    def test_a_declared_md5_that_is_not_one_is_refused(self) -> None:
+        with self.assertLogs(
+            "mariner.server.providers.sdcp.uploads", level="INFO"
+        ) as logs:
+            result = self._send(0, b"AAAA", md5="abc\nWARNING forged line")
+        expect(result.ok).to_equal(False)
+        expect(result.error).to_equal(int(constants.UploadError.UNKNOWN))
+        for record in logs.records:
+            expect("\n" in record.getMessage()).to_equal(False)
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
+    def test_a_declared_md5_is_accepted_in_either_case(self) -> None:
+        digest = hashlib.md5(b"AAAAAAAA").hexdigest().upper()
+        result = self.manager.handle_chunk(
+            upload_uuid="abc",
+            filename="model.ctb",
+            offset=0,
+            total_size=8,
+            expected_md5=digest,
+            verify=True,
+            data=b"AAAAAAAA",
+        )
+        expect(result.completed).to_equal(True)
+
+    def test_a_failed_write_leaves_nothing_behind(self) -> None:
+        self._send(0, b"AAAA")
+        session = next(iter(self.manager._sessions.values()))
+        session.handle.close()
+        session.handle = Mock(write=Mock(side_effect=OSError("disk full")))
+        result = self._send(4, b"AAAA")
+        expect(result.ok).to_equal(False)
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
+    def test_upload_onto_a_link_replaces_the_link_and_not_its_target(self) -> None:
+        self.fs.create_file("/mnt/usb_share/sub/notes.txt", contents=b"notes")
+        self.fs.create_symlink(
+            "/mnt/usb_share/model.ctb", "/mnt/usb_share/sub/notes.txt"
+        )
+        expect(self._send(0, b"AAAAAAAA").completed).to_equal(True)
+        expect(self._stored("sub/notes.txt")).to_equal(b"notes")
+        expect(os.path.islink("/mnt/usb_share/model.ctb")).to_equal(False)
+        expect(self._stored("model.ctb")).to_equal(b"AAAAAAAA")
 
     def test_md5_is_not_checked_when_verification_is_off(self) -> None:
         result = self._upload(b"q" * 256, md5="0" * 32, verify=False)
@@ -1169,6 +1360,50 @@ class ServiceHeartbeatTest(IsolatedAsyncioTestCase):
         await self.service._handle_text(cast(Any, ws), "ping")
         expect(ws.sent).to_equal(1)
         expect(len(self.service._clients)).to_equal(0)
+
+
+class _UploadedFile:
+    filename = "model.ctb"
+
+    def __init__(self, data: bytes) -> None:
+        import io
+
+        self.file = io.BytesIO(data)
+
+
+class _UploadRequest:
+    """What ``_handle_upload`` reads from an aiohttp request."""
+
+    headers: Any = {}
+
+    def __init__(self, remote: str, form: Any) -> None:
+        self.remote = remote
+        self._form = form
+
+    async def post(self) -> Any:
+        return self._form
+
+
+class ServiceUploadTest(IsolatedAsyncioTestCase):
+    async def test_the_address_of_the_client_goes_with_each_chunk(self) -> None:
+        service = SDCPService.__new__(SDCPService)
+        service._uploads = Mock(spec=UploadManager)
+        service._uploads.handle_chunk.return_value = uploads.ChunkResult(ok=True)
+
+        async def run_now(function: Any, *args: Any) -> Any:
+            return function(*args)
+
+        with patch.object(service, "_in_executor", run_now):
+            request = _UploadRequest(
+                "192.168.1.20",
+                {"File": _UploadedFile(b"AAAA"), "TotalSize": "8", "Offset": "0"},
+            )
+            await service._handle_upload(cast(Any, request))
+
+        sent = service._uploads.handle_chunk.call_args.kwargs
+        expect(sent["client"]).to_equal("192.168.1.20")
+        expect(sent["upload_uuid"]).to_equal("default")
+        expect(sent["data"]).to_equal(b"AAAA")
 
 
 class ThumbnailUrlTest(TestCase):

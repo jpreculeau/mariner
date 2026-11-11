@@ -22,6 +22,7 @@ from mariner.server.files import (
     resolve_in_files_directory,
     safe_filename,
     scratch_path_beside,
+    stays_in_files_directory,
 )
 
 
@@ -53,6 +54,12 @@ class SafeFilenameTest(TestCase):
             "a\x7f.ctb",
         ):
             expect(safe_filename(name)).to_equal(None)
+
+    def test_rejects_characters_that_end_a_line_for_some_readers(self) -> None:
+        # Not line breaks to the printer, but a log viewer may take them
+        # for one: NEL, another C1 control, LINE and PARAGRAPH SEPARATOR.
+        for character in ("\x85", "\x9b", "\u2028", "\u2029"):
+            expect(safe_filename(f"a{character}b.ctb")).to_equal(None)
 
     def test_rejects_the_quote_used_to_delimit_printer_filenames(self) -> None:
         expect(safe_filename("john's model.ctb")).to_equal(None)
@@ -215,6 +222,63 @@ class RealFilesystemHiddenEntryTest(TestCase):
                 expect(resolve_in_files_directory("model.ctb")).to_equal(
                     Path(directory).resolve() / "model.ctb"
                 )
+
+    def test_refuses_text_that_is_no_path_while_a_transfer_is_beside_it(
+        self,
+    ) -> None:
+        # With a hidden entry in the folder, every name is compared with it
+        # on disk. Text that cannot be a path must be refused, not raise.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / ".sdcp_uploads").mkdir()
+            (Path(directory) / "sub").mkdir()
+            (Path(directory) / "sub" / ".upload-0123456789abcdef.part").write_bytes(
+                b"half an upload"
+            )
+            with patch(
+                "mariner.server.files.config.get_files_directory",
+                return_value=Path(directory),
+            ):
+                for text in ("a\x00b.ctb", "\ud800.ctb", "sub/a\x00b", "sub/\ud800"):
+                    expect(resolve_entry_in_files_directory(text)).to_equal(None)
+                    expect(resolve_in_files_directory(text)).to_equal(None)
+
+
+class RealFilesystemLinksTest(TestCase):
+    """Where a directory entry leads, links followed, on a real filesystem."""
+
+    def test_stays_in_files_directory(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as outside:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (Path(outside) / "secret.ctb").write_bytes(b"x")
+                (root / "model.ctb").write_bytes(b"x")
+                (root / ".sdcp_uploads").mkdir()
+                (root / ".upload-0123456789abcdef.part").write_bytes(b"x")
+                os.symlink(Path(outside) / "secret.ctb", root / "way-out.ctb")
+                os.symlink(outside, root / "way-out")
+                os.symlink(root / ".sdcp_uploads", root / "to-transfers")
+                os.symlink(
+                    root / ".upload-0123456789abcdef.part", root / "to-upload.ctb"
+                )
+                os.symlink(root / "model.ctb", root / "alias.ctb")
+                os.symlink(root / "gone.ctb", root / "dangling.ctb")
+                with patch(
+                    "mariner.server.files.config.get_files_directory",
+                    return_value=root,
+                ):
+                    for name in ("model.ctb", "alias.ctb", "dangling.ctb"):
+                        expect(stays_in_files_directory(root / name)).to_equal(True)
+                    for name in (
+                        "way-out.ctb",
+                        "way-out",
+                        "to-transfers",
+                        "to-upload.ctb",
+                    ):
+                        expect(stays_in_files_directory(root / name)).to_equal(False)
 
 
 class TransferInProgressTest(TestCase):

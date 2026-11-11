@@ -35,6 +35,7 @@ from flask import Blueprint, Response, abort, jsonify, request
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
+from mariner.exceptions import PrintAlreadyRunning
 from mariner.printer import PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
 from mariner.server.files import (
@@ -51,6 +52,7 @@ from mariner.server.printer_access import (
     printer_session,
     read_status,
     start_print,
+    stop_print,
     unless_in_use,
 )
 from mariner.server.utils import read_cached_sliced_model_file
@@ -157,7 +159,9 @@ class UVToolsProvider(NetworkPrintProvider):
         if ext not in get_supported_extensions():
             abort(400)
 
-        dest = resolve_in_files_directory(safe_name)
+        # The entry of that name, not what it leads to: a file stored onto
+        # a symbolic link takes the place of the link.
+        dest = resolve_entry_in_files_directory(safe_name)
         if dest is None:
             abort(400)
 
@@ -197,7 +201,11 @@ class UVToolsProvider(NetworkPrintProvider):
             logger.warning("UVTools: not printing %r: %s", filename, error.reason)
             abort(404 if error.reason == NotPrintable.MISSING else 400)
 
-        start_print(relative)
+        try:
+            start_print(relative)
+        except PrintAlreadyRunning:
+            logger.warning("UVTools: not printing %r: a print is running", filename)
+            abort(409)
 
         logger.info("UVTools print: %s", relative)
         return jsonify({"success": True})
@@ -240,8 +248,7 @@ class UVToolsProvider(NetworkPrintProvider):
         return jsonify({"success": True})
 
     def _stop_print(self, filename: str = "") -> Union[str, Response]:
-        with printer_session() as printer:
-            printer.stop_printing()
+        stop_print()
         logger.info("UVTools stop")
         return jsonify({"success": True})
 

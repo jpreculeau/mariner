@@ -288,6 +288,35 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(409)
         expect("\n" in logs.records[0].getMessage()).to_equal(False)
 
+    def test_print_is_refused_while_a_print_is_running(self) -> None:
+        self._printer_is_printing("other.ctb")
+        response = self.client.get("/uvtools/print/foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_a_file_can_be_deleted_once_its_print_is_stopped(self) -> None:
+        self.client.get("/uvtools/print/foobar.ctb")
+        expect(self.client.get("/uvtools/delete/foobar.ctb").status_code).to_equal(409)
+        self.client.get("/uvtools/stop")
+        expect(self.client.get("/uvtools/delete/foobar.ctb").status_code).to_equal(200)
+
+    def test_upload_onto_a_link_replaces_the_link_and_not_its_target(self) -> None:
+        self.fs.create_file("/mnt/usb_share/sub/notes.txt", contents=b"notes")
+        self.fs.create_symlink(
+            "/mnt/usb_share/linked.ctb", "/mnt/usb_share/sub/notes.txt"
+        )
+        response = self.client.post(
+            "/uvtools/upload/linked.ctb",
+            data=b"new contents",
+            content_type="application/octet-stream",
+        )
+        expect(response.status_code).to_equal(200)
+        with open("/mnt/usb_share/sub/notes.txt", "rb") as file:
+            expect(file.read()).to_equal(b"notes")
+        expect(os.path.islink("/mnt/usb_share/linked.ctb")).to_equal(False)
+        with open("/mnt/usb_share/linked.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"new contents")
+
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(

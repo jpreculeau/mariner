@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 from types import TracebackType
@@ -15,9 +16,22 @@ from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
 logger: logging.Logger = logging.getLogger(__name__)
 
 
+# Control characters (C0, DEL and C1, which includes NEL), and the LINE and
+# PARAGRAPH SEPARATOR characters.
+_LINE_BREAKING_CATEGORIES = frozenset({"Cc", "Zl", "Zp"})
+
+
 def has_control_character(value: str) -> bool:
-    """Whether *value* holds a character that would break a command line."""
-    return any(ord(character) < 0x20 or ord(character) == 0x7F for character in value)
+    """Whether *value* holds a character that would break a line.
+
+    That is a command line sent to the printer, and also a line of the log:
+    some of these characters mean nothing to the printer but end a line for
+    a program reading the log.
+    """
+    return any(
+        unicodedata.category(character) in _LINE_BREAKING_CATEGORIES
+        for character in value
+    )
 
 
 def is_safe_for_printer(path: str) -> bool:
@@ -201,9 +215,10 @@ class ChiTuPrinter:
         if not self._is_connected:
             return ""
 
-        # SerialException mid-read is now converted to UnexpectedPrinterResponse
-        # by _send_and_read, so it propagates to retry()/api.py which degrades
-        # to CLOSED state — no need to catch it here.
+        # SerialException mid-read is converted to UnexpectedPrinterResponse
+        # by _send_and_read, so it propagates to the retry in
+        # printer_access._query_printer, which keeps the status and reports
+        # no selected file. No need to catch it here.
         data = self._send_and_read(b"M4006")
         selected_file = str(
             self._extract_response_with_regex("ok '([^']+)'\r\n", data).group(1)
@@ -255,6 +270,8 @@ class ChiTuPrinter:
         # the printer's firmware is weird when the file is in a subdirectory. we need to
         # send M23 to select the file with its full path and then M6030 with just the
         # basename.
+        # select_file checks the name too. It is checked here as well because
+        # this method puts it in a second command, M6030.
         self._check_filename(filename)
         self.select_file(filename)
         response = self._send_and_read(

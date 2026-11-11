@@ -25,8 +25,9 @@ Three locks, always taken in this order, never the other way round:
    and is never held while anything else happens.
 
 A status poll takes only the second. A file operation that needs nothing
-from the printer, such as storing a new file, therefore never waits for a
-status poll; it can still wait briefly for a print that is being started.
+from the printer, such as storing a new file, does not ask the printer
+itself. It can still wait briefly behind a print that is being started or
+stopped, or behind another file operation that has to ask the printer again.
 """
 
 import os
@@ -39,7 +40,11 @@ from typing import Dict, Iterator, List, Optional, Tuple, Type
 
 import serial
 
-from mariner.exceptions import FileNotSelected, UnexpectedPrinterResponse
+from mariner.exceptions import (
+    FileNotSelected,
+    PrintAlreadyRunning,
+    UnexpectedPrinterResponse,
+)
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
 from mariner.server.files import resolve_in_files_directory
 from mariner.server.utils import retry
@@ -175,9 +180,16 @@ def start_print(relative_path: str) -> None:
     file (``FileNotSelected``), which comes before the print command and
     includes a printer that is switched off.
 
-    Raises whatever ``ChiTuPrinter.start_printing`` raises.
+    Raises ``PrintAlreadyRunning``, sending nothing, if the printer reports
+    a print under way: it might select the new file while still reading the
+    old one, and the file it then names would no longer be the one to
+    protect. Otherwise raises whatever ``ChiTuPrinter.start_printing``
+    raises.
     """
     with _change_lock:
+        status, _ = read_status()
+        if status.state in _ACTIVE_STATES:
+            raise PrintAlreadyRunning()
         with printer_session() as printer:
             print_command_sent = True
             try:
@@ -195,6 +207,23 @@ def _remember_started(relative_path: str) -> None:
     if started is not None:
         with _memory_lock:
             _just_started[started] = time.monotonic()
+
+
+def stop_print() -> None:
+    """Cancel the print in progress.
+
+    Once the printer has accepted that, a print Mariner started a moment
+    ago is no longer assumed, so its file is free again without waiting
+    for the grace period to run out.
+
+    Raises whatever ``ChiTuPrinter.stop_printing`` raises; nothing is
+    forgotten in that case.
+    """
+    with _change_lock:
+        with printer_session() as printer:
+            printer.stop_printing()
+        with _memory_lock:
+            _just_started.clear()
 
 
 def _query_printer() -> Tuple[PrintStatus, str]:
@@ -223,6 +252,9 @@ def read_status() -> Tuple[PrintStatus, str]:
     running matters even when its file is unknown.
     """
     global _last_status
+    # Held until the answer is stored, not only while asking: otherwise an
+    # answer read just before a print is started could be stored just
+    # after, and be taken for the printer's word on that print.
     with _serial_lock:
         try:
             status, selected_file = _query_printer()
@@ -363,8 +395,9 @@ def unless_in_use(path: Path, *, even_if_unreachable: bool = False) -> Iterator[
     *even_if_unreachable* lets the block run although nothing came back
     from the printer (``Usage.PRINTER_UNREACHABLE``). It is for a user who
     knows the printer is switched off and says so explicitly. It is granted
-    only on an answer obtained for this very request, never on a remembered
-    one, and never when the printer answered anything at all.
+    only on an answer the printer gave after this request arrived, never on
+    one remembered from before, and never when the printer answered
+    anything at all.
     """
     asked_at: Optional[float] = None
     if os.path.lexists(path):
