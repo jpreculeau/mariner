@@ -22,7 +22,7 @@ Features
 - *NEW* ChiTuBox / SDCP 3.0.0 support
 
 For more details on the feature set, refer to our `Documentation
-<https://mariner2.readthedocs.io/en/latest/>`_.
+<https://mariner.readthedocs.io/en/latest/>`_.
 
 Supported Printers
 ------------------
@@ -39,7 +39,7 @@ following manufacturers:
 - Voxelab
 
 Please refer to the list of `Supported Printers
-<https://mariner2.readthedocs.io/en/latest/supported-printers.html>`_
+<https://mariner.readthedocs.io/en/latest/supported-printers.html>`_
 on our documentation for a full list of printer models that have been tested.
 If you have access to other printers and want to contribute, please open an
 issue.  We're happy to support more printers!
@@ -48,7 +48,7 @@ Documentation
 -------------
 
 The documentation is available from `Read the Docs
-<https://mariner2.readthedocs.io/en/latest/>`_. It contains a lot of information
+<https://mariner.readthedocs.io/en/latest/>`_. It contains a lot of information
 from how to setup the hardware, install the software, troubleshoot issues, and
 how to contribute to development.
 
@@ -60,7 +60,7 @@ Elegoo Mars Pro.
 .. |CI| image:: https://github.com/mariner3d/mariner/workflows/CI/badge.svg
    :target: https://github.com/mariner3d/mariner/actions/workflows/ci.yaml
 .. |docs| image:: https://readthedocs.org/projects/mariner/badge/?version=latest
-   :target: https://mariner2.readthedocs.io/en/latest/?badge=latest
+   :target: https://mariner.readthedocs.io/en/latest/?badge=latest
 .. |codecov| image:: https://codecov.io/gh/mariner3d/mariner/branch/master/graph/badge.svg
    :target: https://codecov.io/gh/mariner3d/mariner
 .. |Python| image:: https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue
