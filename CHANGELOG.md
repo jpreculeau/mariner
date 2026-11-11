@@ -20,6 +20,10 @@
 - Send the printer the path it knows when a print is started with another form of it
 - Check the file extension before printing from UVtools
 - Ignore malformed file lists in SDCP delete requests
+- Protect a file from the moment its print is started through Mariner
+- Show in the web interface why an upload or a deletion was refused
+- Keep overlapping SDCP transfers apart, even when they share an id
+- Refuse to upload a file onto the name of a folder
 - Keep the dashboard working when the file being printed cannot be read
 - Read the firmware version from boards that end lines with CRLF
 - Treat undecodable bytes from the printer as a bad answer instead of crashing

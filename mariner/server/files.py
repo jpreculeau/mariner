@@ -13,6 +13,7 @@ those lines, and is reused here.
 import logging
 import os
 import secrets
+import shutil
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Callable, ContextManager, Iterator, Optional
@@ -27,12 +28,19 @@ logger: logging.Logger = logging.getLogger(__name__)
 # stored on the FAT filesystem the printer reads the files from.
 _FORBIDDEN_CHARACTERS = frozenset("/\\'" + ':*?"<>|')
 
-# The longest name a FAT (and most other) filesystems can store.
+# The longest name Linux filesystems accept. Deliberately conservative: FAT
+# counts in UTF-16 units and could store somewhat longer non-ASCII names.
 _MAX_NAME_BYTES = 255
 
-# Uploads in progress are stored under this pattern; see ``replacing``.
+# Files and folders on their way in or out are stored under this pattern,
+# see ``scratch_path_beside``. They are hidden from listings and removed at
+# startup if a previous run left any behind.
 _SCRATCH_PREFIX = ".upload-"
 _SCRATCH_SUFFIX = ".part"
+
+# Where the SDCP provider assembles chunked transfers, inside the files
+# directory.
+SDCP_SCRATCH_DIRNAME = ".sdcp_uploads"
 
 
 def safe_filename(filename: Optional[str]) -> Optional[str]:
@@ -49,8 +57,9 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
 
     Refused: empty names, ``.`` and ``..``, names with a path separator, a
     single quote, a control character or a character FAT cannot store, names
-    ending with a dot (FAT drops it, so the stored name would differ), and
-    names longer than a filesystem entry can be.
+    ending with a dot (FAT drops it, so the stored name would differ), names
+    longer than a filesystem entry can be, and names reserved for files on
+    their way in or out (see ``is_scratch_file``), which listings hide.
 
     This is not on its own sufficient to contain a path: callers must still
     resolve it with ``resolve_in_files_directory``.
@@ -63,6 +72,8 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
     if has_control_character(name):
         return None
     if len(name.encode("utf-8", errors="replace")) > _MAX_NAME_BYTES:
+        return None
+    if is_scratch_file(name) or name == SDCP_SCRATCH_DIRNAME:
         return None
     return name
 
@@ -97,8 +108,18 @@ def modification_time(dir_entry: "os.DirEntry[str]") -> float:
 
 
 def is_scratch_file(name: str) -> bool:
-    """Whether *name* is an upload in progress rather than a file to list."""
+    """Whether *name* is something on its way in or out, not an entry to list."""
     return name.startswith(_SCRATCH_PREFIX) and name.endswith(_SCRATCH_SUFFIX)
+
+
+def scratch_path_beside(path: Path) -> Path:
+    """A fresh scratch path in the same directory as *path*.
+
+    The name is short and random: it fits beside the longest file name, and
+    no two callers ever get the same one. Being in the same directory, it
+    can be moved onto *path*, or *path* onto it, in one step.
+    """
+    return path.with_name(f"{_SCRATCH_PREFIX}{secrets.token_hex(8)}{_SCRATCH_SUFFIX}")
 
 
 def _remove_quietly(path: Path) -> None:
@@ -135,9 +156,7 @@ def replacing(
     If the block or the guard raises, the scratch file is removed and the
     exception propagates.
     """
-    scratch = destination.with_name(
-        f"{_SCRATCH_PREFIX}{secrets.token_hex(8)}{_SCRATCH_SUFFIX}"
-    )
+    scratch = scratch_path_beside(destination)
     try:
         yield scratch
         with guard(destination):
@@ -147,25 +166,37 @@ def replacing(
         raise
 
 
-def remove_stale_scratch_files() -> int:
-    """Remove uploads that a crash or a power cut left unfinished.
-
-    ``replacing`` cleans up after an upload that fails, but not after a
-    process that is killed mid-upload. Meant to run once at startup, before
-    any upload can be in progress. Returns how many files were removed.
-    """
-    removed = 0
-    pattern = f"{_SCRATCH_PREFIX}*{_SCRATCH_SUFFIX}"
+def _remove_tree_or_file(path: Path) -> bool:
     try:
-        leftovers = list(config.get_files_directory().rglob(pattern))
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            os.remove(path)
+    except OSError:
+        return False
+    return True
+
+
+def remove_stale_scratch_files() -> int:
+    """Remove what a crash or a power cut left unfinished in the files directory.
+
+    Covers uploads through the web interface and UVtools, folders that were
+    being deleted, and chunked SDCP transfers. Each of these cleans up after
+    itself when it fails, but not when the process is killed halfway. Meant
+    to run once at startup, before anything can be in progress. Returns how
+    many entries were removed.
+    """
+    files_directory = config.get_files_directory()
+    try:
+        leftovers = list(files_directory.rglob(f"{_SCRATCH_PREFIX}*{_SCRATCH_SUFFIX}"))
+        leftovers.append(files_directory / SDCP_SCRATCH_DIRNAME)
     except OSError:
         return 0
-    for leftover in leftovers:
-        try:
-            os.remove(leftover)
-        except OSError:
-            continue
-        removed += 1
+    removed = sum(
+        1
+        for leftover in leftovers
+        if os.path.lexists(leftover) and _remove_tree_or_file(leftover)
+    )
     if removed:
-        logger.info("Removed %d unfinished upload(s) left by a previous run", removed)
+        logger.info("Removed %d unfinished transfer(s) left by a previous run", removed)
     return removed

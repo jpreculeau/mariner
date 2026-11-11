@@ -42,6 +42,41 @@ function getCsrfToken(): string | null {
   return meta?.getAttribute("content") ?? null;
 }
 
+/**
+ * A request the server answered with an error.
+ *
+ * `message` is the explanation the server gave when it gave one, written to
+ * be shown to the user as is. `code` tells apart the cases a screen may want
+ * to handle differently, such as `file_in_use` and `printer_not_answering`.
+ */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly code?: string,
+    readonly title?: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+/**
+ * Build the error for a failed response. The server describes some failures
+ * in a JSON body; when it does not, `fallback` is used.
+ */
+async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
+  try {
+    const body = await res.json();
+    if (body && typeof body.description === "string") {
+      return new ApiError(res.status, body.description, body.code, body.title);
+    }
+  } catch {
+    // No JSON body: an error page, or nothing at all.
+  }
+  return new ApiError(res.status, fallback);
+}
+
 async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers: Record<string, string> = {
     ...(options.headers as Record<string, string>),
@@ -54,7 +89,7 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
 
   const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
-    throw new Error(`API error: ${res.status} ${res.statusText}`);
+    throw await errorFrom(res, `API error: ${res.status} ${res.statusText}`);
   }
   return res.json();
 }
@@ -92,7 +127,7 @@ export const api = {
       headers,
       body: formData,
     });
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+    if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);
   },
 
   async deleteFile(filename: string): Promise<void> {

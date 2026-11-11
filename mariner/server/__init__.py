@@ -65,7 +65,6 @@ class CacheBootstrapper(multiprocessing.Process):
 
 
 def main() -> None:
-    remove_stale_scratch_files()
     CacheBootstrapper().start()
 
     # Global log level applies to mariner.* and waitress output.
@@ -76,6 +75,10 @@ def main() -> None:
         logging.getLogger().setLevel(log_level)
     logging.getLogger("mariner").setLevel(log_level)
     logging.getLogger("waitress").setLevel(log_level)
+
+    # Before anything can start a transfer, and after logging is set up so
+    # that what was removed is reported.
+    remove_stale_scratch_files()
 
     start_providers()
 

@@ -33,6 +33,7 @@ from mariner.server.printer_access import (
     FileInUse,
     printer_session,
     read_status,
+    start_print,
     unless_in_use,
 )
 from mariner.server.utils import read_cached_preview, read_cached_sliced_model_file
@@ -393,6 +394,9 @@ def upload_file() -> Union[str, Response]:
         abort(400)
 
     destination = parent / filename
+    if os.path.isdir(destination):
+        # A folder already has that name; a file cannot take its place.
+        abort(400)
     try:
         # Checked first so a refusal comes before the upload is stored, and
         # again by the guard at the moment the file is moved into place, in
@@ -498,14 +502,12 @@ def printer_command(command: str) -> Union[str, Response]:
     except ValueError:
         abort(404)
 
-    filename = ""
     if printer_command == PrinterCommand.START_PRINT:
-        filename = _printable_file_or_abort(request.args.get("filename"))
+        start_print(_printable_file_or_abort(request.args.get("filename")))
+        return jsonify({"success": True})
 
     with printer_session() as printer:
-        if printer_command == PrinterCommand.START_PRINT:
-            printer.start_printing(filename)
-        elif printer_command == PrinterCommand.PAUSE_PRINT:
+        if printer_command == PrinterCommand.PAUSE_PRINT:
             printer.pause_printing()
         elif printer_command == PrinterCommand.RESUME_PRINT:
             printer.resume_printing()

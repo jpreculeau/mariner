@@ -50,6 +50,11 @@ class UVToolsProviderTest(TestCase):
         printer_constructor_mock.return_value = self.printer_mock
         self.printer_mock.__enter__ = Mock(return_value=self.printer_mock)
         self.printer_mock.__exit__ = Mock(return_value=None)
+        # An idle printer with nothing selected, unless a test says otherwise.
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE, counters_seen=True
+        )
+        self.printer_mock.get_selected_file.return_value = ""
 
     def tearDown(self) -> None:
         self.printer_patcher.stop()
@@ -117,6 +122,10 @@ class UVToolsProviderTest(TestCase):
         expect(self.client.get(f"/uvtools/print/{name}").status_code).to_equal(200)
         self.printer_mock.start_printing.assert_called_once_with(name)
 
+        # The file cannot be deleted while it prints; once the print is over
+        # it goes by the same name too.
+        expect(self.client.get(f"/uvtools/delete/{name}").status_code).to_equal(409)
+        printer_access.forget_status()
         expect(self.client.get(f"/uvtools/delete/{name}").status_code).to_equal(200)
         expect(os.path.isfile(config.get_files_directory() / name)).to_equal(False)
 
@@ -205,6 +214,44 @@ class UVToolsProviderTest(TestCase):
         expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
             True
         )
+
+    def test_upload_refuses_when_the_print_starts_during_the_upload(self) -> None:
+        # The first check passes; the print starts while the file is being
+        # written. The check made as it is moved into place must catch it.
+        real_write = pathlib.Path.write_bytes
+
+        def write_while_a_print_starts(path: pathlib.Path, data: bytes) -> int:
+            written = real_write(path, data)
+            self._printer_is_printing("foobar.ctb")
+            return written
+
+        with patch.object(
+            pathlib.Path,
+            "write_bytes",
+            autospec=True,
+            side_effect=write_while_a_print_starts,
+        ):
+            response = self.client.post(
+                "/uvtools/upload/foobar.ctb",
+                data=b"new contents",
+                content_type="application/octet-stream",
+            )
+
+        expect(response.status_code).to_equal(409)
+        with open(config.get_files_directory() / "foobar.ctb", "rb") as file:
+            expect(file.read()).to_equal(self.ctb_file_contents)
+        leftovers = [n for n in os.listdir("/mnt/usb_share") if n.endswith(".part")]
+        expect(leftovers).to_equal([])
+
+    def test_upload_onto_the_name_of_a_folder(self) -> None:
+        self.fs.create_dir("/mnt/usb_share/batch.ctb")
+        response = self.client.post(
+            "/uvtools/upload/batch.ctb",
+            data=b"new contents",
+            content_type="application/octet-stream",
+        )
+        expect(response.status_code).to_equal(400)
+        expect(os.path.isdir("/mnt/usb_share/batch.ctb")).to_equal(True)
 
     def test_print_file_not_found(self) -> None:
         response = self.client.get("/uvtools/print/missing.ctb")

@@ -15,6 +15,7 @@ from mariner.server.files import (
     replacing,
     resolve_in_files_directory,
     safe_filename,
+    scratch_path_beside,
 )
 
 
@@ -53,6 +54,11 @@ class SafeFilenameTest(TestCase):
     def test_rejects_characters_the_fat_filesystem_cannot_store(self) -> None:
         for character in ':*?"<>|':
             expect(safe_filename(f"a{character}b.ctb")).to_equal(None)
+
+    def test_rejects_names_reserved_for_transfers_in_progress(self) -> None:
+        # Listings hide them, so an entry created under one would vanish.
+        expect(safe_filename(".upload-0123456789abcdef.part")).to_equal(None)
+        expect(safe_filename(".sdcp_uploads")).to_equal(None)
 
     def test_rejects_a_trailing_dot_which_fat_would_drop(self) -> None:
         expect(safe_filename("model.ctb.")).to_equal(None)
@@ -229,12 +235,22 @@ class ScratchFilesTest(TestCase):
         for name in ("model.ctb", ".upload-notes.txt", "model.part", ".hidden"):
             expect(is_scratch_file(name)).to_equal(False)
 
+    def test_scratch_path_beside(self) -> None:
+        first = scratch_path_beside(Path("/mnt/usb_share/sub/model.ctb"))
+        second = scratch_path_beside(Path("/mnt/usb_share/sub/model.ctb"))
+        expect(first.parent).to_equal(Path("/mnt/usb_share/sub"))
+        expect(is_scratch_file(first.name)).to_equal(True)
+        expect(first).not_to_equal(second)
+
     def test_remove_stale_scratch_files(self) -> None:
         self.fs.create_file("/mnt/usb_share/.upload-aaaa.part", contents=b"x")
         self.fs.create_file("/mnt/usb_share/sub/.upload-bbbb.part", contents=b"x")
         self.fs.create_file("/mnt/usb_share/sub/keep.ctb", contents=b"x")
+        # A folder that was being deleted, and an unfinished SDCP transfer.
+        self.fs.create_file("/mnt/usb_share/.upload-cccc.part/old.ctb", contents=b"x")
+        self.fs.create_file("/mnt/usb_share/.sdcp_uploads/dddd.part", contents=b"x")
 
-        expect(remove_stale_scratch_files()).to_equal(2)
+        expect(remove_stale_scratch_files()).to_equal(4)
 
         expect(sorted(os.listdir("/mnt/usb_share"))).to_equal(["model.ctb", "sub"])
         expect(os.listdir("/mnt/usb_share/sub")).to_equal(["keep.ctb"])

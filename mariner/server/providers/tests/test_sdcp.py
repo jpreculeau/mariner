@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 from contextlib import contextmanager
 from typing import Any, Iterator, List, cast
 from unittest import IsolatedAsyncioTestCase
@@ -193,6 +194,11 @@ class SDCPBridgeTest(TestCase):
         constructor.return_value = self.printer_mock
         self.printer_mock.__enter__ = Mock(return_value=self.printer_mock)
         self.printer_mock.__exit__ = Mock(return_value=None)
+        # An idle printer with nothing selected, unless a test says otherwise.
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE, counters_seen=True
+        )
+        self.printer_mock.get_selected_file.return_value = ""
 
         self.bridge = PrinterBridge()
 
@@ -202,7 +208,7 @@ class SDCPBridgeTest(TestCase):
     def test_status_while_idle(self) -> None:
         self.printer_mock.get_selected_file.return_value = ""
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         status = self.bridge.snapshot_status()
         expect(status["CurrentStatus"]).to_equal([int(constants.MachineStatus.IDLE)])
@@ -242,7 +248,7 @@ class SDCPBridgeTest(TestCase):
     def test_status_reports_file_transfer(self) -> None:
         self.printer_mock.get_selected_file.return_value = ""
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         status = self.bridge.snapshot_status(transferring=True)
         expect(status["CurrentStatus"]).to_equal(
@@ -252,7 +258,7 @@ class SDCPBridgeTest(TestCase):
     def test_attributes_advertise_supported_types(self) -> None:
         self.printer_mock.get_selected_file.return_value = ""
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         attributes = self.bridge.snapshot_attributes()
         expect("CTB" in attributes["SupportFileType"]).to_equal(True)
@@ -458,12 +464,33 @@ class SDCPBridgeTest(TestCase):
         expect(failures).to_equal(["/local/foobar.ctb"])
         expect(pathlib.Path("/mnt/usb_share/foobar.ctb").exists()).to_equal(True)
 
+    def test_delete_folders(self) -> None:
+        self.fs.create_file("/mnt/usb_share/batch/a.ctb", contents=b"x")
+        self.fs.create_file("/mnt/usb_share/batch/deep/b.ctb", contents=b"x")
+        failures = self.bridge.delete([], ["/local/batch"])
+        expect(failures).to_equal([])
+        # Gone, and nothing left of the name it was moved aside under.
+        expect(sorted(os.listdir("/mnt/usb_share"))).to_equal(["foobar.ctb"])
+
+    def test_delete_does_not_hold_the_printer_while_a_folder_is_removed(self) -> None:
+        self.fs.create_file("/mnt/usb_share/batch/a.ctb", contents=b"x")
+        held = []
+        real_rmtree = shutil.rmtree
+
+        def rmtree(path: Any, *args: Any, **kwargs: Any) -> None:
+            held.append(printer_access._printer_lock._is_owned())
+            real_rmtree(path, *args, **kwargs)
+
+        with patch("mariner.server.providers.sdcp.bridge.shutil.rmtree", rmtree):
+            self.bridge.delete([], ["/local/batch"])
+        expect(held).to_equal([False])
+
     def test_delete_asks_the_printer_once_for_a_whole_batch(self) -> None:
         self.fs.create_file("/mnt/usb_share/a.ctb", contents=b"x")
         self.fs.create_file("/mnt/usb_share/b.ctb", contents=b"x")
         self.printer_mock.get_selected_file.return_value = ""
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         failures = self.bridge.delete(["/local/a.ctb", "/local/b.ctb"], [])
         expect(failures).to_equal([])
@@ -578,6 +605,132 @@ class UploadManagerTest(TestCase):
         printing["now"] = True
         expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(False)
         expect(manager.is_transferring()).to_equal(False)
+
+    def test_a_transfer_reusing_an_id_cannot_touch_one_being_moved_into_place(
+        self,
+    ) -> None:
+        # While the first transfer waits for the printer before its final
+        # move, a second one arrives under the same id (clients that send
+        # none all share "default"). Each must end up whole, under its name.
+        manager: Any = None
+        interleaved = []
+
+        @contextmanager
+        def guard(path: pathlib.Path) -> Iterator[None]:
+            if not interleaved:
+                interleaved.append(True)
+                started = manager.handle_chunk(
+                    upload_uuid="default",
+                    filename="second.ctb",
+                    offset=0,
+                    total_size=8,
+                    expected_md5="",
+                    verify=False,
+                    data=b"BBBB",
+                )
+                expect(started.ok).to_equal(True)
+            yield
+
+        manager = UploadManager(is_in_use=_never_in_use, unless_in_use=guard)
+        first = manager.handle_chunk(
+            upload_uuid="default",
+            filename="first.ctb",
+            offset=0,
+            total_size=4,
+            expected_md5="",
+            verify=False,
+            data=b"AAAA",
+        )
+        expect(first.completed).to_equal(True)
+        second = manager.handle_chunk(
+            upload_uuid="default",
+            filename="second.ctb",
+            offset=4,
+            total_size=8,
+            expected_md5="",
+            verify=False,
+            data=b"BBBB",
+        )
+        expect(second.completed).to_equal(True)
+
+        with open("/mnt/usb_share/first.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"AAAA")
+        with open("/mnt/usb_share/second.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"BBBBBBBB")
+        expect(os.path.exists("/mnt/usb_share/.sdcp_uploads")).to_equal(False)
+
+    def test_one_transfer_finishing_leaves_another_being_moved_alone(self) -> None:
+        # A small transfer completes, and cleans up, while a big one is still
+        # waiting for the printer before its final move.
+        manager: Any = None
+        interleaved = []
+
+        @contextmanager
+        def guard(path: pathlib.Path) -> Iterator[None]:
+            if path.name == "big.ctb" and not interleaved:
+                interleaved.append(True)
+                small = manager.handle_chunk(
+                    upload_uuid="small",
+                    filename="small.ctb",
+                    offset=0,
+                    total_size=4,
+                    expected_md5="",
+                    verify=False,
+                    data=b"tiny",
+                )
+                expect(small.completed).to_equal(True)
+            yield
+
+        manager = UploadManager(is_in_use=_never_in_use, unless_in_use=guard)
+        big = manager.handle_chunk(
+            upload_uuid="big",
+            filename="big.ctb",
+            offset=0,
+            total_size=4,
+            expected_md5="",
+            verify=False,
+            data=b"HUGE",
+        )
+        expect(big.completed).to_equal(True)
+        with open("/mnt/usb_share/big.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"HUGE")
+        with open("/mnt/usb_share/small.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"tiny")
+
+    def test_by_default_the_manager_asks_the_printer(self) -> None:
+        # The wiring used in production: no stand-ins for the in-use checks.
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
+        printer_access.forget_status()
+        printer_mock = Mock(spec=ChiTuPrinter)
+        printer_mock.__enter__ = Mock(return_value=printer_mock)
+        printer_mock.__exit__ = Mock(return_value=None)
+        printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING,
+            current_byte=10,
+            total_bytes=100,
+            counters_seen=True,
+        )
+        printer_mock.get_selected_file.return_value = "model.ctb"
+        with patch(
+            "mariner.server.printer_access.ChiTuPrinter", return_value=printer_mock
+        ):
+            result = self._chunk(UploadManager(), 0, b"new!", 4)
+            other = UploadManager().handle_chunk(
+                upload_uuid="abc",
+                filename="other.ctb",
+                offset=0,
+                total_size=4,
+                expected_md5="",
+                verify=False,
+                data=b"new!",
+            )
+        printer_access.forget_status()
+
+        expect(result.ok).to_equal(False)
+        expect(result.error).to_equal(constants.UploadError.FILE_OPEN_FAILED)
+        with open("/mnt/usb_share/model.ctb", "rb") as file:
+            expect(file.read()).to_equal(b"printing")
+        expect(other.completed).to_equal(True)
 
     def test_the_printer_is_never_queried_with_the_upload_lock_held(self) -> None:
         # The SDCP event loop calls is_transferring(), which takes that lock.

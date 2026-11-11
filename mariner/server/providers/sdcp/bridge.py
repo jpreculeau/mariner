@@ -16,12 +16,13 @@ from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import PrinterState, is_safe_for_printer
 from mariner.server.api import _layer_from_byte_offset
-from mariner.server.files import resolve_in_files_directory
+from mariner.server.files import resolve_in_files_directory, scratch_path_beside
 from mariner.server.printer_access import (
     TRANSIENT_ERRORS as _TRANSIENT_ERRORS,
     FileInUse,
     printer_session,
     read_status,
+    start_print,
     unless_in_use,
 )
 from mariner.server.providers.sdcp import constants, identity
@@ -365,8 +366,7 @@ class PrinterBridge:
             return int(constants.PrintCtrlAck.UNKNOWN_FORMAT)
 
         try:
-            with printer_session() as printer:
-                printer.start_printing(relative)
+            start_print(relative)
         except _TRANSIENT_ERRORS as exc:
             logger.warning("SDCP: start print failed: %s", exc)
             return int(constants.PrintCtrlAck.FILEIO_FAILED)
@@ -472,9 +472,14 @@ class PrinterBridge:
             if path is None or not os.path.isdir(path) or path == files_dir:
                 failures.append(raw)
                 continue
+            # Removing a large folder takes time, and the guard holds the
+            # printer. So the folder is only moved aside under the guard,
+            # which is instant, and removed once the printer is released.
+            doomed = scratch_path_beside(path)
             try:
                 with unless_in_use(path):
-                    shutil.rmtree(path)
+                    os.rename(path, doomed)
+                shutil.rmtree(doomed)
             except (FileInUse, OSError) as exc:
                 logger.warning("SDCP: not deleting %s: %s", raw, exc)
                 failures.append(raw)

@@ -44,6 +44,10 @@ class PrintStatus:
     current_byte: Optional[int] = None
     total_bytes: Optional[int] = None
     z_pos_mm: Optional[float] = None
+    # Whether the printer's answer carried its print counters (the "D:"
+    # field). An answer of nothing but "ok" also reads as IDLE, but says
+    # nothing about a print; this tells the two apart.
+    counters_seen: bool = False
 
 
 class ChiTuPrinter:
@@ -149,7 +153,7 @@ class ChiTuPrinter:
             )
 
             if total_bytes == 0:
-                return PrintStatus(state=PrinterState.IDLE)
+                return PrintStatus(state=PrinterState.IDLE, counters_seen=True)
 
             if current_byte == 0:
                 state = PrinterState.STARTING_PRINT
@@ -165,6 +169,7 @@ class ChiTuPrinter:
             current_byte=current_byte,
             total_bytes=total_bytes,
             z_pos_mm=z_pos_mm,
+            counters_seen=self._is_connected,
         )
 
     def get_z_pos(self) -> float:

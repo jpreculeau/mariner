@@ -9,7 +9,7 @@ import hashlib
 import logging
 import os
 import re
-import shutil
+import secrets
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,13 +17,17 @@ from typing import Any, BinaryIO, Callable, ContextManager, Dict, Optional
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.server.files import resolve_in_files_directory, safe_filename
+from mariner.server.files import (
+    SDCP_SCRATCH_DIRNAME,
+    resolve_in_files_directory,
+    safe_filename,
+)
 from mariner.server.printer_access import FileInUse, is_in_use, unless_in_use
 from mariner.server.providers.sdcp import constants
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-SCRATCH_DIRNAME: str = ".sdcp_uploads"
+SCRATCH_DIRNAME: str = SDCP_SCRATCH_DIRNAME
 
 
 @dataclass
@@ -104,8 +108,8 @@ class UploadManager:
         if offset < 0 or total_size < 0:
             return ChunkResult(ok=False, error=constants.UploadError.OFFSET_ERROR)
 
-        # The id names the scratch file, so it must not be able to name a
-        # path. Clients send a UUID, with or without dashes.
+        # The id is client input used as a key and written to the log. Clients
+        # send a UUID, with or without dashes; nothing else is accepted.
         if not _UPLOAD_ID.fullmatch(upload_uuid):
             logger.warning("SDCP: refusing malformed upload id %r", upload_uuid)
             return ChunkResult(ok=False, error=constants.UploadError.UNKNOWN)
@@ -149,7 +153,10 @@ class UploadManager:
                 if session is not None:
                     self._discard(upload_uuid, session)
                 try:
-                    scratch = self._scratch_dir() / f"{upload_uuid}.part"
+                    # Its own random name, not the client's id: a transfer
+                    # that reuses an id must not reopen the file of one that
+                    # is still being moved into place.
+                    scratch = self._scratch_dir() / f"{secrets.token_hex(8)}.part"
                     handle = open(scratch, "wb")
                 except OSError as exc:
                     logger.warning("SDCP: cannot open scratch file: %s", exc)
@@ -228,8 +235,10 @@ class UploadManager:
     def _finalize(self, session: _Session) -> ChunkResult:
         """Verify a completed transfer and move it into the files directory.
 
-        Called without ``self._lock``: *session* is already out of the table,
-        so nothing else can reach it.
+        Called without ``self._lock``, because the move waits for the
+        printer. *session* is already out of the table and owns a scratch
+        file no other transfer can be given, so nothing else touches it;
+        ``_cleanup_scratch_dir`` only ever removes the directory once empty.
         """
         computed = session.hasher.hexdigest()
         logger.info(
@@ -312,13 +321,18 @@ class UploadManager:
             pass
 
     def _cleanup_scratch_dir(self) -> None:
-        if self._sessions:
-            return
-        path = config.get_files_directory() / SCRATCH_DIRNAME
-        try:
-            shutil.rmtree(path)
-        except OSError:
-            pass
+        """Remove the scratch directory once no transfer needs it.
+
+        Only an empty directory is removed, so the file of a transfer that
+        is being moved into place, outside the lock, is never taken away.
+        """
+        with self._lock:
+            if self._sessions:
+                return
+            try:
+                os.rmdir(config.get_files_directory() / SCRATCH_DIRNAME)
+            except OSError:
+                pass
 
     @staticmethod
     def _sync() -> None:

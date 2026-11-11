@@ -84,9 +84,16 @@ export default function Files() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await api.uploadFile(file, currentPath);
-    queryClient.invalidateQueries({ queryKey: ["files", currentPath] });
-    e.target.value = "";
+    try {
+      await api.uploadFile(file, currentPath);
+      queryClient.invalidateQueries({ queryKey: ["files", currentPath] });
+    } catch (err) {
+      // The server says why, e.g. the file is being printed.
+      toast.error(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      // Lets the same file be picked again after a refusal.
+      e.target.value = "";
+    }
   };
 
   const handleCreateFolder = () => {

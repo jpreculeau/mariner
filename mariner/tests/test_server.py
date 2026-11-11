@@ -73,6 +73,11 @@ class MarinerServerTest(TestCase):
         printer_constructor_mock.return_value = self.printer_mock
         self.printer_mock.__enter__ = Mock(return_value=self.printer_mock)
         self.printer_mock.__exit__ = Mock(return_value=None)
+        # An idle printer with nothing selected, unless a test says otherwise.
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.IDLE, counters_seen=True
+        )
+        self.printer_mock.get_selected_file.return_value = ""
 
         # this is so we don't try caching the values returned by this function during
         # tests. this is important because during tests this function returns a Mock,
@@ -617,7 +622,7 @@ class MarinerServerTest(TestCase):
         self,
     ) -> None:
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         self.printer_mock.get_selected_file.return_value = "foobar.ctb"
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
@@ -630,7 +635,7 @@ class MarinerServerTest(TestCase):
         # being received. The check made as the file is moved into place
         # must still catch it.
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         self.printer_mock.get_selected_file.return_value = "foobar.ctb"
         real_save = FileStorage.save
@@ -639,7 +644,8 @@ class MarinerServerTest(TestCase):
             storage: FileStorage, destination: str, *args: Any, **kwargs: Any
         ) -> None:
             real_save(storage, destination, *args, **kwargs)
-            self.client.post("/api/printer/command/start_print?filename=foobar.ctb")
+            # Started from the printer's own screen, and noticed: the
+            # remembered status is dropped as it would be once it expired.
             self._printer_is_printing("foobar.ctb")
 
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
@@ -692,7 +698,7 @@ class MarinerServerTest(TestCase):
         # Reading the status asks the printer anew, which is what a client
         # does to retry.
         self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=PrinterState.IDLE
+            state=PrinterState.IDLE, counters_seen=True
         )
         self.printer_mock.get_selected_file.return_value = ""
         expect(self.client.get("/api/print_status").get_json()["state"]).to_equal(
@@ -718,6 +724,44 @@ class MarinerServerTest(TestCase):
         expect(response.status_code).to_equal(409)
         expect(response.get_json()["code"]).to_equal("printer_not_answering")
         expect(self._stored("other.ctb")).to_equal(b"old")
+
+    def test_a_file_is_in_use_from_the_moment_its_print_is_started(self) -> None:
+        # For a moment after being told to print, the printer still says it
+        # is idle. The file must be protected during that moment too.
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=foobar.ctb"
+        )
+        expect(response.status_code).to_equal(200)
+
+        response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(409)
+        expect(response.get_json()["code"]).to_equal("file_in_use")
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+
+        data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
+        expect(self.client.post("/api/upload_file", data=data).status_code).to_equal(
+            409
+        )
+        expect(self._stored("foobar.ctb")).to_equal(self.ctb_file_contents)
+
+    def test_a_print_that_failed_to_start_does_not_tie_up_its_file(self) -> None:
+        self.printer_mock.start_printing.side_effect = UnexpectedPrinterResponse(
+            "Error\r\n"
+        )
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=foobar.ctb"
+        )
+        expect(response.status_code).to_equal(500)
+        response = self.client.post("/api/delete_file?filename=foobar.ctb")
+        expect(response.status_code).to_equal(200)
+
+    def test_upload_file_onto_the_name_of_a_folder(self) -> None:
+        self.fs.create_dir("/mnt/usb_share/batch.ctb")
+        data = {"file": (io.BytesIO(b"abcdef"), "batch.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(400)
+        expect(os.path.isdir("/mnt/usb_share/batch.ctb")).to_equal(True)
+        expect(self._leftovers()).to_equal([])
 
     def test_delete_file_is_refused_when_the_printer_is_silent(self) -> None:
         self._printer_is_silent()
@@ -813,7 +857,17 @@ class MarinerServerTest(TestCase):
         )
 
     def test_create_directory_with_unsafe_name(self) -> None:
-        for name in ("..", "a%2Fb", "it%27s", "a%0Ab", "a%3Ab", "a%3F"):
+        for name in (
+            "..",
+            "a%2Fb",
+            "it%27s",
+            "a%0Ab",
+            "a%3Ab",
+            "a%3F",
+            # Reserved for transfers in progress, which listings hide.
+            ".upload-0123456789abcdef.part",
+            ".sdcp_uploads",
+        ):
             response = self.client.post(f"/api/create_directory?path=.&name={name}")
             expect(response.status_code).to_equal(400)
 

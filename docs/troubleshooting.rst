@@ -98,8 +98,9 @@ to files sent from a slicer.
 Uploading a file whose name already exists replaces it. The new file is first
 written under a temporary name (``.upload-<random>.part``), which the file
 list does not show, and moved into place once complete. An interrupted upload
-therefore leaves the previous file intact, and anything left behind by a
-power cut is removed the next time Mariner starts.
+therefore leaves the previous file intact. Files sent from a slicer over SDCP
+are assembled the same way, in a hidden ``.sdcp_uploads`` folder. Anything of
+the kind left behind by a power cut is removed the next time Mariner starts.
 
 .. rubric:: A file cannot be replaced or deleted (error 409)
 
@@ -112,25 +113,27 @@ web interface, from UVtools and from a slicer sending over the network alike:
   holds however the print was started: from Mariner, from a slicer or from
   the printer's own screen. Wait for the print to finish, or cancel it.
 
-* **The printer is not answering**, so Mariner cannot tell whether the file
-  is being printed: the printer is off, the serial cable is loose, or the
-  printer started a print without saying from which file. Switch the printer
+* **The printer gave no clear answer**, so Mariner cannot tell whether the
+  file is being printed: the printer is off, the serial cable is loose, or a
+  print is running from a file Mariner could not identify. Switch the printer
   on or check the cable, then try again; opening the dashboard asks the
   printer again.
 
 In both cases a file can always be stored under a **new name**, since nothing
 can be reading a file that does not exist yet.
 
-The web API answers with status 409 and a ``code`` of ``file_in_use`` or
-``printer_not_answering``. UVtools receives a 409, and a slicer using SDCP sees
-its transfer or deletion fail.
+The web interface shows the reason in a notification. The web API answers
+with status 409 and a ``code`` of ``file_in_use`` or ``printer_not_answering``.
+UVtools receives a 409, and a slicer using SDCP sees its transfer or deletion
+fail.
 
 .. note::
 
-   This protection is only as good as the serial link. A print started from
-   the printer's own screen is noticed within about a second. Mariner cannot
-   protect a file from being changed by other means, such as another computer
-   writing to the same storage.
+   This protection is only as good as the serial link. A print started
+   through Mariner protects its file at once; one started from the printer's
+   own screen is noticed within about a second. Mariner cannot protect a file
+   from being changed by other means, such as another computer writing to the
+   same storage.
 
 Printing
 --------

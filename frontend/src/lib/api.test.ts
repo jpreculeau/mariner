@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { api, mapPrinterState, formatTime, formatFileSize } from "./api";
+import {
+  api,
+  ApiError,
+  mapPrinterState,
+  formatTime,
+  formatFileSize,
+} from "./api";
 
 describe("mapPrinterState", () => {
   it("maps PRINTING to printing", () => {
@@ -102,6 +108,59 @@ describe("api client", () => {
     } as Response);
 
     await expect(api.printStatus()).rejects.toThrow("API error: 500");
+  });
+
+  it("throws the explanation the server gave", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "CONFLICT",
+      json: () =>
+        Promise.resolve({
+          code: "file_in_use",
+          title: "File In Use",
+          description: "model.ctb is in use by the print in progress.",
+        }),
+    } as Response);
+
+    const error = await api.deleteFile("model.ctb").catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.message).toBe("model.ctb is in use by the print in progress.");
+    expect(error.status).toBe(409);
+    expect(error.code).toBe("file_in_use");
+  });
+
+  it("throws the explanation the server gave for a refused upload", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 409,
+      statusText: "CONFLICT",
+      json: () =>
+        Promise.resolve({
+          code: "printer_not_answering",
+          title: "Printer Not Answering",
+          description:
+            "The printer did not say whether model.ctb is being printed.",
+        }),
+    } as Response);
+
+    const file = new File(["x"], "model.ctb");
+    const error = await api.uploadFile(file).catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.code).toBe("printer_not_answering");
+    expect(error.message).toContain("did not say");
+  });
+
+  it("falls back to the status when the error has no JSON body", async () => {
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 502,
+      statusText: "Bad Gateway",
+      json: () => Promise.reject(new SyntaxError("not JSON")),
+    } as Response);
+
+    const file = new File(["x"], "model.ctb");
+    await expect(api.uploadFile(file)).rejects.toThrow("Upload failed: 502");
   });
 
   it("sends CSRF token from meta tag", async () => {

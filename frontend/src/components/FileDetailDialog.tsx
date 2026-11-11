@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Play, Layers, Clock, Ruler, Trash2 } from "lucide-react";
 import { api, formatTime, type FileEntry } from "@/lib/api";
+import { toast } from "@/components/ui/sonner";
 
 interface FileDetailDialogProps {
   file: FileEntry | null;
@@ -41,7 +42,14 @@ export function FileDetailDialog({
   };
 
   const handleDelete = async () => {
-    await api.deleteFile(file.path);
+    try {
+      await api.deleteFile(file.path);
+    } catch (err) {
+      // The server says why, e.g. the file is being printed. The dialog
+      // stays open so the user can read it and try again.
+      toast.error(err instanceof Error ? err.message : "Could not delete file");
+      return;
+    }
     onOpenChange(false);
     queryClient.invalidateQueries({ queryKey: ["files"] });
   };

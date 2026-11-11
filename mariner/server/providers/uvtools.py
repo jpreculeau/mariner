@@ -47,6 +47,7 @@ from mariner.server.printer_access import (
     FileInUse,
     printer_session,
     read_status,
+    start_print,
     unless_in_use,
 )
 from mariner.server.utils import read_cached_sliced_model_file
@@ -160,6 +161,9 @@ class UVToolsProvider(NetworkPrintProvider):
         data = request.get_data()
         if not data:
             abort(400)
+        if os.path.isdir(dest):
+            # A folder already has that name; a file cannot take its place.
+            abort(400)
         try:
             # Checked first so a refusal comes before anything is written,
             # and again by the guard as the file is moved into place.
@@ -192,8 +196,7 @@ class UVToolsProvider(NetworkPrintProvider):
         if get_file_extension(safe_name) not in get_supported_extensions():
             abort(400)
 
-        with printer_session() as printer:
-            printer.start_printing(safe_name)
+        start_print(safe_name)
 
         logger.info("UVTools print: %s", safe_name)
         return jsonify({"success": True})
