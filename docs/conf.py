@@ -17,7 +17,7 @@
 
 # -- Project information -----------------------------------------------------
 
-project = "mariner2"
+project = "Mariner 2"
 copyright = "2026, Alejandro Mora"
 author = "Alejandro Mora"
 
