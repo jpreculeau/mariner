@@ -1,4 +1,5 @@
 import errno
+import itertools
 import unittest.mock
 from unittest import TestCase
 from unittest.mock import MagicMock, Mock, call, patch
@@ -27,6 +28,10 @@ class ChiTuPrinterTest(TestCase):
         self.serial_port_patcher = patch("mariner.printer.serial.Serial")
         serial_port_constructor = self.serial_port_patcher.start()
         serial_port_constructor.return_value = self.serial_port_mock
+        # Nothing waiting on the line, nothing left over, unless a test
+        # says otherwise.
+        self.serial_port_mock.in_waiting = 0
+        self.serial_port_mock.read.return_value = b""
         self.printer = ChiTuPrinter()
 
     def tearDown(self) -> None:
@@ -288,28 +293,53 @@ class ChiTuPrinterTest(TestCase):
             expect(status.silent).to_equal(False)
 
     def test_a_printer_that_was_asked_and_sent_nothing_is_silent(self) -> None:
-        with patch.object(
-            self.printer, "_send_and_read_until_contains", side_effect=["", "", ""]
-        ):
-            self.printer.open()
-            status = self.printer.get_print_status()
-            self.printer.close()
+        self.serial_port_mock.readline.return_value = b""
+        self.printer.open()
+        status = self.printer.get_print_status()
+        self.printer.close()
         expect(status.state).to_equal(PrinterState.CLOSED)
         expect(status.silent).to_equal(True)
+        # Asked three times before giving up.
+        expect(self.serial_port_mock.write.call_count).to_equal(3)
 
     def test_an_answer_to_an_earlier_attempt_is_not_silence(self) -> None:
         # Three attempts are made. The printer said something to the first
         # one only: it is switched on all the same.
-        with patch.object(
-            self.printer,
-            "_send_and_read_until_contains",
-            side_effect=["wait\r\n", "", ""],
-        ):
+        self.serial_port_mock.readline.side_effect = itertools.chain(
+            [b"wait\r\n"], itertools.repeat(b"")
+        )
+        self.printer.open()
+        status = self.printer.get_print_status()
+        self.printer.close()
+        expect(status.state).to_equal(PrinterState.CLOSED)
+        expect(status.silent).to_equal(False)
+
+    def test_an_answer_that_came_too_late_to_be_read_is_not_silence(self) -> None:
+        # The printer answers just after Mariner stopped listening. What it
+        # sent is thrown away unread, but it did send something.
+        self.serial_port_mock.readline.return_value = b""
+        for late in ("left over after the last line", "waiting before the next"):
+            self.serial_port_mock.read.return_value = b""
+            self.serial_port_mock.in_waiting = 0
+            if late == "left over after the last line":
+                self.serial_port_mock.read.return_value = b"ok D:5/10/0\r\n"
+            else:
+                self.serial_port_mock.in_waiting = 12
             self.printer.open()
             status = self.printer.get_print_status()
             self.printer.close()
-        expect(status.state).to_equal(PrinterState.CLOSED)
-        expect(status.silent).to_equal(False)
+            expect(status.state).to_equal(PrinterState.CLOSED)
+            expect(status.silent).to_equal(False)
+
+    def test_what_was_heard_before_does_not_count_for_the_next_question(
+        self,
+    ) -> None:
+        self.serial_port_mock.readline.return_value = b"ok\r\n"
+        self.printer.open()
+        self.printer.get_print_status()
+        self.serial_port_mock.readline.return_value = b""
+        expect(self.printer.get_print_status().silent).to_equal(True)
+        self.printer.close()
 
     def test_a_line_that_fails_is_not_silence(self) -> None:
         # Whatever was or was not read before: the printer was not heard

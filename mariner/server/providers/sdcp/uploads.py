@@ -265,7 +265,10 @@ class UploadManager:
 
             # A chunk continues the transfer it names in full: same file,
             # same size, next offset. Anything else is another transfer
-            # that happens to use the same id, and gets nothing in.
+            # that happens to use the same id, and gets nothing in. (The
+            # declared MD5 is left out of this: nothing says that clients
+            # repeat it with every chunk. Two transfers alike in all of
+            # the above, from one address, cannot be told apart.)
             if (
                 offset != session.offset
                 or safe_name != session.filename
@@ -330,10 +333,16 @@ class UploadManager:
 
         Whatever was received is removed unless it was moved into place.
         """
-        result = self._verify_and_move(session)
-        if not result.completed:
-            self._unlink(session.scratch_path)
-        return result
+        moved = False
+        try:
+            result = self._verify_and_move(session)
+            moved = result.completed
+            return result
+        finally:
+            # Also when the move fails in a way nobody foresaw: the session
+            # is out of the table, so nothing else would ever remove it.
+            if not moved:
+                self._unlink(session.scratch_path)
 
     def _verify_and_move(self, session: _Session) -> ChunkResult:
         computed = session.hasher.hexdigest()

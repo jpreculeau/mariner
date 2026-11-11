@@ -24,7 +24,16 @@
 - Keep line breaks in client-supplied names out of the logs
 - Answer 404 when a file or folder disappears during a deletion or an upload
 - Refuse to start a print while the printer reports one under way
-- Refuse to start a second print until the printer reports the first
+- Refuse to start a second print until the printer reports the first, with its own explanation (`print_just_started`)
+- Check that the file can be printed at the moment the command is sent, with file changes held off
+- Count as silence only a printer from which not one byte came, late answers included
+- Ask again a moment later after an unclear answer, instead of keeping it for half a minute
+- Refuse a file name with a line break at either end instead of trimming it
+- Answer a UVtools upload that cannot be stored without logging the request path
+- Let a slicer delete a symbolic link to a folder; the folder itself stays
+- Check once more that an entry is not a transfer in progress right before removing it
+- Keep listings whole when they hold a symbolic link that leads back to itself
+- Remove what an SDCP transfer received even when moving it into place fails unexpectedly
 - Explain apart a file whose print was only just started (`print_just_started`)
 - Allow the "printer is off" override only when the printer was asked and stayed silent, not when the serial port could not be used or failed
 - Confirm "delete anyway" for the file the question was about, even if another file is shown by then

@@ -573,6 +573,39 @@ class SDCPBridgeTest(TestCase):
         for record in logs.records:
             expect("\n" in record.getMessage()).to_equal(False)
 
+    def test_delete_removes_a_link_to_a_folder_and_leaves_the_folder(self) -> None:
+        # Listed as a folder, so a slicer deletes it as one.
+        self.fs.create_file("/mnt/usb_share/batch/part.ctb", contents=b"x")
+        self.fs.create_symlink("/mnt/usb_share/shortcut", "/mnt/usb_share/batch")
+        expect(self.bridge.delete([], ["/local/shortcut"])).to_equal([])
+        expect(os.path.lexists("/mnt/usb_share/shortcut")).to_equal(False)
+        expect(pathlib.Path("/mnt/usb_share/batch/part.ctb").exists()).to_equal(True)
+
+    def test_delete_keeps_a_link_to_the_folder_being_printed_from(self) -> None:
+        self.fs.create_file("/mnt/usb_share/batch/part.ctb", contents=b"x")
+        self.fs.create_symlink("/mnt/usb_share/shortcut", "/mnt/usb_share/batch")
+        self.printer_mock.get_selected_file.return_value = "batch/part.ctb"
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.PRINTING, current_byte=10, total_bytes=100
+        )
+        expect(self.bridge.delete([], ["/local/shortcut"])).to_equal(
+            ["/local/shortcut"]
+        )
+        expect(os.path.lexists("/mnt/usb_share/shortcut")).to_equal(True)
+
+    def test_delete_cannot_reach_a_transfer_that_began_meanwhile(self) -> None:
+        with patch("mariner.server.providers.sdcp.bridge.remove_entry") as remove:
+            remove.side_effect = FileNotFoundError("hidden by now")
+            failures = self.bridge.delete(["/local/foobar.ctb"], [])
+        expect(failures).to_equal(["/local/foobar.ctb"])
+        remove.assert_called_once_with(pathlib.Path("/mnt/usb_share/foobar.ctb"))
+
+    def test_start_print_of_a_file_that_is_gone(self) -> None:
+        expect(self.bridge.start_print("/local/gone.ctb")).to_equal(
+            int(constants.PrintCtrlAck.NOT_FOUND)
+        )
+        self.printer_mock.start_printing.assert_not_called()
+
     def test_delete_folders(self) -> None:
         self.fs.create_file("/mnt/usb_share/batch/a.ctb", contents=b"x")
         self.fs.create_file("/mnt/usb_share/batch/deep/b.ctb", contents=b"x")
@@ -1261,6 +1294,21 @@ class UploadManagerTest(TestCase):
         expect(result.ok).to_equal(False)
         expect(os.listdir("/mnt/usb_share")).to_equal([])
 
+    def test_a_move_that_fails_in_an_unforeseen_way_leaves_nothing(self) -> None:
+        # The transfer is out of the table by then: nothing else would
+        # ever remove what it received.
+        @contextmanager
+        def broken_guard(path: Any) -> Iterator[None]:
+            raise RuntimeError("the terminal failed")
+            yield
+
+        manager = UploadManager(unless_in_use=_no_guard)
+        expect(self._chunk(manager, 0, b"new!", 8).ok).to_equal(True)
+        manager._unless_in_use = broken_guard
+        with self.assertRaises(RuntimeError):
+            self._chunk(manager, 4, b"new!", 8)
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
     def test_upload_onto_a_link_replaces_the_link_and_not_its_target(self) -> None:
         self.fs.create_file("/mnt/usb_share/sub/notes.txt", contents=b"notes")
         self.fs.create_symlink(
@@ -1437,6 +1485,28 @@ class ServiceUploadTest(IsolatedAsyncioTestCase):
         expect(sent["client"]).to_equal("192.168.1.20")
         expect(sent["upload_uuid"]).to_equal("default")
         expect(sent["data"]).to_equal(b"AAAA")
+
+
+class _BrokenUploadRequest:
+    headers: Any = {}
+    remote = "192.168.1.20"
+
+    async def post(self) -> Any:
+        raise ValueError("unknown encoding: x\u2028FORGED\x85LINE")
+
+
+class ServiceUploadLogTest(IsolatedAsyncioTestCase):
+    async def test_a_malformed_upload_cannot_add_lines_to_the_log(self) -> None:
+        service = SDCPService.__new__(SDCPService)
+        with self.assertLogs(
+            "mariner.server.providers.sdcp.service", "WARNING"
+        ) as logs:
+            await service._handle_upload(cast(Any, _BrokenUploadRequest()))
+        expect(len(logs.records)).to_equal(1)
+        message = logs.records[0].getMessage()
+        expect("FORGED" in message).to_equal(True)
+        for character in ("\n", "\u2028", "\x85"):
+            expect(character in message).to_equal(False)
 
 
 class ServiceHousekeepingTest(IsolatedAsyncioTestCase):

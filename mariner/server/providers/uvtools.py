@@ -40,8 +40,9 @@ from mariner.printer import PrinterState
 from mariner.server.providers.base import NetworkPrintProvider
 from mariner.server.files import (
     NotPrintable,
+    is_regular_file,
     modification_time,
-    printable_relative_path,
+    remove_entry,
     replacing,
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
@@ -191,6 +192,11 @@ class UVToolsProvider(NetworkPrintProvider):
         except FileNotFoundError:
             # The folder was removed while the file was being written.
             abort(404)
+        except OSError as error:
+            # No room left, for one. Answered here, so that the request path
+            # is not logged as it came by whatever catches it otherwise.
+            logger.warning("UVTools: could not store %r: %s", safe_name, error)
+            abort(500)
         except FileInUse as error:
             logger.warning(
                 "UVTools: not replacing %s: %s", safe_name, error.usage.value
@@ -206,13 +212,10 @@ class UVToolsProvider(NetworkPrintProvider):
 
     def _print_file(self, filename: str) -> Union[str, Response]:
         try:
-            relative = printable_relative_path(filename)
+            relative = start_print(filename)
         except NotPrintable as error:
             logger.warning("UVTools: not printing %r: %s", filename, error.reason)
             abort(404 if error.reason == NotPrintable.MISSING else 400)
-
-        try:
-            start_print(relative)
         except PrintAlreadyRunning:
             logger.warning("UVTools: not printing %r: a print is running", filename)
             abort(409)
@@ -235,7 +238,7 @@ class UVToolsProvider(NetworkPrintProvider):
             abort(404)
         try:
             with unless_in_use(path):
-                os.remove(path)
+                remove_entry(path)
         except FileNotFoundError:
             # Someone else removed it in the meantime.
             abort(404)
@@ -270,7 +273,10 @@ class UVToolsProvider(NetworkPrintProvider):
 
         with os.scandir(files_dir) as entries:
             for entry in sorted(entries, key=modification_time, reverse=True):
-                if entry.is_file() and get_file_extension(entry.name) in supported:
+                if (
+                    is_regular_file(entry)
+                    and get_file_extension(entry.name) in supported
+                ):
                     file_list.append(entry.name)
 
         return jsonify({"files": file_list})

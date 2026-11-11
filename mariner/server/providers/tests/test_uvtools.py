@@ -337,6 +337,66 @@ class UVToolsProviderTest(TestCase):
         with open("/mnt/usb_share/linked.ctb", "rb") as file:
             expect(file.read()).to_equal(b"new contents")
 
+    def test_an_upload_that_cannot_be_stored_cannot_add_lines_to_the_log(
+        self,
+    ) -> None:
+        # A full disk, say. Left unhandled, the server would log the
+        # request path, client text, as it came.
+        with patch.object(
+            pathlib.Path, "write_bytes", side_effect=OSError(28, "No space left")
+        ):
+            with self.assertLogs(level="WARNING") as logs:
+                response = self.client.post(
+                    "/uvtools/upload/model%E2%80%A8FORGED.ctb%0A",
+                    data=b"contents",
+                    content_type="application/octet-stream",
+                )
+                expect(response.status_code).to_equal(400)
+                response = self.client.post(
+                    "/uvtools/upload/model.ctb",
+                    data=b"contents",
+                    content_type="application/octet-stream",
+                )
+                expect(response.status_code).to_equal(500)
+        expect(len(logs.records)).to_equal(2)
+        for record in logs.records:
+            expect(record.name).to_equal("mariner.server.providers.uvtools")
+            expect("\n" in record.getMessage()).to_equal(False)
+            expect("\u2028" in record.getMessage()).to_equal(False)
+
+    def test_an_upload_name_ending_in_a_line_break_is_refused(self) -> None:
+        response = self.client.post(
+            "/uvtools/upload/%0AFORGED.ctb",
+            data=b"contents",
+            content_type="application/octet-stream",
+        )
+        expect(response.status_code).to_equal(400)
+        expect(os.listdir("/mnt/usb_share")).to_equal(["foobar.ctb"])
+
+    def test_print_of_a_file_that_is_gone(self) -> None:
+        response = self.client.get("/uvtools/print/gone.ctb")
+        expect(response.status_code).to_equal(404)
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_delete_cannot_reach_a_transfer_that_began_meanwhile(self) -> None:
+        with patch("mariner.server.providers.uvtools.remove_entry") as remove:
+            remove.side_effect = FileNotFoundError("hidden by now")
+            response = self.client.get("/uvtools/delete/foobar.ctb")
+        expect(response.status_code).to_equal(404)
+        remove.assert_called_once_with(pathlib.Path("/mnt/usb_share/foobar.ctb"))
+
+    def test_get_files_survives_an_entry_that_cannot_be_asked_what_it_is(
+        self,
+    ) -> None:
+        with patch(
+            "mariner.server.providers.uvtools.is_regular_file",
+            side_effect=lambda entry: entry.name != "loop.ctb",
+        ) as asked:
+            self.fs.create_file("/mnt/usb_share/loop.ctb", contents=b"x")
+            response = self.client.get("/uvtools/files")
+        expect(response.get_json()["files"]).to_equal(["foobar.ctb"])
+        expect(asked.call_count).to_equal(2)
+
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
         printer_access.forget_status()
         self.printer_mock.get_print_status.return_value = PrintStatus(

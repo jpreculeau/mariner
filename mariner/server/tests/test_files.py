@@ -13,9 +13,12 @@ from mariner.config import _get_config
 from mariner.server.files import (
     NotPrintable,
     holds_a_transfer_in_progress,
+    is_directory,
     is_hidden_entry,
+    is_regular_file,
     is_scratch_file,
     printable_relative_path,
+    remove_entry,
     remove_stale_scratch_files,
     replacing,
     resolve_entry_in_files_directory,
@@ -60,6 +63,18 @@ class SafeFilenameTest(TestCase):
         # for one: NEL, another C1 control, LINE and PARAGRAPH SEPARATOR.
         for character in ("\x85", "\x9b", "\u2028", "\u2029"):
             expect(safe_filename(f"a{character}b.ctb")).to_equal(None)
+
+    def test_rejects_a_line_break_at_either_end_instead_of_trimming_it(self) -> None:
+        # Trimming would accept the name while the caller's copy, and the
+        # request path, still carry the line break.
+        for name in (
+            "\nmodel.ctb",
+            "model.ctb\r\n",
+            "\x85model.ctb",
+            "model.ctb\u2028",
+        ):
+            expect(safe_filename(name)).to_equal(None)
+        expect(safe_filename("  model.ctb ")).to_equal("model.ctb")
 
     def test_rejects_the_quote_used_to_delimit_printer_filenames(self) -> None:
         expect(safe_filename("john's model.ctb")).to_equal(None)
@@ -244,6 +259,65 @@ class RealFilesystemHiddenEntryTest(TestCase):
                     expect(resolve_entry_in_files_directory(text)).to_equal(None)
                     expect(resolve_in_files_directory(text)).to_equal(None)
 
+    def test_a_hidden_entry_that_cannot_be_read_does_not_hide_the_others(
+        self,
+    ) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Listed first, and leads nowhere: a transfer that just ended.
+            os.symlink(root / "gone", root / ".upload-0000000000000000.part")
+            scratch = root / ".upload-ffffffffffffffff.part"
+            scratch.write_bytes(b"half an upload")
+            os.link(scratch, root / "UPLOAD~1.PAR")
+            with patch(
+                "mariner.server.files.config.get_files_directory", return_value=root
+            ):
+                expect(resolve_in_files_directory("UPLOAD~1.PAR")).to_equal(None)
+
+    def test_remove_entry_leaves_a_hidden_entry_alone(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scratch = root / ".upload-0123456789abcdef.part"
+            scratch.write_bytes(b"half an upload")
+            os.link(scratch, root / "UPLOAD~1.PAR")
+            (root / "model.ctb").write_bytes(b"x")
+
+            # As if the transfer had begun after the name was checked.
+            with self.assertRaises(FileNotFoundError):
+                remove_entry(root / "UPLOAD~1.PAR")
+            expect((root / "UPLOAD~1.PAR").exists()).to_equal(True)
+
+            remove_entry(root / "model.ctb")
+            expect((root / "model.ctb").exists()).to_equal(False)
+
+    def test_a_link_that_leads_back_to_itself_is_refused(self) -> None:
+        # Before Python 3.13, resolving one raises RuntimeError.
+        root = Path("/mnt/usb_share")
+        with patch("mariner.server.files.config.get_files_directory") as directory:
+            directory.return_value.resolve.return_value = root
+            with patch.object(Path, "resolve", side_effect=RuntimeError("loop")):
+                expect(resolve_in_files_directory("loop.ctb")).to_equal(None)
+                expect(stays_in_files_directory(root / "loop.ctb")).to_equal(False)
+
+    def test_an_entry_that_cannot_be_asked_is_neither_folder_nor_file(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            os.symlink("loop.ctb", Path(directory) / "loop.ctb")
+            (Path(directory) / "sub").mkdir()
+            (Path(directory) / "model.ctb").write_bytes(b"x")
+            with os.scandir(directory) as entries:
+                found = {entry.name: entry for entry in entries}
+            expect(is_directory(found["loop.ctb"])).to_equal(False)
+            expect(is_regular_file(found["loop.ctb"])).to_equal(False)
+            expect(is_directory(found["sub"])).to_equal(True)
+            expect(is_regular_file(found["sub"])).to_equal(False)
+            expect(is_regular_file(found["model.ctb"])).to_equal(True)
+
 
 class RealFilesystemLinksTest(TestCase):
     """Where a directory entry leads, links followed, on a real filesystem."""
@@ -352,6 +426,17 @@ class PrintableRelativePathTest(TestCase):
     def test_refuses_what_could_not_be_sent_to_the_printer(self) -> None:
         for name in ("", "a\r\nG28.ctb", "it's.ctb", "\ud800.ctb", "a\x00.ctb"):
             expect(self._reason(name)).to_equal(NotPrintable.UNSAFE)
+
+    def test_refuses_a_link_to_a_file_the_printer_could_not_be_told_about(
+        self,
+    ) -> None:
+        # The link has a fine name; the file it leads to, which is the one
+        # the printer would be given, does not.
+        self.fs.create_file("/mnt/usb_share/it's.ctb", contents=b"x")
+        self.fs.create_symlink("/mnt/usb_share/link.ctb", "/mnt/usb_share/it's.ctb")
+        with self.assertRaises(NotPrintable) as raised:
+            printable_relative_path("link.ctb")
+        expect(raised.exception.reason).to_equal(NotPrintable.UNSAFE)
 
     def test_refuses_a_file_outside_the_files_directory(self) -> None:
         for name in ("../elsewhere.ctb", "/mnt/elsewhere.ctb"):

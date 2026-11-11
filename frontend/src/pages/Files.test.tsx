@@ -71,6 +71,25 @@ describe("Files", () => {
     expect(api.listFiles).toHaveBeenCalledTimes(1);
   });
 
+  it("lets the same file be picked again after a refusal", async () => {
+    // A file input reports no change when the same file is chosen twice,
+    // unless it was emptied in between.
+    vi.spyOn(api, "uploadFile").mockRejectedValue(
+      new ApiError(409, "model.ctb is being printed.", "file_in_use"),
+    );
+    const input = renderFiles();
+    await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+    Object.defineProperty(input, "value", {
+      value: "model.ctb",
+      writable: true,
+    });
+
+    pick(input, new File(["x"], "model.ctb"));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(input.value).toBe("");
+  });
+
   describe("when the printer does not answer", () => {
     const refusal = new ApiError(
       409,
@@ -124,6 +143,51 @@ describe("Files", () => {
       );
       expect(api.uploadFile).toHaveBeenCalledTimes(1);
       expect(api.listFiles).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not ask twice about the same upload", async () => {
+      // The printer is still silent when the confirmed upload is moved
+      // into place, and the server says so again.
+      vi.spyOn(api, "uploadFile").mockRejectedValue(refusal);
+      const input = renderFiles();
+      await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+
+      pick(input, new File(["x"], "model.ctb"));
+      fireEvent.click(await screen.findByText("Replace anyway"));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "The printer is not answering.",
+        ),
+      );
+      expect(screen.queryByText("Replace anyway")).toBeNull();
+      expect(api.uploadFile).toHaveBeenCalledTimes(2);
+    });
+
+    it("sends the file to the folder it was meant for", async () => {
+      // The user opens another folder while the question is on screen.
+      vi.mocked(api.listFiles).mockResolvedValue({
+        directories: [{ dirname: "batch" }],
+        files: [],
+      });
+      vi.spyOn(api, "uploadFile")
+        .mockRejectedValueOnce(refusal)
+        .mockResolvedValueOnce();
+      const input = renderFiles();
+      const file = new File(["x"], "model.ctb");
+
+      pick(input, file);
+      const confirm = await screen.findByText("Replace anyway");
+      fireEvent.click(await screen.findByText("batch"));
+      await waitFor(() =>
+        expect(api.listFiles).toHaveBeenLastCalledWith("batch"),
+      );
+      fireEvent.click(confirm);
+
+      await waitFor(() => expect(api.uploadFile).toHaveBeenCalledTimes(2));
+      expect(api.uploadFile).toHaveBeenLastCalledWith(file, ".", {
+        ignoreUnreachablePrinter: true,
+      });
     });
 
     it("shows why the confirmed upload was refused after all", async () => {

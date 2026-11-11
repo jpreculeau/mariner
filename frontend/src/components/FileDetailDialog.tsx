@@ -28,13 +28,10 @@ export function FileDetailDialog({
 }: FileDetailDialogProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  // A deletion the server refused but that the user may still confirm. The
-  // path is kept with the reason: confirming must delete the file the
-  // question names, whatever the dialog shows by then.
-  const [refused, setRefused] = useState<{
-    path: string;
-    reason: string;
-  } | null>(null);
+  // Why the server refused a deletion that the user may still confirm. It
+  // is always about the file on screen: it is set only for that file, and
+  // withdrawn as soon as another one is shown or the dialog is closed.
+  const [printerOffReason, setPrinterOffReason] = useState<string | null>(null);
 
   // The file on screen right now. An answer can come seconds after the
   // request, when the user has closed the dialog or opened another file.
@@ -43,8 +40,7 @@ export function FileDetailDialog({
   shownPathNow.current = shownPath;
 
   useEffect(() => {
-    // A question about a file that is no longer shown is withdrawn.
-    setRefused(null);
+    setPrinterOffReason(null);
   }, [shownPath]);
 
   const { data: details } = useQuery({
@@ -65,7 +61,7 @@ export function FileDetailDialog({
     path: string,
     ignoreUnreachablePrinter: boolean,
   ) => {
-    setRefused(null);
+    setPrinterOffReason(null);
     try {
       await api.deleteFile(path, { ignoreUnreachablePrinter });
     } catch (err) {
@@ -76,7 +72,7 @@ export function FileDetailDialog({
         shownPathNow.current === path
       ) {
         // The printer sent nothing back: the user decides.
-        setRefused({ path, reason: err.message });
+        setPrinterOffReason(err.message);
         return;
       }
       // The server says why, e.g. the file is being printed. The dialog
@@ -158,12 +154,10 @@ export function FileDetailDialog({
         </DialogFooter>
       </DialogContent>
       <PrinterOffDialog
-        reason={refused?.reason ?? null}
+        reason={printerOffReason}
         confirmLabel="Delete anyway"
-        onConfirm={() => {
-          if (refused) deleteFile(refused.path, true);
-        }}
-        onCancel={() => setRefused(null)}
+        onConfirm={() => deleteFile(file.path, true)}
+        onCancel={() => setPrinterOffReason(null)}
       />
     </Dialog>
   );

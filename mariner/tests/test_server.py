@@ -345,6 +345,42 @@ class MarinerServerTest(TestCase):
         opened = [str(call.args[0]) for call in reader.call_args_list]
         expect([path for path in opened if "out" in path]).to_equal([])
 
+    def test_list_files_survives_a_link_that_leads_back_to_itself(self) -> None:
+        # Asked whether it is a folder, such a link answers with an error.
+        # The fake filesystem does not; this entry does.
+        class LoopingLink:
+            name = "loop.txt"
+            path = "/mnt/usb_share/loop.txt"
+
+            def is_dir(self) -> bool:
+                raise OSError(40, "Too many levels of symbolic links")
+
+            def stat(self) -> None:
+                raise OSError(40, "Too many levels of symbolic links")
+
+        class Scan:
+            def __enter__(self) -> Any:
+                return [LoopingLink()]
+
+            def __exit__(self, *_: Any) -> None:
+                return None
+
+        with patch("mariner.server.api.os.scandir", return_value=Scan()):
+            response = self.client.get("/api/list_files")
+        expect(response.status_code).to_equal(200)
+        expect(response.get_json()).to_equal(
+            {
+                "directories": [],
+                "files": [
+                    {
+                        "filename": "loop.txt",
+                        "path": "loop.txt",
+                        "can_be_printed": False,
+                    }
+                ],
+            }
+        )
+
     def test_list_files_hides_uploads_in_progress(self) -> None:
         self.fs.create_file(
             "/mnt/usb_share/.upload-0123456789abcdef.part", contents=b"partial"
@@ -513,7 +549,14 @@ class MarinerServerTest(TestCase):
             "/api/printer/command/start_print?filename=other.ctb"
         )
         expect(response.status_code).to_equal(409)
-        expect(response.get_json()["code"]).to_equal("print_in_progress")
+        expect(response.get_json()).to_equal(
+            {
+                "code": "print_just_started",
+                "title": "Print Just Started",
+                "description": "A print was started a moment ago and the "
+                "printer has yet to report it. Try again in half a minute.",
+            }
+        )
         self.printer_mock.start_printing.assert_called_once_with("foobar.ctb")
 
     def test_command_cancel_print(self) -> None:
@@ -872,6 +915,26 @@ class MarinerServerTest(TestCase):
         expect(response.status_code).to_equal(400)
         with open("/mnt/usb_share/.upload-0123456789abcdef.part", "rb") as file:
             expect(file.read()).to_equal(b"half")
+
+    def test_only_the_exact_value_asks_for_the_override(self) -> None:
+        self._printer_is_silent()
+        for value in ("0", "true", "", "11"):
+            response = self.client.post(
+                f"/api/delete_file?filename=foobar.ctb"
+                f"&ignore_unreachable_printer={value}"
+            )
+            expect(response.status_code).to_equal(409)
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+
+    def test_delete_file_cannot_reach_a_transfer_that_began_meanwhile(self) -> None:
+        # Stands for the short alias FAT gives a scratch file, asked for
+        # just before the transfer creates it.
+        self.fs.create_file("/mnt/usb_share/UPLOAD~1.PAR", contents=b"half")
+        with patch("mariner.server.api.remove_entry") as remove:
+            remove.side_effect = FileNotFoundError("hidden by now")
+            response = self.client.post("/api/delete_file?filename=UPLOAD~1.PAR")
+        expect(response.status_code).to_equal(404)
+        remove.assert_called_once_with(pathlib.Path("/mnt/usb_share/UPLOAD~1.PAR"))
 
     def test_an_upload_can_override_a_silent_printer_too(self) -> None:
         self._printer_is_silent()

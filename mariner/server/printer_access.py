@@ -24,13 +24,15 @@ Three locks, always taken in this order, never the other way round:
 3. ``_memory_lock`` guards the two things remembered between conversations,
    and is never held while anything else happens.
 
-A status poll takes only the second. A file operation that needs nothing
-from the printer, such as storing a new file, does not ask the printer
-itself. It can still wait briefly behind a print that is being started or
-stopped, or behind another file operation that has to ask the printer again.
+A status poll takes the second, then the third. A file operation that needs
+nothing from the printer, such as storing a new file, does not ask the
+printer itself. It can still wait behind a print that is being started, or
+behind another file operation that has to ask the printer again, for as
+long as the printer takes to answer: seconds when it is silent.
 """
 
 import os
+import termios
 import threading
 import time
 from contextlib import contextmanager
@@ -43,10 +45,11 @@ import serial
 from mariner.exceptions import (
     FileNotSelected,
     PrintAlreadyRunning,
+    PrintJustStarted,
     UnexpectedPrinterResponse,
 )
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
-from mariner.server.files import resolve_in_files_directory
+from mariner.server.files import printable_relative_path, resolve_in_files_directory
 from mariner.server.utils import retry
 
 TRANSIENT_ERRORS: Tuple[Type[Exception], ...] = (
@@ -67,12 +70,14 @@ _ACTIVE_STATES = (
 # almost at once.
 _STATUS_MAX_AGE_SECS = 1.0
 
-# Giving up on a printer that does not answer takes several seconds. That
-# answer is kept longer, so that the same refusal is not paid for again on
+# Giving up on a printer that stays silent takes several seconds. That
+# silence is kept longer, so that the same refusal is not paid for again on
 # every attempt. Keeping it errs on the safe side: while it lasts, existing
 # files stay protected. It is replaced by the next status read, and it is
-# never enough to grant an override (see ``unless_in_use``).
-_CLOSED_STATUS_MAX_AGE_SECS = 30.0
+# never enough to grant an override (see ``unless_in_use``). Any other
+# answer, however unclear, is kept no longer than a clear one, so that
+# trying again a moment later does ask again.
+_SILENCE_MAX_AGE_SECS = 30.0
 
 # For a moment after being told to print, the printer still reports that it
 # is idle. A file Mariner has just started printing is treated as in use for
@@ -169,12 +174,15 @@ def printer_session() -> Iterator[ChiTuPrinter]:
             _forget_last_status()
 
 
-def start_print(relative_path: str) -> None:
-    """Tell the printer to print the file at *relative_path*.
+def start_print(name: str) -> str:
+    """Tell the printer to print the file a client calls *name*.
 
-    Every interface starts a print through here. *relative_path* is relative
-    to the files directory, as the printer knows it; see
-    ``files.printable_relative_path``.
+    Every interface starts a print through here. Returns the path that was
+    sent to the printer, relative to the files directory, which is how the
+    printer knows the file; see ``files.printable_relative_path``, whose
+    NotPrintable this raises if *name* does not lead to a file that can be
+    printed. That is checked here, with file changes held off, so that the
+    file cannot be removed between the check and the command.
 
     The file counts as in use from the moment the print command is sent,
     before the printer reports the print. That holds even if the printer's
@@ -186,11 +194,11 @@ def start_print(relative_path: str) -> None:
     file (``FileNotSelected``), which comes before the print command and
     includes a printer that is switched off.
 
-    Raises ``PrintAlreadyRunning``, sending nothing, if the printer reports
-    a print under way, or if Mariner started one a moment ago that the
-    printer has yet to report: the printer might select the new file while
-    still reading the old one, and the file it then names would no longer
-    be the one to protect.
+    Raises ``PrintAlreadyRunning``, sending no print command, if the
+    printer reports a print under way, and ``PrintJustStarted`` if Mariner
+    started one a moment ago that the printer has yet to report: the
+    printer might select the new file while still reading the old one, and
+    the file it then names would no longer be the one to protect.
 
     A printer whose answer settles nothing is still sent the command, and
     turns it down itself if it cannot print. Refusing on anything short of
@@ -200,9 +208,12 @@ def start_print(relative_path: str) -> None:
     Otherwise raises whatever ``ChiTuPrinter.start_printing`` raises.
     """
     with _change_lock:
+        relative_path = printable_relative_path(name)
         status, _ = read_status()
-        if status.state in _ACTIVE_STATES or _file_just_started() is not None:
+        if status.state in _ACTIVE_STATES:
             raise PrintAlreadyRunning()
+        if _file_just_started() is not None:
+            raise PrintJustStarted()
         with printer_session() as printer:
             print_command_sent = True
             try:
@@ -213,6 +224,7 @@ def start_print(relative_path: str) -> None:
             finally:
                 if print_command_sent:
                     _remember_started(relative_path)
+    return relative_path
 
 
 def _remember_started(relative_path: str) -> None:
@@ -255,7 +267,9 @@ def read_status() -> Tuple[PrintStatus, str]:
     with _serial_lock:
         try:
             status, selected_file = _query_printer()
-        except TRANSIENT_ERRORS + (OSError,):
+        except TRANSIENT_ERRORS + (OSError, termios.error):
+            # termios.error: what the serial library lets through, as it
+            # is, when the terminal fails while its buffers are flushed.
             status, selected_file = PrintStatus(state=PrinterState.CLOSED), ""
         with _memory_lock:
             _last_status = (time.monotonic(), status, selected_file)
@@ -273,11 +287,7 @@ def _remembered_status() -> Optional[Tuple[PrintStatus, str]]:
         if _last_status is None:
             return None
         read_at, status, selected_file = _last_status
-    max_age = (
-        _CLOSED_STATUS_MAX_AGE_SECS
-        if status.state == PrinterState.CLOSED
-        else _STATUS_MAX_AGE_SECS
-    )
+    max_age = _SILENCE_MAX_AGE_SECS if status.silent else _STATUS_MAX_AGE_SECS
     if time.monotonic() - read_at >= max_age:
         return None
     return (status, selected_file)

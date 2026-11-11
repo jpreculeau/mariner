@@ -20,7 +20,7 @@ from typing import Callable, ContextManager, Iterator, Optional
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
-from mariner.printer import is_safe_for_printer
+from mariner.printer import has_control_character, is_safe_for_printer
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -65,6 +65,10 @@ def safe_filename(filename: Optional[str]) -> Optional[str]:
     This is not on its own sufficient to contain a path: callers must still
     resolve it with ``resolve_in_files_directory``.
     """
+    if has_control_character(filename or ""):
+        # Before the whitespace is trimmed: trimming would quietly drop a
+        # line break at either end, which the caller's copy still carries.
+        return None
     name = (filename or "").strip()
     if not name or name in (".", "..") or name.endswith("."):
         return None
@@ -90,14 +94,20 @@ def _is_hidden(path: Path) -> bool:
     if is_hidden_entry(path.name):
         return True
     try:
-        with os.scandir(path.parent) as siblings:
-            return any(
-                is_hidden_entry(sibling.name) and os.path.samefile(sibling.path, path)
-                for sibling in siblings
-            )
+        target = os.stat(path)
+        with os.scandir(path.parent) as entries:
+            siblings = [entry for entry in entries if is_hidden_entry(entry.name)]
     except OSError:
         # The folder or the entry does not exist: nothing to be the same as.
         return False
+    for sibling in siblings:
+        try:
+            if os.path.samestat(sibling.stat(), target):
+                return True
+        except OSError:
+            # That one is gone, or leads nowhere. The others still count.
+            continue
+    return False
 
 
 def _is_inside_files_directory(candidate: Path, files_directory: Path) -> bool:
@@ -131,9 +141,10 @@ def resolve_in_files_directory(relative: str) -> Optional[Path]:
     files_directory = config.get_files_directory().resolve()
     try:
         candidate = (files_directory / relative).resolve()
-    except (ValueError, OSError):
+    except (ValueError, OSError, RuntimeError):
         # Text the filesystem cannot take as a path at all, such as the lone
-        # surrogates a JSON client can send.
+        # surrogates a JSON client can send, or a symbolic link that leads
+        # back to itself (a RuntimeError before Python 3.13).
         return None
     if not _is_inside_files_directory(candidate, files_directory):
         return None
@@ -215,6 +226,39 @@ def printable_relative_path(name: str) -> str:
     return relative
 
 
+def is_directory(dir_entry: "os.DirEntry[str]") -> bool:
+    """Whether *dir_entry* is a folder; False if that cannot be told.
+
+    A symbolic link that leads back to itself cannot be asked, and must not
+    take a whole listing down with it.
+    """
+    try:
+        return dir_entry.is_dir()
+    except OSError:
+        return False
+
+
+def is_regular_file(dir_entry: "os.DirEntry[str]") -> bool:
+    """Whether *dir_entry* is a file; False if that cannot be told."""
+    try:
+        return dir_entry.is_file()
+    except OSError:
+        return False
+
+
+def remove_entry(path: Path) -> None:
+    """Remove the file or link at *path*, unless it is a hidden entry.
+
+    *path* was checked when it was resolved, but a transfer may have begun
+    since, and its scratch file answers to other names on a FAT filesystem.
+    Checking again right before the removal leaves next to no time for
+    that. Raises FileNotFoundError for a hidden entry, as for a missing one.
+    """
+    if _is_hidden(path):
+        raise FileNotFoundError(path)
+    os.remove(path)
+
+
 def modification_time(dir_entry: "os.DirEntry[str]") -> float:
     """When *dir_entry* was last modified, for sorting a listing.
 
@@ -238,7 +282,7 @@ def stays_in_files_directory(entry: Path) -> bool:
     files_directory = config.get_files_directory().resolve()
     try:
         target = entry.resolve()
-    except (ValueError, OSError):
+    except (ValueError, OSError, RuntimeError):
         return False
     return _is_inside_files_directory(target, files_directory)
 

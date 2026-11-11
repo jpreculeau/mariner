@@ -499,7 +499,7 @@ class SDCPService:
         try:
             form = await request.post()
         except Exception as exc:
-            logger.warning("SDCP: malformed upload request: %s", exc)
+            logger.warning("SDCP: malformed upload request: %r", exc)
             return web.json_response(
                 messages.upload_failure(constants.UploadError.UNKNOWN)
             )

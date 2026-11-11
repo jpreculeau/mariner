@@ -12,10 +12,12 @@ from mariner.config import _get_config
 from mariner.exceptions import (
     FileNotSelected,
     PrintAlreadyRunning,
+    PrintJustStarted,
     UnexpectedPrinterResponse,
 )
 from mariner.printer import ChiTuPrinter, PrinterState, PrintStatus
 from mariner.server import printer_access
+from mariner.server.files import NotPrintable
 
 
 class PrinterAccessTest(TestCase):
@@ -243,6 +245,17 @@ class PrinterAccessTest(TestCase):
             expect(status.state).to_equal(PrinterState.CLOSED)
             expect(selected).to_equal("")
 
+    def test_read_status_reports_closed_when_the_terminal_fails(self) -> None:
+        # What the serial library lets through when flushing its buffers
+        # fails. It is not an OSError.
+        import termios
+
+        self.printer_mock.get_print_status.side_effect = termios.error(5, "I/O error")
+        status, selected_file = printer_access.read_status()
+        expect(status.state).to_equal(PrinterState.CLOSED)
+        expect(status.silent).to_equal(False)
+        expect(selected_file).to_equal("")
+
     def test_read_status_does_not_ask_a_silent_printer_for_its_file(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "model.ctb")
         printer_access.read_status()
@@ -351,9 +364,22 @@ class PrinterAccessTest(TestCase):
             clock.return_value = 100.0 + printer_access._STATUS_MAX_AGE_SECS + 1
             self._in_use(Path("/mnt/usb_share/model.ctb"))
             expect(self.printer_mock.get_print_status.call_count).to_equal(1)
-            clock.return_value = 100.0 + printer_access._CLOSED_STATUS_MAX_AGE_SECS + 1
+            clock.return_value = 100.0 + printer_access._SILENCE_MAX_AGE_SECS + 1
             self._in_use(Path("/mnt/usb_share/model.ctb"))
             expect(self.printer_mock.get_print_status.call_count).to_equal(2)
+
+    def test_an_unclear_answer_is_not_remembered_for_longer(self) -> None:
+        # "Try again in a moment" must ask again a moment later.
+        printer_access.forget_status()
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=PrinterState.CLOSED
+        )
+        with patch("mariner.server.printer_access.time.monotonic") as clock:
+            clock.return_value = 100.0
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
+            clock.return_value = 100.0 + printer_access._STATUS_MAX_AGE_SECS + 0.5
+            self._in_use(Path("/mnt/usb_share/model.ctb"))
+        expect(self.printer_mock.get_print_status.call_count).to_equal(2)
 
     def test_talking_to_the_printer_forgets_the_remembered_status(self) -> None:
         # Otherwise a command sent through Mariner would go unnoticed until
@@ -584,6 +610,58 @@ class PrinterAccessTest(TestCase):
         expect(printer_access.usage_of(Path("/mnt/usb_share/sub/part.ctb"))).to_equal(
             printer_access.Usage.JUST_STARTED
         )
+
+    def test_start_print_gives_the_path_it_sent(self) -> None:
+        self._printer_still_says_idle()
+        expect(printer_access.start_print("sub/../sub//part.ctb")).to_equal(
+            "sub/part.ctb"
+        )
+        self.printer_mock.start_printing.assert_called_once_with("sub/part.ctb")
+
+    def test_a_file_that_cannot_be_printed_is_not_sent_to_the_printer(self) -> None:
+        self._printer_still_says_idle()
+        for name, reason in (
+            ("gone.ctb", NotPrintable.MISSING),
+            ("../outside.ctb", NotPrintable.UNSAFE),
+        ):
+            with self.assertRaises(NotPrintable) as raised:
+                printer_access.start_print(name)
+            expect(raised.exception.reason).to_equal(reason)
+        self.printer_mock.start_printing.assert_not_called()
+        self.printer_mock.get_print_status.assert_not_called()
+
+    def test_the_file_is_checked_with_file_changes_held_off(self) -> None:
+        # Checked earlier, it could be deleted before the command goes out.
+        self._printer_still_says_idle()
+        changes_possible = []
+
+        def check(name: str) -> str:
+            def try_to_change() -> None:
+                got_it = printer_access._change_lock.acquire(blocking=False)
+                if got_it:
+                    printer_access._change_lock.release()
+                changes_possible.append(got_it)
+
+            other = threading.Thread(target=try_to_change)
+            other.start()
+            other.join(timeout=5)
+            return name
+
+        with patch("mariner.server.printer_access.printable_relative_path", check):
+            printer_access.start_print("model.ctb")
+        expect(changes_possible).to_equal([False])
+
+    def test_a_second_start_says_that_the_first_is_only_just_under_way(self) -> None:
+        # Not "already printing": there is nothing to cancel yet.
+        self._printer_still_says_idle()
+        printer_access.start_print("model.ctb")
+        with self.assertRaises(PrintJustStarted):
+            printer_access.start_print("sub/part.ctb")
+
+        self._printer_reports(PrinterState.PRINTING, "model.ctb")
+        with self.assertRaises(PrintAlreadyRunning) as raised:
+            printer_access.start_print("sub/part.ctb")
+        expect(isinstance(raised.exception, PrintJustStarted)).to_equal(False)
 
     # ---- answers that settle nothing ----
 

@@ -29,15 +29,20 @@ from flask import (
 from pyre_extensions import none_throws
 
 from mariner import config
-from mariner.exceptions import MarinerException, PrintAlreadyRunning
+from mariner.exceptions import (
+    MarinerException,
+    PrintAlreadyRunning,
+    PrintJustStarted,
+)
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
 from mariner.printer import PrinterState
 from mariner.server.files import (
     NotPrintable,
+    is_directory,
     is_hidden_entry,
     modification_time,
-    printable_relative_path,
+    remove_entry,
     replacing,
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
@@ -379,7 +384,7 @@ def list_files() -> Union[str, Response]:
                 # Something on its way in or out, or the SDCP transfer
                 # folder. See files.is_hidden_entry.
                 continue
-            if dir_entry.is_dir():
+            if is_directory(dir_entry):
                 directories.append({"dirname": dir_entry.name})
             else:
                 # Anything that is not a directory is listed as a file, a
@@ -517,7 +522,7 @@ def delete_file() -> Union[str, Response]:
         abort(400)
     try:
         with _guard_for_this_request()(path):
-            os.remove(path)
+            remove_entry(path)
     except FileInUse as error:
         _abort_file_in_use(error, replacing_it=False)
     except FileNotFoundError:
@@ -570,16 +575,6 @@ class PrinterCommand(Enum):
     REBOOT = "reboot"
 
 
-def _printable_file_or_abort(filename: Optional[str]) -> str:
-    """The path to give the printer for *filename*, or an error response."""
-    if filename is None:
-        abort(400)
-    try:
-        return printable_relative_path(filename)
-    except NotPrintable as error:
-        abort(404 if error.reason == NotPrintable.MISSING else 400)
-
-
 @api.route("/printer/command/<command>", methods=["POST"])
 def printer_command(command: str) -> Union[str, Response]:
     try:
@@ -588,9 +583,21 @@ def printer_command(command: str) -> Union[str, Response]:
         abort(404)
 
     if printer_command == PrinterCommand.START_PRINT:
-        relative = _printable_file_or_abort(request.args.get("filename"))
+        filename = request.args.get("filename")
+        if filename is None:
+            abort(400)
         try:
-            start_print(relative)
+            start_print(filename)
+        except NotPrintable as error:
+            abort(404 if error.reason == NotPrintable.MISSING else 400)
+        except PrintJustStarted:
+            body = {
+                "code": "print_just_started",
+                "title": "Print Just Started",
+                "description": "A print was started a moment ago and the "
+                "printer has yet to report it. Try again in half a minute.",
+            }
+            abort(make_response(jsonify(body), 409))
         except PrintAlreadyRunning:
             body = {
                 "code": "print_in_progress",

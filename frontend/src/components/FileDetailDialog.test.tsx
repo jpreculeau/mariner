@@ -66,6 +66,17 @@ describe("FileDetailDialog", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it("refreshes the file list once the file is deleted", async () => {
+    vi.spyOn(api, "deleteFile").mockResolvedValue();
+    const refresh = vi.spyOn(queryClient, "invalidateQueries");
+    const onOpenChange = renderDialog();
+
+    fireEvent.click(screen.getByText("Delete"));
+
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(refresh).toHaveBeenCalledWith({ queryKey: ["files"] });
+  });
+
   it("shows why a deletion was refused and stays open", async () => {
     vi.spyOn(api, "deleteFile").mockRejectedValue(
       new ApiError(

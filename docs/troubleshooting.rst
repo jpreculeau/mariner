@@ -89,7 +89,7 @@ removed. Names it cannot use safely are refused instead of being rewritten:
   printer cannot store;
 * names ending with a dot, or longer than 255 bytes;
 * names containing control characters such as a line break, or the Unicode
-  line and paragraph separators.
+  line and paragraph separators, anywhere including at either end.
 
 Rename the file and upload it again. The same rules apply to folder names and
 to files sent from a slicer.
@@ -197,11 +197,18 @@ Printing
 
 Mariner does not start a print while the printer reports one that is
 starting, running or paused. Wait for it to finish, or cancel it first. The
-same goes for the half minute after a print was started through Mariner,
+web API answers 409 with the code ``print_in_progress``.
+
+The same goes for the half minute after a print was started through Mariner,
 until the printer reports that print, which also stops a double click from
-starting two. The web API answers 409 with the code ``print_in_progress``,
-UVtools receives a 409, and a slicer using SDCP is told that the printer is
-busy.
+starting two. There is nothing to cancel then: try again half a minute
+later. That also applies when the printer turned the first print down after
+selecting its file, since Mariner cannot tell that apart from a print that
+is about to begin. The web API answers 409 with the code
+``print_just_started``.
+
+In both cases UVtools receives a 409, and a slicer using SDCP is told that
+the printer is busy.
 
 .. rubric:: A transfer from a slicer is refused or disappears
 
@@ -217,8 +224,11 @@ and by the transfer id the slicer chose:
 * a transfer that receives nothing for five minutes is abandoned and what
   was received is removed. Send the file again.
 
-Two slicers on the **same** computer that both send without a transfer id
-cannot be told apart: the second one to start replaces the first.
+Two slicers on the **same** computer that send the same file name and size
+at the same time, both without a transfer id, cannot be told apart: the
+second one to start takes over, and pieces still arriving from the first
+can end up in its file. Slicers that ask for the checksum to be verified
+are protected: the file is then refused.
 
 .. rubric:: The dashboard shows progress but no layer count
 

@@ -20,7 +20,8 @@ from mariner.server.api import _layer_from_byte_offset
 from mariner.server.files import (
     NotPrintable,
     holds_a_transfer_in_progress,
-    printable_relative_path,
+    is_directory,
+    remove_entry,
     resolve_entry_in_files_directory,
     resolve_in_files_directory,
     scratch_path_beside,
@@ -377,14 +378,11 @@ class PrinterBridge:
 
     def start_print(self, filename: str, start_layer: int = 0) -> int:
         try:
-            relative = printable_relative_path(strip_storage_prefix(filename))
+            start_print(strip_storage_prefix(filename))
         except NotPrintable as error:
             if error.reason == NotPrintable.UNSUPPORTED:
                 return int(constants.PrintCtrlAck.UNKNOWN_FORMAT)
             return int(constants.PrintCtrlAck.NOT_FOUND)
-
-        try:
-            start_print(relative)
         except PrintAlreadyRunning:
             logger.warning("SDCP: start print refused: a print is running")
             return int(constants.PrintCtrlAck.BUSY)
@@ -461,7 +459,7 @@ class PrinterBridge:
                     # print or delete it by, not the name of its target.
                     rel = (directory / entry.name).relative_to(files_dir)
                     display = f"{constants.LOCAL_PREFIX}{rel.as_posix()}"
-                    if entry.is_dir():
+                    if is_directory(entry):
                         entries.append(
                             {
                                 "name": display,
@@ -508,7 +506,7 @@ class PrinterBridge:
                 continue
             try:
                 with unless_in_use(path):
-                    os.remove(path)
+                    remove_entry(path)
             except (FileInUse, OSError) as exc:
                 logger.warning("SDCP: not deleting %r: %s", raw, exc)
                 failures.append(raw)
@@ -517,6 +515,16 @@ class PrinterBridge:
             path = self._deletable(raw)
             if path is None or not os.path.isdir(path):
                 failures.append(raw)
+                continue
+            if os.path.islink(path):
+                # A link to a folder is listed as one, so this is how a
+                # client removes it. The link goes; what it leads to stays.
+                try:
+                    with unless_in_use(path):
+                        remove_entry(path)
+                except (FileInUse, OSError) as exc:
+                    logger.warning("SDCP: not deleting %r: %s", raw, exc)
+                    failures.append(raw)
                 continue
             if holds_a_transfer_in_progress(path):
                 # An upload through another interface is being written in

@@ -87,6 +87,9 @@ class ChiTuPrinter:
     _is_connected = False
     # Whether the last attempt to open the port found no device there.
     _device_is_missing = False
+    # Whether a single byte has come from the printer since this was last
+    # reset, read or discarded. See get_print_status.
+    _heard = False
 
     def __init__(self) -> None:
         self._serial_port = serial.Serial(
@@ -145,8 +148,9 @@ class ChiTuPrinter:
         if self._is_connected:
             match = None
             data = ""
-            # Whether any of the attempts brought something back.
-            heard = False
+            # Set by the reads below as soon as any byte arrives, even one
+            # that comes too late to be read as an answer.
+            self._heard = False
             try:
                 for _ in range(3):
                     data = self._send_and_read_until_contains(
@@ -155,7 +159,6 @@ class ChiTuPrinter:
                         max_readline_attempts=30,
                         read_timeout_secs=3.0,
                     )
-                    heard = heard or bool(data)
                     logger.debug("M4000 raw response: %r", data)
                     match = re.search("D:([0-9]+)/([0-9]+)/([0-9]+)", data)
                     if match is not None:
@@ -177,7 +180,7 @@ class ChiTuPrinter:
                     "treating printer as CLOSED. last_response=%r",
                     data,
                 )
-                return PrintStatus(state=PrinterState.CLOSED, silent=not heard)
+                return PrintStatus(state=PrinterState.CLOSED, silent=not self._heard)
 
             current_byte = int(match.group(1))
             total_bytes = int(match.group(2))
@@ -281,9 +284,7 @@ class ChiTuPrinter:
         # the printer's firmware is weird when the file is in a subdirectory. we need to
         # send M23 to select the file with its full path and then M6030 with just the
         # basename.
-        # select_file checks the name too. It is checked here as well because
-        # this method puts it in a second command, M6030.
-        self._check_filename(filename)
+        # select_file checks the name before anything is sent.
         self.select_file(filename)
         response = self._send_and_read(
             (f"M6030 '{os.path.basename(filename)}'").encode(),
@@ -364,6 +365,9 @@ class ChiTuPrinter:
         max_readline_attempts: int = 20,
         read_timeout_secs: float = 2.0,
     ) -> str:
+        if self._serial_port.in_waiting:
+            # About to be discarded: the late answer to an earlier question.
+            self._heard = True
         self._serial_port.reset_input_buffer()
         self._serial_port.reset_output_buffer()
         self._send(data + b"\r\n")
@@ -377,6 +381,8 @@ class ChiTuPrinter:
         while attempts < max_readline_attempts and time.monotonic() < deadline:
             line = self._serial_port.readline().decode("utf-8", errors="replace")
             attempts += 1
+            if line:
+                self._heard = True
             if expected_substring in line:
                 response = line
                 break
@@ -384,7 +390,8 @@ class ChiTuPrinter:
                 response = line
 
         self._serial_port.timeout = original_timeout
-        self._serial_port.read(size=1024)
+        if self._serial_port.read(size=1024):
+            self._heard = True
         return response
 
     def _send(self, data: bytes) -> None:
