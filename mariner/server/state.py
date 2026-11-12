@@ -28,6 +28,8 @@ _directory: Optional[Path] = None
 # one asked for is there and cannot be used, or nothing better than a
 # folder that goes at the next restart was found.
 _makeshift = False
+# The key of sessions, while it could not be written.
+_unkept_key: Optional[bytes] = None
 
 # What is answered when something could not be written here.
 NOT_WRITTEN = {
@@ -41,9 +43,10 @@ NOT_WRITTEN = {
 
 def forget() -> None:
     """Look for the folder again at the next use. For tests."""
-    global _directory, _makeshift
+    global _directory, _makeshift, _unkept_key
     _directory = None
     _makeshift = False
+    _unkept_key = None
 
 
 def is_makeshift() -> bool:
@@ -158,6 +161,10 @@ def _existing() -> Optional[Path]:
         # The one asked for, or nothing: if it cannot be used, what it
         # holds is out of reach, and no other is looked in for it.
         return Path(wanted) if _usable(wanted) else None
+    if _can_be_made(wanted):
+        # It will be made at the first thing kept, and read from then
+        # on: nothing is read elsewhere until then, to be lost sight of.
+        return None
     for fallback in _FALLBACKS:
         fallback = os.path.expanduser(fallback)
         if os.path.isdir(fallback) and _usable(fallback):
@@ -243,6 +250,8 @@ def session_key() -> bytes:
     Made the first time. A page left open then goes on working after
     Mariner restarts, and whoever is signed in stays so.
     """
+    if _unkept_key is not None:
+        return _unkept_key
     kept = read("session.key")
     if kept is not None and len(kept) == SESSION_KEY_BYTES:
         return kept
@@ -253,10 +262,14 @@ def session_key() -> bytes:
 
 def new_session_key() -> bytes:
     """Make and keep a new key: every session signed with the old ends."""
+    global _unkept_key
     key = secrets.token_bytes(SESSION_KEY_BYTES)
     try:
         write("session.key", key)
+        _unkept_key = None
     except OSError as error:
-        # Sessions then end when Mariner stops, as they used to.
+        # Sessions then end when Mariner stops, as they used to. The one
+        # that is kept, which this one replaces, is not read back.
         logger.warning("The key of sessions could not be kept: %s", error)
+        _unkept_key = key
     return key

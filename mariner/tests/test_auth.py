@@ -314,7 +314,9 @@ class FirstVisitTest(_WithClient):
         # A drive that is full or read-only: not the words for a file
         # that is being sent, and not "unexpected error".
         for cause in (OSError(28, "No space left on device"), PermissionError()):
-            with patch.object(state, "write", side_effect=cause):
+            with patch.object(state, "write", side_effect=cause), self.assertLogs(
+                "mariner.server.auth", level="ERROR"
+            ):
                 response = self.post("/api/auth/setup", password=PASSWORD)
             expect(response.status_code).to_equal(500)
             expect(response.get_json()["code"]).to_equal("state_not_written")
@@ -597,7 +599,9 @@ class ChangeTest(_WithClient):
         self.post("/api/auth/login", password=PASSWORD)
 
     def test_one_that_cannot_be_kept_is_not_a_wrong_password(self) -> None:
-        with patch.object(state, "write", side_effect=OSError(30, "Read-only")):
+        with patch.object(
+            state, "write", side_effect=OSError(30, "Read-only")
+        ), self.assertLogs("mariner.server.auth", level="ERROR"):
             for _ in range(4):
                 response = self.post(
                     "/api/auth/password", current=PASSWORD, new="new password!"
@@ -609,6 +613,30 @@ class ChangeTest(_WithClient):
             "/api/auth/password", current=PASSWORD, new="new password!"
         )
         expect(response.status_code).to_equal(200)
+
+    def test_a_sign_in_after_it_does_not_bring_the_old_key_back(self) -> None:
+        # The new key of sessions could not be written when the password
+        # was changed: the one kept is the old one.
+        self.addCleanup(
+            self.application.config.__setitem__,
+            "SECRET_KEY",
+            self.application.config["SECRET_KEY"],
+        )
+        state.write("session.key", b"o" * 32)
+        real = state.write
+
+        def write(name: str, content: bytes) -> None:
+            if name == "session.key":
+                raise OSError(28, "No space left on device")
+            real(name, content)
+
+        with patch.object(state, "write", side_effect=write):
+            with self.assertLogs("mariner.server.state", level="WARNING"):
+                self.post("/api/auth/password", current=PASSWORD, new="new password!")
+        other = self.application.test_client()
+        other.post("/api/auth/login", json={"password": "new password!"})
+        expect(self.application.config["SECRET_KEY"] == b"o" * 32).to_equal(False)
+        expect(self.state_of()["signed_in"]).to_equal(True)
 
     def test_a_new_one_that_is_refused_is_not_a_wrong_password(self) -> None:
         for _ in range(4):
@@ -942,7 +970,8 @@ class OnlyTheCookieTest(_WithClient):
         expect(auth.let_in(self.held, self.key)).to_equal(True)
 
     def test_it_cannot_use_up_the_attempts_of_the_reader(self) -> None:
-        # Its wrong passwords are counted with those of everyone else.
+        # Its wrong passwords, sent from the reader's own computer, do
+        # not count against changing the password.
         thief = self._without_the_key()
         for _ in range(6):
             thief.post("/api/auth/login", json={"password": "not the one"})

@@ -244,6 +244,47 @@ class DegradedTest(TestCase):
             expect(state.exists("anything")).to_equal(False)
         expect(wanted.exists()).to_equal(False)
 
+    def test_what_another_folder_holds_is_not_read_when_the_one_asked_for_can_be_made(
+        self,
+    ) -> None:
+        # The first thing kept makes the folder asked for, and from then
+        # on that one is read: a password read in the other until then
+        # would stop being asked for at the first write.
+        wanted = self.root / "state"
+        own = self.root / "own"
+        own.mkdir(mode=0o700)
+        (own / "password").write_bytes(b"x")
+        os.chmod(own / "password", 0o600)
+        self._configured(wanted)
+        with patch("mariner.server.state._FALLBACKS", [str(own)]):
+            expect(state.exists("password")).to_equal(False)
+            state.write("other", b"y")
+            expect(state.exists("password")).to_equal(False)
+
+    def test_what_another_folder_holds_is_read_when_the_one_asked_for_cannot_be(
+        self,
+    ) -> None:
+        blocked = self.root / "a-file"
+        blocked.write_bytes(b"x")
+        own = self.root / "own"
+        own.mkdir(mode=0o700)
+        (own / "password").write_bytes(b"x")
+        os.chmod(own / "password", 0o600)
+        self._configured(blocked / "state")
+        with patch("mariner.server.state._FALLBACKS", [str(own)]):
+            expect(state.read("password")).to_equal(b"x")
+
+    def test_a_new_key_that_could_not_be_kept_is_not_replaced_by_the_old_one(
+        self,
+    ) -> None:
+        self._configured(self.root / "state")
+        old_key = state.session_key()
+        with patch.object(state, "write", side_effect=OSError(28, "No space")):
+            with self.assertLogs("mariner.server.state", level="WARNING"):
+                new = state.new_session_key()
+        expect(new == old_key).to_equal(False)
+        expect(state.session_key()).to_equal(new)
+
     def test_a_new_key_replaces_the_one_in_place(self) -> None:
         self._configured(self.root / "state")
         first = state.session_key()

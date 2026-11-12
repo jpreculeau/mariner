@@ -476,6 +476,9 @@ def _not_kept(error: OSError) -> Response:
     return make_response(jsonify(state.NOT_WRITTEN), 500)
 
 
+_key_lock = threading.Lock()
+
+
 def _use_the_key_that_is_kept() -> None:
     """Sign what follows with the key the next start will read.
 
@@ -483,14 +486,17 @@ def _use_the_key_that_is_kept() -> None:
     cannot reach the one a running Mariner holds: signed with that one,
     who signs in now would be signed out at the next start.
     """
-    held = current_app.config.get("SECRET_KEY")
-    if state.read("session.key") == held:
-        return
-    kept = state.session_key()
-    # Not one that could not be written: each sign-in would end the
-    # sessions of the others.
-    if state.read("session.key") == kept:
-        current_app.config["SECRET_KEY"] = kept
+    # One at a time: of two signing in together, neither makes a key
+    # that the other replaces.
+    with _key_lock:
+        held = current_app.config.get("SECRET_KEY")
+        if state.read("session.key") == held:
+            return
+        kept = state.session_key()
+        # Not one that could not be written: each sign-in would end the
+        # sessions of the others.
+        if state.read("session.key") == kept:
+            current_app.config["SECRET_KEY"] = kept
 
 
 def _given(*names: str) -> Optional[Tuple[str, ...]]:

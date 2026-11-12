@@ -209,7 +209,9 @@ class SettingsApiTest(_WithState):
         expect(response.get_json()["restart_needed"]).to_equal(False)
 
     def test_a_change_that_cannot_be_kept_is_said_as_such(self) -> None:
-        with patch.object(state, "write", side_effect=OSError(28, "No space left")):
+        with patch.object(
+            state, "write", side_effect=OSError(28, "No space left")
+        ), self.assertLogs("mariner.server.settings", level="ERROR"):
             response = self.client.post("/api/settings", json={"sdcp_enabled": False})
         expect(response.status_code).to_equal(500)
         expect(response.get_json()["code"]).to_equal("state_not_written")

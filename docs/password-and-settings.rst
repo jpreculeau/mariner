@@ -46,7 +46,9 @@ After three wrong passwords the next attempt has to wait: one second, then
 two, four, and so on up to thirty. The count starts again at the first right
 one. The count is kept for each computer (by its address), so that someone
 else's wrong passwords do not keep you waiting. Only a few computers have a
-count of their own at a time; past that the rest share one.
+count of their own at a time; past that the rest share one. Where
+Mariner is made to listen over IPv6, the computers of one network share a
+count: a computer has as many such addresses as it likes.
 
 What the password does not cover
 --------------------------------
