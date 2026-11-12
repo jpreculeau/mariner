@@ -91,6 +91,53 @@ class UVToolsProviderTest(TestCase):
         )
         expect(response.status_code).to_equal(400)
 
+    def test_upload_file_larger_than_allowed(self) -> None:
+        with patch.dict(self.client.application.config, {"MAX_CONTENT_LENGTH": 2000}):
+            response = self.client.post(
+                "/uvtools/upload/big.ctb",
+                data=b"x" * 5000,
+                content_type="application/octet-stream",
+            )
+        expect(response.status_code).to_equal(413)
+        expect(response.get_json()["code"]).to_equal("file_too_large")
+        names = os.listdir(config.get_files_directory())
+        expect("big.ctb" in names).to_equal(False)
+        expect([name for name in names if name.endswith(".part")]).to_equal([])
+
+    def test_upload_file_is_written_as_it_arrives(self) -> None:
+        # Not held whole in memory first: a file can be larger than what
+        # the board has.
+        payload = bytes(range(256)) * 4096 * 3
+        written = []
+        real_open = open
+
+        def recording_open(
+            path: Any, mode: str = "r", *args: Any, **kwargs: Any
+        ) -> Any:
+            file = real_open(path, mode, *args, **kwargs)
+            if "w" in mode and str(path).endswith(".part"):
+                real_write = file.write
+
+                def write(data: bytes) -> int:
+                    written.append(len(data))
+                    return int(real_write(data))
+
+                file.write = write  # type: ignore[method-assign]
+            return file
+
+        with patch("builtins.open", side_effect=recording_open):
+            response = self.client.post(
+                "/uvtools/upload/large.ctb",
+                data=payload,
+                content_type="application/octet-stream",
+            )
+        expect(response.status_code).to_equal(200)
+        with open(config.get_files_directory() / "large.ctb", "rb") as file:
+            expect(file.read() == payload).to_equal(True)
+        expect(sum(written)).to_equal(len(payload))
+        expect(max(written) <= 1024 * 1024).to_equal(True)
+        expect(len(written) >= 3).to_equal(True)
+
     def test_upload_file_rejects_empty_body(self) -> None:
         response = self.client.post(
             "/uvtools/upload/mymodel.ctb",
@@ -235,7 +282,9 @@ class UVToolsProviderTest(TestCase):
 
     def test_upload_refusal_writes_nothing(self) -> None:
         self._printer_is_printing("foobar.ctb")
-        with patch.object(pathlib.Path, "write_bytes") as write_mock:
+        with patch(
+            "mariner.server.providers.uvtools._write_as_it_arrives"
+        ) as write_mock:
             response = self.client.post(
                 "/uvtools/upload/foobar.ctb",
                 data=b"new contents",
@@ -253,8 +302,9 @@ class UVToolsProviderTest(TestCase):
         expect(response.status_code).to_equal(404)
 
     def test_upload_whose_folder_was_just_removed(self) -> None:
-        with patch.object(
-            pathlib.Path, "write_bytes", side_effect=FileNotFoundError("gone")
+        with patch(
+            "mariner.server.providers.uvtools._write_as_it_arrives",
+            side_effect=FileNotFoundError("gone"),
         ):
             response = self.client.post(
                 "/uvtools/upload/new.ctb",
@@ -342,8 +392,9 @@ class UVToolsProviderTest(TestCase):
     ) -> None:
         # A full disk, say. Left unhandled, the server would log the
         # request path, client text, as it came.
-        with patch.object(
-            pathlib.Path, "write_bytes", side_effect=OSError(28, "No space left")
+        with patch(
+            "mariner.server.providers.uvtools._write_as_it_arrives",
+            side_effect=OSError(28, "No space left"),
         ):
             with self.assertLogs(level="WARNING") as logs:
                 response = self.client.post(
@@ -411,18 +462,17 @@ class UVToolsProviderTest(TestCase):
     def test_upload_refuses_when_the_print_starts_during_the_upload(self) -> None:
         # The first check passes; the print starts while the file is being
         # written. The check made as it is moved into place must catch it.
-        real_write = pathlib.Path.write_bytes
+        from mariner.server.providers import uvtools
 
-        def write_while_a_print_starts(path: pathlib.Path, data: bytes) -> int:
-            written = real_write(path, data)
+        real_write = uvtools._write_as_it_arrives
+
+        def write_while_a_print_starts(stream: Any, path: pathlib.Path) -> int:
+            written = real_write(stream, path)
             self._printer_is_printing("foobar.ctb")
             return written
 
         with patch.object(
-            pathlib.Path,
-            "write_bytes",
-            autospec=True,
-            side_effect=write_while_a_print_starts,
+            uvtools, "_write_as_it_arrives", side_effect=write_while_a_print_starts
         ):
             response = self.client.post(
                 "/uvtools/upload/foobar.ctb",

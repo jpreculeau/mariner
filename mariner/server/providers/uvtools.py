@@ -29,7 +29,8 @@ PrinterInfo    GET     uvtools/info
 
 import logging
 import os
-from typing import Tuple, Union
+from pathlib import Path
+from typing import IO, Tuple, Union
 
 from flask import Blueprint, Response, abort, jsonify, request
 
@@ -58,6 +59,26 @@ from mariner.server.printer_access import (
 from mariner.server.utils import read_cached_sliced_model_file
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+# How much of an upload is read and written at a time.
+_PIECE_BYTES = 1024 * 1024
+
+
+def _write_as_it_arrives(stream: IO[bytes], path: Path) -> int:
+    """Write what *stream* gives to the file at *path*; how many bytes.
+
+    A piece at a time: held whole in memory first, a file could be larger
+    than what the board has. Reading stops with a 413 past the largest
+    size allowed.
+    """
+    received = 0
+    with open(path, "wb") as file:
+        while True:
+            piece = stream.read(_PIECE_BYTES)
+            if not piece:
+                return received
+            received += len(piece)
+            file.write(piece)
 
 
 class UVToolsProvider(NetworkPrintProvider):
@@ -176,9 +197,6 @@ class UVToolsProvider(NetworkPrintProvider):
         if dest is None:
             abort(400)
 
-        data = request.get_data()
-        if not data:
-            abort(400)
         if os.path.isdir(dest):
             # A folder already has that name; a file cannot take its place.
             abort(400)
@@ -188,7 +206,9 @@ class UVToolsProvider(NetworkPrintProvider):
             with unless_in_use(dest):
                 pass
             with replacing(dest, guard=unless_in_use) as scratch:
-                scratch.write_bytes(data)
+                received = _write_as_it_arrives(request.stream, scratch)
+                if received == 0:
+                    abort(400)
         except FileNotFoundError:
             # The folder was removed while the file was being written.
             abort(404)
@@ -207,7 +227,7 @@ class UVToolsProvider(NetworkPrintProvider):
         except AttributeError:
             pass
 
-        logger.info("UVTools upload: %s (%d bytes)", safe_name, len(data))
+        logger.info("UVTools upload: %r (%d bytes)", safe_name, received)
         return jsonify({"success": True, "filename": safe_name})
 
     def _print_file(self, filename: str) -> Union[str, Response]:

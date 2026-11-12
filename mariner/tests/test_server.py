@@ -765,6 +765,22 @@ class MarinerServerTest(TestCase):
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(400)
 
+    def test_upload_file_larger_than_allowed(self) -> None:
+        data = {"file": (io.BytesIO(b"x" * 5000), "big.ctb")}
+        with patch.dict(self.client.application.config, {"MAX_CONTENT_LENGTH": 2000}):
+            response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(413)
+        body = response.get_json()
+        expect(body["code"]).to_equal("file_too_large")
+        expect("2048 MB" in body["description"]).to_equal(True)
+        expect(os.path.exists("/mnt/usb_share/big.ctb")).to_equal(False)
+        expect(self._leftovers()).to_equal([])
+
+    def test_the_web_server_is_told_the_upload_limit(self) -> None:
+        # With room for what a form adds around the file.
+        limit = self.client.application.config["MAX_CONTENT_LENGTH"]
+        expect(limit).to_equal(config.get_max_upload_bytes() + 1024 * 1024)
+
     def _stored(self, *parts: str) -> bytes:
         with open(config.get_files_directory().joinpath(*parts), "rb") as file:
             return file.read()

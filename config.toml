@@ -36,6 +36,13 @@ baudrate = 115200
 host = "0.0.0.0"
 # TCP port on which to listen
 port = 5000
+# Largest file accepted, in megabytes, from the web page and from slicers.
+# Default is 2048.
+max_upload_size_mb = 2048
+# Where a file is kept while it arrives. It must be on a drive: in /tmp, which
+# on current systems is held in memory, a large file would not fit. Default is
+# /var/tmp.
+spool_directory = "/var/tmp"
 
 [cache]
 # Directory in which cached information such as file metadata and thumbnails

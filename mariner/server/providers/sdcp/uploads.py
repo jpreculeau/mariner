@@ -184,6 +184,11 @@ class UploadManager:
         upload_uuid = key[1]
         if offset < 0 or total_size < 0:
             return ChunkResult(ok=False, error=constants.UploadError.OFFSET_ERROR)
+        if total_size > config.get_max_upload_bytes():
+            logger.warning(
+                "SDCP: refusing a file of %d bytes, more than is allowed", total_size
+            )
+            return ChunkResult(ok=False, error=constants.UploadError.UNKNOWN)
 
         # The id is client input, used as a key and written to the log. Only
         # a short token of letters, digits, "-" and "_" is accepted: clients

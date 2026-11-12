@@ -217,6 +217,18 @@ told apart: the second one to start takes over, and pieces still arriving
 from the first can end up in its file. Slicers that ask for the checksum to be verified
 are protected: the file is then refused.
 
+.. rubric:: A file is refused as too large (error 413)
+
+Files can be 2048 MB at most, from the web page and from slicers. To accept
+larger ones, set ``max_upload_size_mb`` under ``[http]`` in
+``/etc/mariner/config.toml`` and restart Mariner.
+
+While it arrives, a file is kept in ``/var/tmp``, which must have room for
+it, twice over for a file sent from the web page. Another place on a drive
+can be set as ``spool_directory``. If that place cannot be used, Mariner
+says so in the logs at start and falls back on ``/tmp``; where ``/tmp`` is
+held in memory, large files then fail to upload.
+
 .. rubric:: A folder cannot be made (error 400, ``folder_too_deep``)
 
 Folders can be nested 16 deep. Make the folder higher up.

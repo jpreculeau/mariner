@@ -49,6 +49,12 @@ Printer and prints
 - Read the firmware version from boards that end lines with CRLF, and treat undecodable bytes from the printer as a bad answer instead of crashing
 - Answer the SDCP discovery broadcast without waiting on the printer, with the firmware version read when the service starts
 
+Uploads
+
+- Accept files up to 2 GB by default, from the web page and from slicers, and make the limit a setting (`max_upload_size_mb`); before, the web page and UVtools stopped at 1 GB, and SDCP had no limit
+- Keep a file on a drive while it arrives (`spool_directory`, `/var/tmp` by default) instead of in `/tmp`, which on current systems is held in memory
+- Write a file sent by UVtools as it arrives instead of holding it whole in memory
+
 Reading files
 
 - Show the details and preview of the file that is there now, after one was replaced by another of the same name

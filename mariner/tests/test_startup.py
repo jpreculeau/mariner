@@ -56,3 +56,62 @@ class StartupTest(TestCase):
                 "serve",
             ],
         )
+
+    def _started(self, **patches: Any) -> Any:
+        with patch.object(server.logging, "basicConfig"), patch.object(
+            server.logging.getLogger(), "handlers", []
+        ), patch.object(server, "empty_cache"), patch.object(
+            server, "remove_stale_scratch_files"
+        ), patch.object(
+            server, "CacheBootstrapper"
+        ), patch.object(
+            server, "start_providers"
+        ), patch.object(
+            server, "serve"
+        ) as serve:
+            server.main()
+        return serve
+
+    def test_the_web_server_takes_uploads_up_to_the_limit(self) -> None:
+        # Left to itself it refuses anything over a gigabyte.
+        with patch.object(
+            server.config, "get_max_upload_bytes", return_value=3 * 1024**3
+        ), patch.object(server, "use_spool_directory"):
+            serve = self._started()
+        self.assertEqual(
+            serve.call_args.kwargs["max_request_body_size"], 3 * 1024**3 + 1024**2
+        )
+
+    def test_uploads_wait_on_the_drive_not_in_memory(self) -> None:
+        # The web server keeps an upload in a temporary file until it is
+        # whole, and on current systems /tmp is memory.
+        import tempfile
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.addCleanup(setattr, tempfile, "tempdir", tempfile.tempdir)
+        with patch.object(
+            server.config, "get_spool_directory", return_value=directory.name
+        ):
+            server.use_spool_directory()
+        self.assertEqual(tempfile.gettempdir(), directory.name)
+
+    def test_a_spool_directory_that_cannot_be_used_is_said_and_passed(self) -> None:
+        import tempfile
+
+        before = tempfile.gettempdir()
+        self.addCleanup(setattr, tempfile, "tempdir", tempfile.tempdir)
+        with patch.object(
+            server.config, "get_spool_directory", return_value="/nonexistent/spool"
+        ), self.assertLogs("mariner.server", level="WARNING"):
+            server.use_spool_directory()
+        self.assertEqual(tempfile.gettempdir(), before)
+
+    def test_the_spool_directory_is_set_before_the_web_server_starts(self) -> None:
+        order: List[str] = []
+        with patch.object(
+            server, "use_spool_directory", side_effect=lambda: order.append("spool")
+        ):
+            serve = self._started()
+            serve.assert_called_once()
+        self.assertEqual(order, ["spool"])

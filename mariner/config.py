@@ -87,6 +87,39 @@ def get_http_port() -> int:
     return int(http_config.get("port", default_port))
 
 
+DEFAULT_MAX_UPLOAD_SIZE_MB = 2048
+
+
+def get_max_upload_bytes() -> int:
+    """The largest file any interface accepts, in bytes.
+
+    Set in megabytes as ``max_upload_size_mb`` under ``[http]``. Anything
+    but a whole number above zero is taken for the default.
+    """
+    megabytes: object = DEFAULT_MAX_UPLOAD_SIZE_MB
+    http_config = _get_config().get("http")
+    if isinstance(http_config, dict):
+        megabytes = http_config.get("max_upload_size_mb", megabytes)
+    if isinstance(megabytes, bool) or not isinstance(megabytes, int) or megabytes <= 0:
+        megabytes = DEFAULT_MAX_UPLOAD_SIZE_MB
+    return megabytes * 1024 * 1024
+
+
+def get_spool_directory() -> str:
+    """Where an upload is kept while it arrives: a place on a drive.
+
+    The web server writes an upload to a temporary file before handing it
+    over. In the default place for those, /tmp, it would be held in memory
+    on systems where /tmp is, and a file can be larger than the memory of
+    the board.
+    """
+    default_directory = "/var/tmp"
+    http_config = _get_config().get("http")
+    if not isinstance(http_config, dict):
+        return default_directory
+    return str(http_config.get("spool_directory", default_directory))
+
+
 def get_cache_directory() -> str:
     default_directory = "/tmp/mariner/"
     cache_config = _get_config().get("cache")

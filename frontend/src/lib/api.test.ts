@@ -151,6 +151,23 @@ describe("api client", () => {
     expect(error.message).toContain("did not say");
   });
 
+  it("says a file is too large when the web server itself refused it", async () => {
+    // Past the limit the web server answers before Mariner does, in plain
+    // text.
+    vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: false,
+      status: 413,
+      statusText: "Request Entity Too Large",
+      json: () => Promise.reject(new SyntaxError("not JSON")),
+    } as Response);
+
+    const file = new File(["x"], "model.ctb");
+    const refusal = await api.uploadFile(file).catch((error) => error);
+    expect(refusal).toBeInstanceOf(ApiError);
+    expect(refusal.code).toBe("file_too_large");
+    expect(refusal.message).toBe("This file is larger than Mariner accepts.");
+  });
+
   it("falls back to the status when the error has no JSON body", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue({
       ok: false,

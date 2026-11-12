@@ -23,6 +23,31 @@ class ConfigurationTest(TestCase):
 
         expect(config.get_cache_directory()).to_equal("/tmp/mariner/")
 
+        expect(config.get_max_upload_bytes()).to_equal(2048 * 1024 * 1024)
+        expect(config.get_spool_directory()).to_equal("/var/tmp")
+
+    def test_can_customize_the_upload_limit_and_where_uploads_wait(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[http]
+max_upload_size_mb = 300
+spool_directory = "/srv/spool"
+            """,
+        )
+        expect(config.get_max_upload_bytes()).to_equal(300 * 1024 * 1024)
+        expect(config.get_spool_directory()).to_equal("/srv/spool")
+
+    def test_an_upload_limit_that_makes_no_sense_is_the_default(self) -> None:
+        for number, value in enumerate(("0", "-5", '"big"', "1.5", "true")):
+            config._get_config.cache_clear()
+            self.fs.create_file(
+                "/etc/mariner/config.toml",
+                contents=f"[http]\nmax_upload_size_mb = {value}\n",
+            )
+            expect(config.get_max_upload_bytes()).to_equal(2048 * 1024 * 1024)
+            self.fs.remove("/etc/mariner/config.toml")
+
     def test_can_customize_files_directory(self) -> None:
         self.fs.create_file(
             "/etc/mariner/config.toml",

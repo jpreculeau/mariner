@@ -1495,6 +1495,33 @@ class UploadManagerTest(TestCase):
         ]
         expect(leftovers).to_equal([])
 
+    def test_a_file_announced_larger_than_allowed_is_refused_at_once(self) -> None:
+        with patch(
+            "mariner.server.providers.sdcp.uploads.config.get_max_upload_bytes",
+            return_value=4096,
+        ):
+            result = self.manager.handle_chunk(
+                upload_uuid="abc",
+                filename="model.ctb",
+                offset=0,
+                total_size=4097,
+                expected_md5="",
+                verify=False,
+                data=b"x" * 100,
+            )
+            expect(result.ok).to_equal(False)
+            expect(os.listdir("/mnt/usb_share")).to_equal([])
+            allowed = self.manager.handle_chunk(
+                upload_uuid="abd",
+                filename="model.ctb",
+                offset=0,
+                total_size=4096,
+                expected_md5="",
+                verify=False,
+                data=b"x" * 100,
+            )
+            expect(allowed.ok).to_equal(True)
+
     def test_terminate_without_transfer(self) -> None:
         ack = self.manager.terminate("nope")
         expect(ack).to_equal(int(constants.FileTransferAck.NOT_TRANSFER))

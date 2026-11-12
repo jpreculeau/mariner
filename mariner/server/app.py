@@ -3,9 +3,9 @@ import os
 import stat
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, Tuple
 
-from flask import Flask
+from flask import Flask, Response, jsonify
 from flask_wtf.csrf import CSRFProtect
 from whitenoise import WhiteNoise
 
@@ -90,6 +90,28 @@ def usable_cache_directory(wanted: str) -> str:
     fallback = _own_folder()
     logger.warning("Not using the cache directory %r; using %r", wanted, fallback)
     return fallback
+
+
+# What a form adds around the file it carries.
+UPLOAD_OVERHEAD_BYTES = 1024 * 1024
+
+app.config.from_mapping(
+    # Checked by Flask against the length a request announces, and as its
+    # body is read.
+    MAX_CONTENT_LENGTH=config.get_max_upload_bytes()
+    + UPLOAD_OVERHEAD_BYTES,
+)
+
+
+@app.errorhandler(413)
+def file_too_large(error: Exception) -> Tuple[Response, int]:
+    megabytes = config.get_max_upload_bytes() // (1024 * 1024)
+    body = {
+        "code": "file_too_large",
+        "title": "File Too Large",
+        "description": f"Files can be {megabytes} MB at most.",
+    }
+    return jsonify(body), 413
 
 
 app.config.from_mapping(

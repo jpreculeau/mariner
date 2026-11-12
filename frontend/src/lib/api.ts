@@ -84,6 +84,15 @@ async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
   } catch {
     // No JSON body: an error page, or nothing at all.
   }
+  if (res.status === 413) {
+    // Past the limit the web server answers before Mariner does, in plain
+    // text.
+    return new ApiError(
+      413,
+      "This file is larger than Mariner accepts.",
+      "file_too_large",
+    );
+  }
   return new ApiError(res.status, fallback);
 }
 

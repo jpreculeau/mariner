@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import os
+import tempfile
 from typing import Dict
 
 from flask import abort, render_template
@@ -10,7 +11,7 @@ from mariner import config
 from mariner.file_formats.reading import MalformedFile
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
-from mariner.server.app import app as flask_app, csrf
+from mariner.server.app import UPLOAD_OVERHEAD_BYTES, app as flask_app, csrf
 from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
 from mariner.server.utils import (
@@ -119,6 +120,24 @@ def keep_requests_on_one_line() -> None:
             handler.addFilter(_OneLine())
 
 
+def use_spool_directory() -> None:
+    """Have uploads wait on a drive while they arrive, not in memory.
+
+    The web server, and Flask after it, keep an upload in a temporary file
+    until it is whole. Temporary files go to /tmp unless told otherwise,
+    and where /tmp is held in memory a large upload would not fit.
+    """
+    directory = config.get_spool_directory()
+    if os.path.isdir(directory) and os.access(directory, os.W_OK | os.X_OK):
+        tempfile.tempdir = directory
+    else:
+        logger.warning(
+            "Cannot keep uploads in %r while they arrive; using %r",
+            directory,
+            tempfile.gettempdir(),
+        )
+
+
 def main() -> None:
     # Global log level applies to mariner.* and waitress output.
     log_level = getattr(logging, config.get_log_level(), logging.INFO)
@@ -141,4 +160,11 @@ def main() -> None:
     CacheBootstrapper().start()
     start_providers()
 
-    serve(flask_app, host=config.get_http_host(), port=config.get_http_port())
+    use_spool_directory()
+    serve(
+        flask_app,
+        host=config.get_http_host(),
+        port=config.get_http_port(),
+        # Left to itself the web server refuses anything over a gigabyte.
+        max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
+    )
