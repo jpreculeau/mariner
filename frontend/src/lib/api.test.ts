@@ -205,25 +205,21 @@ describe("api client", () => {
   });
 
   describe("when the page's token is out of date", () => {
-    const refused = () =>
-      Promise.resolve({
-        ok: false,
-        status: 400,
-        statusText: "BAD REQUEST",
-        json: () =>
-          Promise.resolve({
-            code: "token_refused",
-            title: "Page Out Of Date",
-            description: "Reload the page and try again.",
-          }),
-      });
-    const newToken = () =>
-      Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ csrf_token: "fresh-token" }),
-      });
-    const served = () =>
-      Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    // Real answers: what is read of one cannot be read again.
+    const json = (status: number, body: unknown) => () =>
+      Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    const refused = json(400, {
+      code: "token_refused",
+      title: "Page Out Of Date",
+      description: "Reload the page and try again.",
+    });
+    const newToken = json(200, { csrf_token: "fresh-token" });
+    const served = json(200, {});
 
     it("asks for a new one and sends the request again", async () => {
       const fetchMock = vi
@@ -251,21 +247,60 @@ describe("api client", () => {
       );
     });
 
-    it("sends an upload again too", async () => {
+    it("asks for a token before sending a file", async () => {
+      // A file refused for its token has been sent whole by then, and
+      // would be sent whole again.
       const fetchMock = vi
         .fn()
-        .mockImplementationOnce(refused)
         .mockImplementationOnce(newToken)
         .mockImplementationOnce(served);
       globalThis.fetch = fetchMock;
 
       await api.uploadFile(new File(["x"], "model.ctb"), ".");
 
-      expect(fetchMock).toHaveBeenCalledTimes(3);
-      expect(fetchMock.mock.calls[2][1].headers["X-CSRFToken"]).toBe(
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+        "/api/csrf_token",
+        "/api/upload_file?path=.",
+      ]);
+      expect(fetchMock.mock.calls[1][1].headers["X-CSRFToken"]).toBe(
         "fresh-token",
       );
-      expect(fetchMock.mock.calls[2][1].body).toBeInstanceOf(FormData);
+      expect(fetchMock.mock.calls[1][1].body).toBeInstanceOf(FormData);
+    });
+
+    it("sends the file all the same when no token can be asked for", async () => {
+      for (const noToken of [
+        () => Promise.reject(new Error("offline")),
+        json(500, {}),
+        json(200, { csrf_token: 42 }),
+        json(200, null),
+        () => Promise.resolve(new Response("<html>", { status: 200 })),
+      ]) {
+        const fetchMock = vi
+          .fn()
+          .mockImplementationOnce(noToken)
+          .mockImplementationOnce(served);
+        globalThis.fetch = fetchMock;
+
+        await api.uploadFile(new File(["x"], "model.ctb"), ".");
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(fetchMock.mock.calls[1][0]).toBe("/api/upload_file?path=.");
+        expect(fetchMock.mock.calls[1][1].headers["X-CSRFToken"]).not.toBe(42);
+      }
+    });
+
+    it("shows what the server said of a refusal it read to tell which", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(
+          json(400, { code: "folder_too_deep", description: "Too deep." }),
+        );
+      globalThis.fetch = fetchMock;
+
+      await expect(api.createDirectory(".", "x")).rejects.toMatchObject({
+        message: "Too deep.",
+      });
     });
 
     it("tries once only, then says what the server said", async () => {
@@ -276,6 +311,7 @@ describe("api client", () => {
         .mockImplementationOnce(refused);
       globalThis.fetch = fetchMock;
 
+      // The answer was read once already, to tell why it was refused.
       await expect(api.printerCommand("pause_print")).rejects.toMatchObject({
         code: "token_refused",
         message: "Reload the page and try again.",

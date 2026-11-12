@@ -289,7 +289,8 @@ def unusable_entries() -> List[str]:
     """What the configuration lists that can match nothing, in words.
 
     For the log at start: such an entry looks like one that was applied.
-    Judged by what does the matching, so that the two cannot disagree.
+    Judged by what does the matching where it can be, so that the two
+    seldom disagree.
     """
     found = []
     for host in config.get_http_allowed_hosts():

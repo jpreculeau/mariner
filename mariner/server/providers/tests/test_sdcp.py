@@ -1709,7 +1709,7 @@ class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
 
     async def test_a_refusal_says_what_gave_the_page_away(self) -> None:
         for headers, told in (
-            ({"Referer": "http://evil.example/page"}, "SDCP: refused"),
+            ({"Referer": "http://evil.example/page"}, 'SDCP: refused GET "/websocket"'),
             ({"Referer": "http://evil.example/page"}, "http://evil.example"),
             ({"Sec-Fetch-Site": "cross-site"}, "cross-site"),
         ):

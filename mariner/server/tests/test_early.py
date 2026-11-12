@@ -290,6 +290,13 @@ class EarlyRefusalTest(TestCase):
                     )
                     expect(answered).to_equal(status)
 
+    def test_how_many_times_an_upload_is_kept(self) -> None:
+        form, raw = "Multipart/Form-Data; boundary=x", "application/octet-stream"
+        with patch.object(early, "files_share_the_drive", return_value=False):
+            expect((early.copies_kept(form), early.copies_kept(raw))).to_equal((2, 1))
+        with patch.object(early, "files_share_the_drive", return_value=True):
+            expect((early.copies_kept(form), early.copies_kept(raw))).to_equal((3, 2))
+
     def test_whether_files_are_kept_on_the_drive_uploads_wait_on(self) -> None:
         import pathlib
         import tempfile

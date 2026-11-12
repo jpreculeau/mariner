@@ -130,8 +130,12 @@ class LogTest(TestCase):
         expect("accept" in message.lower().replace("also sent", "")).to_equal(False)
 
     def test_many_at_once_are_counted_right(self) -> None:
+        import sys
         import threading
 
+        # Threads take turns so often that, unguarded, the count goes wrong.
+        self.addCleanup(sys.setswitchinterval, sys.getswitchinterval())
+        sys.setswitchinterval(1e-6)
         said = refusals.Sparingly()
         written = []
 

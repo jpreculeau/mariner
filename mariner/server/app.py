@@ -288,7 +288,9 @@ def token_refused(error: CSRFError) -> Tuple[Response, int]:
         "code": "token_refused",
         "title": "Page Out Of Date",
         "description": "This page was opened before Mariner last restarted, "
-        "or its session ended. Reload the page and try again.",
+        "or its session ended. Reload the page and try again. (A script "
+        "first asks /api/csrf_token for a token, and sends it as "
+        "X-CSRFToken with the cookie that came with it.)",
     }
     return jsonify(body), 400
 

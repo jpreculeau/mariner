@@ -242,16 +242,9 @@ from a link and do not know the name, leave the setting alone.
 
 .. rubric:: A request is refused as coming from another site (error 403, ``cross_site_request``)
 
-For this refusal and the two around it, Mariner's log says who was refused
+For this refusal, the one before and the one after, Mariner's log says who was refused
 and what the request said of itself (``journalctl -u mariner3d``), once a
 minute at most for the same client and reason.
-
-.. rubric:: An action answers "Page Out Of Date" (error 400, ``token_refused``)
-
-The page was open when Mariner restarted, or the browser ended its
-session. The page normally notices, asks Mariner for a new token and sends
-its request again without a word. If you do see this message, reload the
-page.
 
 When a browser says which page a request comes from, Mariner serves only
 its own pages' requests. A bookmark, a typed address and a link to Mariner
@@ -295,6 +288,15 @@ which sends ``Range``.
 This keeps out the programs known to follow a page's links. It is not a
 lock: if the printer's network holds devices or people you do not trust,
 switch these addresses off (``[uvtools] enabled = false``).
+
+.. rubric:: An action answers "Page Out Of Date" (error 400, ``token_refused``)
+
+The page was open when Mariner restarted, or the browser ended its
+session. The page normally notices, asks Mariner for a new token and sends
+its request again without a word. If you do see this message, reload the
+page. A script has no page: it asks ``/api/csrf_token`` for a token first,
+and sends it in the ``X-CSRFToken`` header with the cookie that came with
+it.
 
 .. rubric:: A request is refused as too large (error 413, ``request_too_large``)
 

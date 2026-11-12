@@ -69,7 +69,8 @@ async function renewCsrfToken(): Promise<boolean> {
 async function tokenWasRefused(res: Response): Promise<boolean> {
   if (res.status !== 400) return false;
   try {
-    const body = await (res.clone ? res.clone() : res).json();
+    // A copy is read: the answer itself is still to be shown.
+    const body = await res.clone().json();
     return body?.code === "token_refused";
   } catch {
     return false;
@@ -201,6 +202,9 @@ export const api = {
     if (options.ignoreUnreachablePrinter) {
       q.set("ignore_unreachable_printer", "1");
     }
+    // A file refused for its token has been sent whole by then, and would
+    // be sent whole again: make sure of the token first.
+    await renewCsrfToken();
     const res = await fetchWithToken(`/api/upload_file?${q.toString()}`, {
       method: "POST",
       body: formData,

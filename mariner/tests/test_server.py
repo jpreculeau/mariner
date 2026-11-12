@@ -1053,6 +1053,8 @@ class MarinerServerTest(TestCase):
             body = response.get_json()
             expect(body["code"]).to_equal("token_refused")
             expect("Reload" in body["description"]).to_equal(True)
+            # And for a script, which has no page to reload.
+            expect("/api/csrf_token" in body["description"]).to_equal(True)
 
     def test_a_page_whose_token_went_stale_can_ask_for_a_new_one(self) -> None:
         # After Mariner restarted, say: the page then sends its request
@@ -1084,7 +1086,9 @@ class MarinerServerTest(TestCase):
         refusals.said.clear()
         with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
             self.client.get("/uvtools/files", headers={"User-Agent": "Mozilla/5.0"})
-        expect("browser_not_served" in logs.records[0].getMessage()).to_equal(True)
+        message = logs.records[0].getMessage()
+        for told in ("browser_not_served", "GET", "/uvtools/files", "127.0.0.1"):
+            expect(told in message).to_equal(True)
 
     def test_the_page_is_not_kept_by_browsers_or_proxies(self) -> None:
         # It carries the token its requests are checked against.

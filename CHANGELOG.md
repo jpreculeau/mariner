@@ -70,7 +70,7 @@ Requests from the web
 - Keep the page out of caches, and the cookie that goes with its token out of what other sites have the browser post or load (it still goes with a link followed to Mariner, and with anything asked by a page served from the printer's own address on another port)
 - Show a file's preview where it is asked for instead of sending it as a download, so that another site cannot tell from a download starting whether a file of a given name exists
 - Write refused requests to the log, with who sent them, what they asked for and what they said, once a minute at most for the same client and reason, which bounds what a web page can have written, not a device of the network
-- Keep a page left open able to act: its token was refused after an hour, so that a page open on a long print could no longer pause or stop it until reloaded. The token now lasts until Mariner restarts (or a month), and the page then asks for a new one by itself and sends its request again; if that fails it says to reload (`token_refused`)
+- Keep a page left open able to act: its token was refused after an hour, so that a page open on a long print could no longer pause or stop it until reloaded. The token now lasts until Mariner restarts (or a month), and the page then asks for a new one by itself and sends its request again (before sending a file it makes sure of its token first); if that fails it says to reload (`token_refused`)
 
 Reading files
 
