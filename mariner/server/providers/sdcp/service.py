@@ -291,7 +291,11 @@ class SDCPService:
             logger.warning("SDCP: ignoring non-JSON message: %.200r", text)
             return
 
-        inner = payload.get("Data") or {}
+        # Valid JSON need not be an object: a list, a number, a word.
+        inner = payload.get("Data") if isinstance(payload, dict) else None
+        if not isinstance(inner, dict):
+            logger.warning("SDCP: ignoring a message that is not one: %.200r", text)
+            return
         try:
             cmd = int(inner.get("Cmd"))
         except (TypeError, ValueError):

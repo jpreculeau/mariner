@@ -53,3 +53,13 @@ spool_directory = "/var/tmp"
 # Directory in which cached information such as file metadata and thumbnails
 # will be stored
 directory = "/tmp/mariner/"
+
+# Interfaces for slicers. Both are on unless switched off here.
+[uvtools]
+# Routes UVtools sends files and commands to, on the port of the web page.
+enabled = true
+
+[sdcp]
+# The protocol ChiTuBox speaks: discovery on UDP port 3000, WebSocket and
+# uploads on TCP port 3030.
+enabled = true

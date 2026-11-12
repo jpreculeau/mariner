@@ -8,7 +8,20 @@ printer without opening the Mariner web interface.
 The feature is built on a **provider** system: each supported tool gets its own
 endpoints speaking the protocol that tool expects. A provider either adds
 routes to Mariner's own web port, or runs its own listeners when the protocol
-dictates its ports. Both providers are enabled by default.
+dictates its ports. Both providers are enabled by default. Either can be
+switched off in ``/etc/mariner/config.toml``, after which Mariner must be
+restarted:
+
+.. code-block:: toml
+
+   [uvtools]
+   enabled = false
+
+   [sdcp]
+   enabled = false
+
+Like the web interface, both act for whoever reaches them on the network:
+switch off the one you do not use.
 
 .. contents:: On this page
    :local:
@@ -34,7 +47,9 @@ Configuring UVTools
 
    :Name: Any label you like (e.g. ``Mariner``).
    :Host: The IP address or hostname of your Mariner instance.
-   :Port: The port Mariner listens on (default ``5050``).
+   :Port: The port Mariner listens on: ``5000`` on a packaged install, as
+      set in ``/etc/mariner/config.toml``, and ``5050`` when no
+      configuration file sets one.
    :Extensions: ``ctb;cbddlp;fdg;photon``
 
 4. Configure each operation as shown in the table below.

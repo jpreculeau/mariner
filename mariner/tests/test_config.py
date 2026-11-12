@@ -38,6 +38,17 @@ spool_directory = "/srv/spool"
         expect(config.get_max_upload_bytes()).to_equal(300 * 1024 * 1024)
         expect(config.get_spool_directory()).to_equal("/srv/spool")
 
+    def test_slicer_interfaces_can_be_switched_off(self) -> None:
+        expect(config.get_uvtools_enabled()).to_equal(True)
+        expect(config.get_sdcp_enabled()).to_equal(True)
+        config._get_config.cache_clear()
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="[uvtools]\nenabled = false\n[sdcp]\nenabled = false\n",
+        )
+        expect(config.get_uvtools_enabled()).to_equal(False)
+        expect(config.get_sdcp_enabled()).to_equal(False)
+
     def test_host_names_can_be_allowed(self) -> None:
         expect(config.get_http_allowed_hosts()).to_equal([])
         config._get_config.cache_clear()

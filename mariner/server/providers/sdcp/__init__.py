@@ -28,6 +28,10 @@ class SDCPProvider(NetworkPrintProvider):
         return "sdcp"
 
     @property
+    def enabled(self) -> bool:
+        return config.get_sdcp_enabled()
+
+    @property
     def provides_http_routes(self) -> bool:
         return False
 

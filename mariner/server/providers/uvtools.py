@@ -86,6 +86,10 @@ class UVToolsProvider(NetworkPrintProvider):
     def name(self) -> str:
         return "uvtools"
 
+    @property
+    def enabled(self) -> bool:
+        return config.get_uvtools_enabled()
+
     def register_routes(self, blueprint: Blueprint) -> None:
         blueprint.register_error_handler(MarinerException, self._printer_error)
         blueprint.add_url_rule(

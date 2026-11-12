@@ -144,6 +144,14 @@ def get_cache_directory() -> str:
     return str(cache_config.get("directory", default_directory))
 
 
+def get_uvtools_enabled() -> bool:
+    """Whether the routes UVtools sends files and commands to are served."""
+    uvtools_config = _get_config().get("uvtools")
+    if not isinstance(uvtools_config, dict):
+        return True
+    return bool(uvtools_config.get("enabled", True))
+
+
 def _sdcp_config() -> Dict[str, Any]:
     # Values come back as Any (rather than object) so callers can coerce them
     # with int()/float(), matching how the other config sections narrow.

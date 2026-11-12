@@ -175,6 +175,23 @@ class MalformedFileTest(TestCase):
             CTBFile.read(self._copy("stairs.ctb", bytes(whole))).printer_name
         ).to_equal("")
 
+    def test_a_measure_that_is_not_a_number_is_refused(self) -> None:
+        # Not a number, or without end: nothing can be worked out from it,
+        # and it cannot be written in an answer.
+        for sample, parser, header, _ in PLAIN:
+            for field in ("layer_height_mm", "height_mm", "bed_size_x_mm"):
+                if field not in [f.name for f in dataclasses.fields(header)]:
+                    continue
+                for value in (float("nan"), float("inf"), float("-inf")):
+                    path = self._with(
+                        sample, _offset_of(header, field), struct.pack("<f", value)
+                    )
+                    with self.assertRaises(MalformedFile):
+                        parser.read(path)
+        for field in ("layer_height_mm", "total_height_mm", "display_width"):
+            with self.assertRaises(MalformedFile):
+                CTBEncryptedFile.read(self._encrypted_with(**{field: float("nan")}))
+
     def test_a_file_without_a_layer_is_refused(self) -> None:
         for sample, parser, header, _ in PLAIN:
             path = self._with(
@@ -295,7 +312,7 @@ class MalformedFileTest(TestCase):
 
     # ---- encrypted CTB ----
 
-    def _encrypted_with(self, **changes: int) -> pathlib.Path:
+    def _encrypted_with(self, **changes: float) -> pathlib.Path:
         """bolts.ctb with fields of its encrypted settings block changed."""
         whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())
         header = CTBEncryptedHeader.unpack_from(bytes(whole))
@@ -303,7 +320,8 @@ class MalformedFileTest(TestCase):
         end = start + header.slicer_size
         block = bytearray(ctb_encrypted._aes_crypt(bytes(whole[start:end]), False))
         for name, value in changes.items():
-            struct.pack_into("<I", block, _offset_of(CTBEncryptedSlicer, name), value)
+            kind = "<f" if isinstance(value, float) else "<I"
+            struct.pack_into(kind, block, _offset_of(CTBEncryptedSlicer, name), value)
         whole[start:end] = ctb_encrypted._aes_crypt(bytes(block), True)
         return self._copy("bolts.ctb", bytes(whole))
 

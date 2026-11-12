@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import subprocess
 import pathlib
 from typing import Any
 from unittest.mock import patch, ANY, Mock
@@ -840,6 +841,63 @@ class MarinerServerTest(TestCase):
         served_by = self.client.application.wsgi_app
         expect(served_by.add_headers_function).to_equal(add_static_headers)
         expect(served_by.allow_all_origins).to_equal(False)
+
+    def test_host_commands_say_whether_they_were_accepted(self) -> None:
+        for url, command in (
+            ("/api/host/shutdown", ["shutdown", "-h", "now"]),
+            ("/api/host/reboot", ["reboot"]),
+        ):
+            with patch("mariner.server.api.subprocess.run") as run:
+                run.return_value.returncode = 0
+                response = self.client.post(url)
+            expect(response.status_code).to_equal(200)
+            expect(run.call_args.args[0]).to_equal(command)
+            # Not left to hang a request thread if the command does.
+            expect(run.call_args.kwargs["timeout"] <= 30).to_equal(True)
+
+            # Refused: the account Mariner runs under may not have the right.
+            with patch("mariner.server.api.subprocess.run") as run, self.assertLogs(
+                "mariner.server.api", level="WARNING"
+            ) as logs:
+                run.return_value.returncode = 1
+                run.return_value.stderr = b"Interactive authentication required.\nX"
+                response = self.client.post(url)
+            expect(response.status_code).to_equal(503)
+            body = response.get_json()
+            expect(body["code"]).to_equal("host_command_refused")
+            expect("authentication" in response.get_data(as_text=True)).to_equal(False)
+            expect("\n" in logs.records[-1].getMessage()).to_equal(False)
+
+            for failure in (
+                FileNotFoundError("shutdown"),
+                subprocess.TimeoutExpired(command, 15),
+            ):
+                with patch(
+                    "mariner.server.api.subprocess.run", side_effect=failure
+                ), self.assertLogs("mariner.server.api", level="WARNING"):
+                    response = self.client.post(url)
+                expect(response.status_code).to_equal(503)
+                expect(response.get_json()["code"]).to_equal("host_command_refused")
+
+    def test_file_preview_of_a_name_in_any_script(self) -> None:
+        # The name goes into a header, which carries plain characters only.
+        self.fs.create_file(
+            "/mnt/usb_share/模型 é.ctb", contents=self.ctb_file_contents
+        )
+        response = self.client.get("/api/file_preview?filename=模型 é.ctb")
+        expect(response.status_code).to_equal(200)
+        disposition = response.headers["Content-Disposition"]
+        disposition.encode("latin-1")
+        expect(disposition.isascii()).to_equal(True)
+        expect(
+            "filename*=UTF-8''%E6%A8%A1%E5%9E%8B%20%C3%A9.ctb.png" in disposition
+        ).to_equal(True)
+        expect(disposition.startswith("attachment; ")).to_equal(True)
+        # An ordinary name is given both ways, for clients that know one.
+        response = self.client.get("/api/file_preview?filename=foobar.ctb")
+        expect(
+            'filename="foobar.ctb.png"' in response.headers["Content-Disposition"]
+        ).to_equal(True)
 
     def test_requests_from_another_site_are_refused(self) -> None:
         elsewhere = {"Sec-Fetch-Site": "cross-site"}

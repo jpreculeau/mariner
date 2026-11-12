@@ -5,7 +5,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { api } from "@/lib/api";
+import { toast } from "@/components/ui/sonner";
+import { api, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export function PowerMenu() {
@@ -29,8 +30,12 @@ export function PowerMenu() {
       } else {
         await api.hostReboot();
       }
-    } catch {
-      // host is shutting down, connection will drop
+    } catch (error) {
+      // A dropped connection is the host going down. An answer is the
+      // host saying no.
+      if (error instanceof ApiError) {
+        toast.error(error.message);
+      }
     }
     setOpen(false);
     reset();

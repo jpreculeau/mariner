@@ -1644,6 +1644,18 @@ class _BrowserRequest:
         self.path = "/websocket"
 
 
+class ServiceOddMessagesTest(IsolatedAsyncioTestCase):
+    async def test_a_message_that_is_not_an_object_is_passed_over(self) -> None:
+        # Valid JSON all the same: a list, a number, a word.
+        service = SDCPService.__new__(SDCPService)
+        socket = Mock()
+        for text in ("[1, 2]", "3", '"word"', "null", '{"Data": [1]}', '{"Data": 3}'):
+            with self.assertLogs(
+                "mariner.server.providers.sdcp.service", level="WARNING"
+            ):
+                await service._handle_text(cast(Any, socket), text)
+
+
 class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
     async def _answered(self, headers: Any) -> Any:
         from mariner.server.providers.sdcp.service import refuse_other_sites

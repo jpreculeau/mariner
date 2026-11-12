@@ -49,12 +49,15 @@ Printer and prints
 - Let a web API client override the refusal only for a printer that was asked and stayed silent, once the user has confirmed that it is switched off
 - Handle a failure of the serial line, of any kind, in every printer command, while the port is being opened and while it is being closed
 - Keep the dashboard working when the file being printed cannot be read
+- Check that the computer accepted a shutdown or restart asked for from the web page, and say so when it did not (`host_command_refused`), instead of answering that all went well
+- Pass over an SDCP message that is valid JSON but not an object, instead of dropping the client
 - Read the firmware version from boards that end lines with CRLF, and treat undecodable bytes from the printer as a bad answer instead of crashing
 - Answer the SDCP discovery broadcast without waiting on the printer, with the firmware version read when the service starts
 
 Requests from the web
 
 - Refuse, on the web API, UVtools and SDCP, what a page of another web site has a browser send (`cross_site_request`): such a page could start, stop or delete without anyone asking
+- Add a setting to switch the UVtools routes off (`[uvtools] enabled`), beside the one SDCP has
 - Send with every answer the headers that keep the page from being shown inside another site, its scripts to Mariner's own, and its data and pictures from being loaded by other sites
 - Keep what went wrong inside out of error answers: no call trace for a printer error (`printer_error`), a plain answer for an error nobody planned for (`internal_error`), debug mode off; the cause goes to the logs
 - Say that a file could not be stored (`upload_not_stored`) when an upload from the web page fails for want of room, instead of failing without a word
@@ -75,6 +78,8 @@ Reading files
 - Let requests that arrive together for the same file share one read
 - Do not remember what was read of a file that was replaced during the read
 - Compare the signature of an encrypted CTB file in full
+- Refuse a file whose layer height, height or bed size is not a number: the status of its print answered with an error at every request
+- Name the preview download of a file whose name has characters outside Latin-1; it answered with an error
 - Answer 422 with the code `file_unreadable` for the details or preview of a file that cannot be read, 400 for a kind of file Mariner does not read and 404 for a file removed meanwhile, instead of 500; a read that fails for another reason answers 500 with the code `file_read_failed` and no internal detail
 - Read `.cbddlp` and `.photon` files of the first format version, which have no slicer settings
 - Leave the companion files macOS writes (`._name`) out of the start-up reading

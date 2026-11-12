@@ -2,6 +2,7 @@ import logging
 import os
 import subprocess
 import threading
+import urllib.parse
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -624,6 +625,21 @@ def create_directory() -> Union[str, Response]:
     return jsonify({"success": True})
 
 
+def _attachment(name: str) -> str:
+    """A ``Content-Disposition`` header naming a download *name*.
+
+    A header carries plain characters only. The name is given in full in
+    the form made for any script, and in plain characters, with the others
+    replaced, for clients that only know the older form.
+    """
+    plain = "".join(
+        character if " " <= character < "\x7f" and character not in '"\\' else "_"
+        for character in name
+    )
+    encoded = urllib.parse.quote(name, safe="")
+    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{encoded}"
+
+
 @api.route("/file_preview", methods=["GET"])
 def file_preview() -> Response:
     filename = request.args.get("filename")
@@ -635,9 +651,7 @@ def file_preview() -> Response:
 
     response = make_response(preview_bytes)
     response.headers.set("Content-Type", "image/png")
-    response.headers.set(
-        "Content-Disposition", "attachment", filename=f"{filename}.png"
-    )
+    response.headers.set("Content-Disposition", _attachment(f"{path.name}.png"))
 
     return response
 
@@ -687,15 +701,45 @@ def printer_command(command: str) -> Union[str, Response]:
         return jsonify({"success": True})
 
 
+_HOST_COMMAND_TIMEOUT_SECS = 15
+
+
+def _run_host_command(command: List[str]) -> None:
+    """Run a command that stops or restarts the host; 503 if it is refused.
+
+    The command returns at once when it is accepted. It is refused when the
+    account Mariner runs under has no right to it, which the answer must
+    say: started and forgotten, a refusal looked like a host that would
+    not go down.
+    """
+    try:
+        done = subprocess.run(
+            command, capture_output=True, timeout=_HOST_COMMAND_TIMEOUT_SECS
+        )
+        failure = None if done.returncode == 0 else done.stderr[:500]
+    except (OSError, subprocess.TimeoutExpired) as error:
+        failure = error
+    if failure is None:
+        return
+    logger.warning("Host command %r was not carried out: %r", command, failure)
+    body = {
+        "code": "host_command_refused",
+        "title": "Command Refused",
+        "description": "The computer Mariner runs on did not accept the "
+        "command. Mariner may not have the right to stop or restart it.",
+    }
+    abort(make_response(jsonify(body), 503))
+
+
 @api.route("/host/shutdown", methods=["POST"])
 def host_shutdown() -> Union[str, Response]:
     logger.warning("Host shutdown requested via API")
-    subprocess.Popen(["shutdown", "-h", "now"])
+    _run_host_command(["shutdown", "-h", "now"])
     return jsonify({"success": True})
 
 
 @api.route("/host/reboot", methods=["POST"])
 def host_reboot() -> Union[str, Response]:
     logger.warning("Host reboot requested via API")
-    subprocess.Popen(["reboot"])
+    _run_host_command(["reboot"])
     return jsonify({"success": True})

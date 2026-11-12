@@ -24,6 +24,11 @@ class NetworkPrintProvider(ABC):
         ...
 
     @property
+    def enabled(self) -> bool:
+        """Whether the configuration has this provider switched on."""
+        return True
+
+    @property
     def provides_http_routes(self) -> bool:
         """Whether this provider serves routes on Mariner's HTTP port."""
         return True

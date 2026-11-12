@@ -17,7 +17,11 @@ _providers: List[NetworkPrintProvider] = [
 
 
 def get_provider_prefixes() -> List[str]:
-    """URL prefixes owned by providers, so the SPA fallback can skip them."""
+    """URL prefixes owned by providers, so the SPA fallback can skip them.
+
+    Those of a provider that is switched off included: its addresses then
+    answer 404, not the page of the web interface.
+    """
     return [p.name for p in _providers if p.provides_http_routes]
 
 
@@ -25,6 +29,9 @@ def register_providers(app: Flask, csrf: CSRFProtect) -> None:
     """Attach provider blueprints to *app*. Safe to call at import time."""
     for provider in _providers:
         if not provider.provides_http_routes:
+            continue
+        if not provider.enabled:
+            logger.info("Network print provider switched off: %s", provider.name)
             continue
         bp = provider.create_blueprint()
         csrf.exempt(bp)
@@ -39,6 +46,8 @@ def start_providers() -> None:
     importing the app (in tests, or under a WSGI loader) binds no ports.
     """
     for provider in _providers:
+        if not provider.enabled:
+            continue
         try:
             provider.start()
         except Exception:
