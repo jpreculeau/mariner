@@ -155,6 +155,42 @@ async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
 }
 
 /**
+ * Send a form with a file in it, telling how much has gone as it goes.
+ *
+ * Not with `fetch`, which cannot tell: files are hundreds of megabytes,
+ * and minutes long over a slow link.
+ */
+function sendFile(
+  url: string,
+  body: FormData,
+  onProgress?: (fraction: number) => void,
+): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    const csrf = getCsrfToken();
+    if (csrf) request.setRequestHeader("X-CSRFToken", csrf);
+    request.upload.onprogress = (event) => {
+      if (onProgress && event.lengthComputable && event.total > 0) {
+        onProgress(event.loaded / event.total);
+      }
+    };
+    request.onload = () => {
+      // An answer without content cannot carry any: 204, 304.
+      const empty = request.status === 204 || request.status === 304;
+      resolve(
+        new Response(empty ? null : request.responseText, {
+          status: request.status,
+          statusText: request.statusText,
+        }),
+      );
+    };
+    request.onerror = () => reject(unreachable());
+    request.send(body);
+  });
+}
+
+/**
  * For changing an existing file. Set once the user, told that the printer
  * does not answer, has confirmed that it is switched off.
  */
@@ -162,8 +198,19 @@ export interface FileChangeOptions {
   ignoreUnreachablePrinter?: boolean;
 }
 
+/** No answer at all: Mariner is off, or the network between is down. */
+function unreachable(): ApiError {
+  // What a browser throws then is in its own words, and its own language.
+  return new ApiError(0, "Mariner cannot be reached.", "network");
+}
+
 async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetchWithToken(url, options);
+  let res: Response;
+  try {
+    res = await fetchWithToken(url, options);
+  } catch {
+    throw unreachable();
+  }
   if (!res.ok) {
     throw await errorFrom(res, `API error: ${res.status} ${res.statusText}`);
   }
@@ -195,6 +242,7 @@ export const api = {
     file: File,
     path: string = ".",
     options: FileChangeOptions = {},
+    onProgress?: (fraction: number) => void,
   ): Promise<void> {
     const formData = new FormData();
     formData.append("file", file);
@@ -202,13 +250,14 @@ export const api = {
     if (options.ignoreUnreachablePrinter) {
       q.set("ignore_unreachable_printer", "1");
     }
+    const url = `/api/upload_file?${q.toString()}`;
     // A file refused for its token has been sent whole by then, and would
     // be sent whole again: make sure of the token first.
     await renewCsrfToken();
-    const res = await fetchWithToken(`/api/upload_file?${q.toString()}`, {
-      method: "POST",
-      body: formData,
-    });
+    let res = await sendFile(url, formData, onProgress);
+    if ((await tokenWasRefused(res)) && (await renewCsrfToken())) {
+      res = await sendFile(url, formData, onProgress);
+    }
     if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);
   },
 

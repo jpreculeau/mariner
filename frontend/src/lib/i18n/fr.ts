@@ -1,0 +1,151 @@
+import type { TextKey } from "./en";
+
+/**
+ * Les textes de la page en français. Espaces insécables avant « : ; ? ! »
+ * et à l'intérieur des guillemets, comme le veut l'usage.
+ */
+export const fr: Record<TextKey, string> = {
+  "app.skipToContent": "Aller au contenu",
+  "nav.main": "Principale",
+  "nav.dashboard": "Tableau de bord",
+  "nav.files": "Fichiers",
+  "title.dashboard": "Tableau de bord",
+  "title.files": "Fichiers",
+  "title.notFound": "Page introuvable",
+
+  "appearance.open": "Apparence",
+  "appearance.theme": "Couleurs de l'imprimante",
+  "appearance.typeface": "Police de caractères",
+  "appearance.language": "Langue",
+  "font.hyperlegible.hint": "Des lettres dessinées pour ne pas se confondre",
+  "font.opendyslexic.hint":
+    "Des lettres lestées, pour les lecteurs dyslexiques",
+
+  "power.open": "Alimentation",
+  "power.heading": "Ordinateur qui fait tourner Mariner",
+  "power.reboot": "Redémarrer",
+  "power.rebootConfirm": "Confirmer le redémarrage ?",
+  "power.shutdown": "Éteindre",
+  "power.shutdownConfirm": "Confirmer l'arrêt ?",
+
+  "status.idle": "Prête",
+  "status.printing": "Impression en cours",
+  "status.paused": "En pause",
+  "status.offline": "Hors ligne",
+  "status.label": "Imprimante : {status}",
+
+  "dashboard.heading": "Tableau de bord de l'imprimante",
+  "dashboard.connecting": "Connexion à l'imprimante…",
+  "dashboard.unreachable.title": "Mariner est injoignable",
+  "dashboard.unreachable.text":
+    "Vérifiez que l'ordinateur qui fait tourner Mariner est allumé et relié au réseau. Cette page réessaie toute seule.",
+  "dashboard.idle.title": "Prête à imprimer",
+  "dashboard.idle.text":
+    "Choisissez un fichier dans Fichiers pour lancer une impression.",
+  "dashboard.idle.open": "Ouvrir Fichiers",
+  "dashboard.offline.title": "L'imprimante ne répond pas",
+  "dashboard.offline.text":
+    "Vérifiez que l'imprimante est allumée et que son câble vers l'ordinateur qui fait tourner Mariner est branché.",
+
+  "print.progress": "Avancement de l'impression",
+  "print.currentLayer": "Couche en cours",
+  "print.totalLayers": "Nombre de couches",
+  "print.elapsed": "Écoulé (estimation)",
+  "print.remaining": "Restant (estimation)",
+  "print.file": "Fichier en cours d'impression",
+  "print.pause": "Mettre en pause",
+  "print.resume": "Reprendre",
+  "print.cancel": "Annuler l'impression",
+  "print.pausing": "Mise en pause…",
+  "print.resuming": "Reprise…",
+  "print.cancelling": "Annulation…",
+  "print.cancel.title": "Annuler cette impression ?",
+  "print.cancel.text":
+    "{file} est imprimé à {progress}. Une impression annulée ne peut pas être reprise : il faut la relancer depuis la première couche.",
+  "print.cancel.keep": "Continuer l'impression",
+  "print.cancel.confirm": "Annuler l'impression",
+  "print.paused": "Impression en pause",
+  "print.resumed": "Impression reprise",
+  "print.cancelled": "Impression annulée",
+  "print.started": "Impression lancée",
+
+  "files.heading": "Fichiers",
+  "files.folder": "Dossier : {path}",
+  "files.newFolder": "Nouveau dossier",
+  "files.upload": "Envoyer un fichier",
+  "files.uploading": "Envoi de {file} : {percent}",
+  "files.uploadProgress": "Avancement de l'envoi",
+  "files.uploaded": "{file} envoyé",
+  "files.loading": "Chargement des fichiers…",
+  "files.error.title": "La liste des fichiers n'a pas pu être obtenue",
+  "files.error.retry": "Réessayer",
+  "files.empty": "Ce dossier est vide.",
+  "files.up": "Remonter au dossier parent",
+  "files.openFolder": "Ouvrir le dossier {name}",
+  "files.printable": "Imprimable",
+  "files.printTime": "Durée d'impression : {time}",
+  "files.newFolder.in": "Créer un dossier dans {path}.",
+  "files.newFolder.name": "Nom du dossier",
+  "files.newFolder.create": "Créer",
+  "files.newFolder.creating": "Création…",
+  "files.newFolder.created": "Dossier créé",
+
+  "file.details.printable": "Détails d'un fichier imprimable",
+  "file.details.other": "Détails d'un fichier",
+  "file.preview": "Aperçu de l'impression",
+  "file.layers": "Couches",
+  "file.time": "Durée d'impression",
+  "file.height": "Hauteur",
+  "file.delete": "Supprimer",
+  "file.deleting": "Suppression…",
+  "file.print": "Lancer l'impression",
+  "file.starting": "Lancement…",
+  "file.delete.title": "Supprimer ce fichier ?",
+  "file.delete.text": "{file} sera supprimé définitivement.",
+  "file.delete.confirm": "Supprimer le fichier",
+  "file.deleted": "{file} supprimé",
+
+  "printerOff.title": "L'imprimante ne répond pas",
+  "printerOff.text":
+    "Ne continuez que si l'imprimante est éteinte. Si elle est en train d'imprimer ce fichier, l'impression sera perdue.",
+  "printerOff.replace": "Remplacer quand même",
+  "printerOff.delete": "Supprimer quand même",
+
+  "common.cancel": "Annuler",
+  "common.close": "Fermer",
+
+  "notFound.heading": "Page introuvable",
+  "notFound.text": "Il n'y a rien à cette adresse.",
+  "notFound.home": "Retour au tableau de bord",
+
+  "error.network":
+    "Mariner est injoignable. Vérifiez que l'ordinateur qui le fait tourner est allumé et relié au réseau.",
+  "error.unknown": "Une erreur s'est produite (erreur {status}).",
+  "error.token_refused":
+    "Cette page n'est plus à jour. Rechargez-la et réessayez.",
+  "error.file_too_large": "Ce fichier dépasse la taille que Mariner accepte.",
+  "error.request_too_large":
+    "Cette demande dépasse la taille que Mariner accepte.",
+  "error.upload_not_stored":
+    "Il n'y a pas assez de place pour enregistrer ce fichier. Libérez de la place et renvoyez-le.",
+  "error.folder_too_deep":
+    "Les dossiers ne peuvent pas être imbriqués plus profondément.",
+  "error.folder_exists": "Un dossier ou un fichier porte déjà ce nom.",
+  "error.host_command_refused":
+    "L'ordinateur qui fait tourner Mariner n'a pas accepté la commande.",
+  "error.print_in_progress":
+    "Ce fichier est en cours d'impression : il ne peut pas être modifié avant la fin.",
+  "error.print_just_started":
+    "Une impression vient d'être lancée : attendez que l'imprimante indique ce qu'elle imprime.",
+  "error.printer_error":
+    "L'imprimante n'a pas accepté la commande. Vérifiez qu'elle est allumée et que son câble est branché.",
+  "error.file_unreadable":
+    "Ce fichier ne peut pas être lu comme un fichier à imprimer.",
+  "error.file_read_failed": "Ce fichier n'a pas pu être lu sur le disque.",
+  "error.internal_error":
+    "Mariner a rencontré une erreur. Son journal en dit plus.",
+  "error.cross_site_request":
+    "Mariner a refusé cette demande, comme venant d'un autre site.",
+  "error.host_not_allowed":
+    "Mariner ne répond pas au nom sous lequel cette page a été ouverte.",
+};

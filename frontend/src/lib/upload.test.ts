@@ -1,0 +1,160 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { api, ApiError } from "./api";
+import { FakeXhr, useFakeXhr } from "@/test/fakeXhr";
+
+const file = () => new File(["x"], "model.ctb");
+const json = (body: unknown) => JSON.stringify(body);
+const noNewToken = () => Promise.reject(new Error("offline"));
+const newToken = () =>
+  Promise.resolve(new Response(json({ csrf_token: "fresh-token" })));
+
+describe("sending a file", () => {
+  beforeEach(() => {
+    useFakeXhr();
+    globalThis.fetch = vi.fn().mockImplementation(noNewToken);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("posts the file to the folder it is for", async () => {
+    await api.uploadFile(file(), "sub/folder");
+
+    expect(FakeXhr.requests).toHaveLength(1);
+    const sent = FakeXhr.requests[0];
+    expect(sent.method).toBe("POST");
+    expect(sent.url).toBe("/api/upload_file?path=sub%2Ffolder");
+    expect(sent.body).toBeInstanceOf(FormData);
+    expect((sent.body as FormData).get("file")).toBeInstanceOf(File);
+  });
+
+  it("says so when the reader confirmed that the printer is off", async () => {
+    await api.uploadFile(file(), ".", { ignoreUnreachablePrinter: true });
+    expect(FakeXhr.requests[0].url).toBe(
+      "/api/upload_file?path=.&ignore_unreachable_printer=1",
+    );
+  });
+
+  it("tells how much of the file has been sent as it goes", async () => {
+    FakeXhr.answers = [{ status: 200, progress: [0.25, 0.5, 1] }];
+    const seen: number[] = [];
+
+    await api.uploadFile(file(), ".", {}, (fraction) => seen.push(fraction));
+
+    expect(seen).toEqual([0.25, 0.5, 1]);
+  });
+
+  it("makes sure of its token before sending", async () => {
+    // A file refused for its token has been sent whole by then, and
+    // would be sent whole again.
+    globalThis.fetch = vi.fn().mockImplementation(newToken);
+
+    await api.uploadFile(file(), ".");
+
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe("/api/csrf_token");
+    expect(FakeXhr.requests[0].headers["X-CSRFToken"]).toBe("fresh-token");
+  });
+
+  it("sends the file all the same when no token can be asked for", async () => {
+    await api.uploadFile(file(), ".");
+    expect(FakeXhr.requests).toHaveLength(1);
+  });
+
+  it("asks for a new token and sends again when its own is refused", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementationOnce(noNewToken)
+      .mockImplementationOnce(newToken);
+    FakeXhr.answers = [
+      { status: 400, body: json({ code: "token_refused", description: "x" }) },
+      { status: 200 },
+    ];
+
+    await api.uploadFile(file(), ".");
+
+    expect(FakeXhr.requests).toHaveLength(2);
+    expect(FakeXhr.requests[1].headers["X-CSRFToken"]).toBe("fresh-token");
+  });
+
+  it("tries once only, then says what the server said", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(newToken);
+    const refused = {
+      status: 400,
+      body: json({ code: "token_refused", description: "Reload the page." }),
+    };
+    FakeXhr.answers = [refused, refused, refused];
+
+    await expect(api.uploadFile(file(), ".")).rejects.toMatchObject({
+      code: "token_refused",
+      message: "Reload the page.",
+    });
+    expect(FakeXhr.requests).toHaveLength(2);
+  });
+
+  it("throws the explanation the server gave for a refused upload", async () => {
+    FakeXhr.answers = [
+      {
+        status: 409,
+        statusText: "CONFLICT",
+        body: json({
+          code: "printer_not_answering",
+          title: "Printer Not Answering",
+          description:
+            "The printer did not say whether model.ctb is being printed.",
+          can_be_overridden: true,
+        }),
+      },
+    ];
+
+    const error = await api.uploadFile(file()).catch((e) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error.status).toBe(409);
+    expect(error.code).toBe("printer_not_answering");
+    expect(error.message).toContain("did not say");
+    expect(error.canBeOverridden).toBe(true);
+  });
+
+  it("says a file is too large when the web server itself refused it", async () => {
+    // Past the limit the web server answers before Mariner does, in plain
+    // text.
+    FakeXhr.answers = [{ status: 413, body: "Request Entity Too Large" }];
+
+    const refusal = await api.uploadFile(file()).catch((error) => error);
+    expect(refusal).toBeInstanceOf(ApiError);
+    expect(refusal.code).toBe("file_too_large");
+  });
+
+  it("gives the status when the answer explains nothing", async () => {
+    FakeXhr.answers = [{ status: 502, body: "<html>Bad Gateway</html>" }];
+
+    const refusal = await api.uploadFile(file()).catch((error) => error);
+    expect(refusal).toBeInstanceOf(ApiError);
+    expect(refusal.status).toBe(502);
+    expect(refusal.code).toBeUndefined();
+  });
+
+  it("says that Mariner could not be reached when the connection drops", async () => {
+    FakeXhr.answers = [{ status: 0, fails: true }];
+
+    const failure = await api.uploadFile(file()).catch((error) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure.code).toBe("network");
+  });
+});
+
+describe("asking Mariner", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says that Mariner could not be reached when the request fails", async () => {
+    // What a browser throws is in its own words and language.
+    globalThis.fetch = vi
+      .fn()
+      .mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const failure = await api.listFiles(".").catch((error) => error);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure.code).toBe("network");
+    expect(failure.status).toBe(0);
+  });
+});

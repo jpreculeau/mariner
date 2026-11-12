@@ -130,56 +130,6 @@ describe("api client", () => {
     expect(error.code).toBe("file_in_use");
   });
 
-  it("throws the explanation the server gave for a refused upload", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: false,
-      status: 409,
-      statusText: "CONFLICT",
-      json: () =>
-        Promise.resolve({
-          code: "printer_not_answering",
-          title: "Printer Not Answering",
-          description:
-            "The printer did not say whether model.ctb is being printed.",
-        }),
-    } as Response);
-
-    const file = new File(["x"], "model.ctb");
-    const error = await api.uploadFile(file).catch((e) => e);
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error.code).toBe("printer_not_answering");
-    expect(error.message).toContain("did not say");
-  });
-
-  it("says a file is too large when the web server itself refused it", async () => {
-    // Past the limit the web server answers before Mariner does, in plain
-    // text.
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: false,
-      status: 413,
-      statusText: "Request Entity Too Large",
-      json: () => Promise.reject(new SyntaxError("not JSON")),
-    } as Response);
-
-    const file = new File(["x"], "model.ctb");
-    const refusal = await api.uploadFile(file).catch((error) => error);
-    expect(refusal).toBeInstanceOf(ApiError);
-    expect(refusal.code).toBe("file_too_large");
-    expect(refusal.message).toBe("This file is larger than Mariner accepts.");
-  });
-
-  it("falls back to the status when the error has no JSON body", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: false,
-      status: 502,
-      statusText: "Bad Gateway",
-      json: () => Promise.reject(new SyntaxError("not JSON")),
-    } as Response);
-
-    const file = new File(["x"], "model.ctb");
-    await expect(api.uploadFile(file)).rejects.toThrow("Upload failed: 502");
-  });
-
   it("sends CSRF token from meta tag", async () => {
     const meta = document.createElement("meta");
     meta.name = "csrf-token";
@@ -245,49 +195,6 @@ describe("api client", () => {
       expect(fetchMock.mock.calls[3][1].headers["X-CSRFToken"]).toBe(
         "fresh-token",
       );
-    });
-
-    it("asks for a token before sending a file", async () => {
-      // A file refused for its token has been sent whole by then, and
-      // would be sent whole again.
-      const fetchMock = vi
-        .fn()
-        .mockImplementationOnce(newToken)
-        .mockImplementationOnce(served);
-      globalThis.fetch = fetchMock;
-
-      await api.uploadFile(new File(["x"], "model.ctb"), ".");
-
-      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
-        "/api/csrf_token",
-        "/api/upload_file?path=.",
-      ]);
-      expect(fetchMock.mock.calls[1][1].headers["X-CSRFToken"]).toBe(
-        "fresh-token",
-      );
-      expect(fetchMock.mock.calls[1][1].body).toBeInstanceOf(FormData);
-    });
-
-    it("sends the file all the same when no token can be asked for", async () => {
-      for (const noToken of [
-        () => Promise.reject(new Error("offline")),
-        json(500, {}),
-        json(200, { csrf_token: 42 }),
-        json(200, null),
-        () => Promise.resolve(new Response("<html>", { status: 200 })),
-      ]) {
-        const fetchMock = vi
-          .fn()
-          .mockImplementationOnce(noToken)
-          .mockImplementationOnce(served);
-        globalThis.fetch = fetchMock;
-
-        await api.uploadFile(new File(["x"], "model.ctb"), ".");
-
-        expect(fetchMock).toHaveBeenCalledTimes(2);
-        expect(fetchMock.mock.calls[1][0]).toBe("/api/upload_file?path=.");
-        expect(fetchMock.mock.calls[1][1].headers["X-CSRFToken"]).not.toBe(42);
-      }
     });
 
     it("shows what the server said of a refusal it read to tell which", async () => {
@@ -397,22 +304,6 @@ describe("api client", () => {
     );
   });
 
-  it("uploads a file with path query", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ success: true }),
-    } as Response);
-
-    const file = new File(["x"], "test.ctb", {
-      type: "application/octet-stream",
-    });
-    await api.uploadFile(file, "foo/bar");
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/upload_file?path=foo%2Fbar",
-      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
-    );
-  });
-
   it("says when a refusal can be overridden", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue({
       ok: false,
@@ -471,20 +362,6 @@ describe("api client", () => {
     await api.deleteFile("model.ctb", { ignoreUnreachablePrinter: true });
     expect(fetch).toHaveBeenCalledWith(
       "/api/delete_file?filename=model.ctb&ignore_unreachable_printer=1",
-      expect.objectContaining({ method: "POST" }),
-    );
-  });
-
-  it("uploads with the override when asked", async () => {
-    vi.spyOn(global, "fetch").mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ success: true }),
-    } as Response);
-
-    const file = new File(["content"], "test.ctb");
-    await api.uploadFile(file, ".", { ignoreUnreachablePrinter: true });
-    expect(fetch).toHaveBeenCalledWith(
-      "/api/upload_file?path=.&ignore_unreachable_printer=1",
       expect.objectContaining({ method: "POST" }),
     );
   });
