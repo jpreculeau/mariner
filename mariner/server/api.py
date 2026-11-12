@@ -46,6 +46,8 @@ from mariner.printer import PrinterState
 from mariner.server.files import (
     NotPrintable,
     is_directory,
+    MAX_FOLDER_DEPTH,
+    folder_depth,
     is_hidden_entry,
     is_macos_companion,
     modification_time,
@@ -596,6 +598,14 @@ def create_directory() -> Union[str, Response]:
     if not os.path.isdir(parent):
         abort(400)
     new_path = parent / safe_name
+    if folder_depth(new_path) > MAX_FOLDER_DEPTH:
+        body = {
+            "code": "folder_too_deep",
+            "title": "Too Many Folders Deep",
+            "description": f"Folders can be {MAX_FOLDER_DEPTH} deep at most. "
+            "Make this one higher up.",
+        }
+        abort(make_response(jsonify(body), 400))
 
     try:
         os.mkdir(new_path)

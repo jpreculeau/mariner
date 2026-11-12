@@ -217,6 +217,15 @@ told apart: the second one to start takes over, and pieces still arriving
 from the first can end up in its file. Slicers that ask for the checksum to be verified
 are protected: the file is then refused.
 
+.. rubric:: A folder cannot be made (error 400, ``folder_too_deep``)
+
+Folders can be nested 16 deep. Make the folder higher up.
+
+Folders nested deeper, put on the drive by other means, are left as they
+are. Below 64 levels Mariner no longer looks into them: files there are not
+read ahead of time at start, and a folder holding such a chain cannot be
+deleted from a slicer.
+
 .. rubric:: A file is listed but cannot be printed
 
 Mariner reads each file before the web page offers to print it. A file it

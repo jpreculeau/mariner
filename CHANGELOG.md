@@ -11,6 +11,7 @@
 
 File names and paths
 
+- Refuse to make a folder more than 16 deep (`folder_too_deep`), and go through folders nested to any depth without failing: a long chain of folders, made a request at a time, kept Mariner from starting again
 - Keep uploaded file and folder names instead of rewriting them, and refuse those that cannot be used safely: a quote, a control character or line separator anywhere (ends included, instead of trimming it), text that is not valid Unicode, and names the printer's FAT filesystem cannot store
 - Validate the file name before a print is started, from every interface, and send the printer the path it knows whatever form the client used
 - Check the file extension before printing from UVtools, and trim an uploaded file's name before looking at its extension on every interface

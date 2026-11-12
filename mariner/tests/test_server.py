@@ -1421,6 +1421,21 @@ class MarinerServerTest(TestCase):
             True
         )
 
+    def test_create_directory_no_deeper_than_any_use_calls_for(self) -> None:
+        # A chain of a thousand folders, made a request at a time, used to
+        # keep Mariner from starting again.
+        path = "."
+        for level in range(1, 17):
+            response = self.client.post(f"/api/create_directory?path={path}&name=d")
+            expect(response.status_code).to_equal(200)
+            path = "/".join(["d"] * level)
+        response = self.client.post(f"/api/create_directory?path={path}&name=d")
+        expect(response.status_code).to_equal(400)
+        body = response.get_json()
+        expect(body["code"]).to_equal("folder_too_deep")
+        expect("16" in body["description"]).to_equal(True)
+        expect(os.path.exists(f"/mnt/usb_share/{path}/d")).to_equal(False)
+
     def test_create_directory_duplicate(self) -> None:
         self.fs.create_dir("/mnt/usb_share/exists/")
         response = self.client.post("/api/create_directory?path=.&name=exists")

@@ -406,12 +406,12 @@ class TransferInProgressTest(TestCase):
     def test_a_folder_that_cannot_be_read_is_taken_to_hold_one(self) -> None:
         # Not knowing is no ground for removing it.
         def walk_into_a_locked_folder(top: Any, onerror: Any = None) -> Any:
-            # What os.walk does with a folder it may not list.
+            # What the walk does with a folder it may not list.
             if onerror is not None:
                 onerror(PermissionError("denied"))
             return iter(())
 
-        with patch("mariner.server.files.os.walk", walk_into_a_locked_folder):
+        with patch("mariner.server.files.walk", walk_into_a_locked_folder):
             expect(holds_a_transfer_in_progress(Path("/mnt/usb_share/batch"))).to_equal(
                 True
             )

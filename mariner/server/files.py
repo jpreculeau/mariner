@@ -10,13 +10,22 @@ The rule for what may appear in a command line sent to the printer lives in
 those lines. ``safe_filename`` and ``printable_relative_path`` both apply it.
 """
 
+import errno
 import logging
 import os
 import secrets
 import shutil
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Callable, ContextManager, Iterator, Optional, Union
+from typing import (
+    Callable,
+    ContextManager,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    Union,
+)
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
@@ -282,6 +291,60 @@ def is_macos_companion(path: Union[str, Path]) -> bool:
         return False
 
 
+# How many folders deep a folder may be made. Far more than sorting models
+# calls for.
+MAX_FOLDER_DEPTH = 16
+# How many folders deep a walk goes. Mariner makes none that deep, but the
+# drive can hold some made before the limit, or by other means.
+MAX_WALK_DEPTH = 64
+
+
+def folder_depth(path: Path) -> int:
+    """How many folders down from the files directory *path* is: 0 for it."""
+    root = config.get_files_directory().resolve()
+    return len(Path(os.path.abspath(path)).relative_to(root).parts)
+
+
+def walk(
+    top: Union[str, Path], onerror: Optional[Callable[[OSError], None]] = None
+) -> Iterator[Tuple[str, List[str], List[str]]]:
+    """Every folder under *top*, with the names of its folders and files.
+
+    As ``os.walk`` does from the top down: a link to a folder is named
+    among the folders and not entered, and a folder taken out of the list
+    by the caller is not entered either. Unlike it, on the versions of
+    Python where it calls itself for each level, this does not: a chain of
+    a thousand folders is gone through like any other. It is not followed
+    below ``MAX_WALK_DEPTH``; what lies deeper is reported to *onerror* as
+    a folder that could not be read, as is any folder that cannot.
+    """
+    waiting = [(os.fspath(top), 0)]
+    while waiting:
+        folder, depth = waiting.pop()
+        try:
+            if depth > MAX_WALK_DEPTH:
+                raise OSError(errno.ELOOP, "Too many levels of folders", folder)
+            with os.scandir(folder) as found:
+                entries = list(found)
+        except OSError as error:
+            if onerror is not None:
+                onerror(error)
+            continue
+        folders: List[str] = []
+        names: List[str] = []
+        for entry in entries:
+            try:
+                is_folder = entry.is_dir()
+            except OSError:
+                is_folder = False
+            (folders if is_folder else names).append(entry.name)
+        yield folder, folders, names
+        for name in reversed(folders):
+            path = os.path.join(folder, name)
+            if not os.path.islink(path):
+                waiting.append((path, depth + 1))
+
+
 def printable_files() -> Iterator[Path]:
     """Every file of a supported format in the files directory, at any depth.
 
@@ -293,7 +356,7 @@ def printable_files() -> Iterator[Path]:
     """
     files_directory = config.get_files_directory().resolve()
     supported = get_supported_extensions()
-    for folder, subfolders, names in os.walk(files_directory):
+    for folder, subfolders, names in walk(files_directory):
         subfolders[:] = [name for name in subfolders if not is_hidden_entry(name)]
         for name in names:
             if is_hidden_entry(name) or get_file_extension(name) not in supported:
@@ -385,7 +448,7 @@ def holds_a_transfer_in_progress(directory: Path) -> bool:
         # Folders are left out of the names: only a file is a transfer.
         return any(
             is_scratch_file(name)
-            for _, _, names in os.walk(directory, onerror=stop)
+            for _, _, names in walk(directory, onerror=stop)
             for name in names
         )
     except OSError:
@@ -467,11 +530,18 @@ def remove_stale_scratch_files() -> int:
     many entries were removed.
     """
     files_directory = config.get_files_directory()
-    try:
-        leftovers = list(files_directory.rglob(f"{_SCRATCH_PREFIX}*{_SCRATCH_SUFFIX}"))
-        leftovers.append(files_directory / SDCP_SCRATCH_DIRNAME)
-    except OSError:
-        return 0
+    leftovers = []
+    for folder, folders, names in walk(files_directory):
+        for name in folders + names:
+            if name.startswith(_SCRATCH_PREFIX) and name.endswith(_SCRATCH_SUFFIX):
+                leftovers.append(Path(folder) / name)
+        # What is about to be removed is not looked into.
+        folders[:] = [
+            name
+            for name in folders
+            if not (name.startswith(_SCRATCH_PREFIX) and name.endswith(_SCRATCH_SUFFIX))
+        ]
+    leftovers.append(files_directory / SDCP_SCRATCH_DIRNAME)
     removed = sum(
         1
         for leftover in leftovers
