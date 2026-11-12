@@ -55,6 +55,9 @@ Printer and prints
 Requests from the web
 
 - Refuse, on the web API, UVtools and SDCP, what a page of another web site has a browser send (`cross_site_request`): such a page could start, stop or delete without anyone asking
+- Send with every answer the headers that keep the page from being shown inside another site, its scripts to Mariner's own, and its data and pictures from being loaded by other sites
+- Keep what went wrong inside out of error answers: no call trace for a printer error (`printer_error`), a plain answer for an error nobody planned for (`internal_error`), debug mode off; the cause goes to the logs
+- Say that a file could not be stored (`upload_not_stored`) when an upload from the web page fails for want of room, instead of failing without a word
 - Answer only to an IP address or a name of the local network, unless told otherwise (`allowed_hosts`), so that a web site pointing its own name at the printer cannot read or drive it (`host_not_allowed`)
 
 Reading files

@@ -107,6 +107,17 @@ class UVToolsProviderTest(TestCase):
         )
         self.printer_mock.start_printing.assert_not_called()
 
+    def test_an_error_nobody_planned_for_is_answered_and_logged_safely(self) -> None:
+        with patch(
+            "mariner.server.providers.uvtools.start_print",
+            side_effect=RuntimeError("secret detail"),
+        ), self.assertLogs("mariner.server.app", level="ERROR") as logs:
+            response = self.client.get("/uvtools/print/model%E2%80%A8FORGED.ctb")
+        expect(response.status_code).to_equal(500)
+        expect("secret" in response.get_data(as_text=True)).to_equal(False)
+        expect(len(logs.records)).to_equal(1)
+        expect("\u2028" in logs.records[0].getMessage()).to_equal(False)
+
     def test_a_slicer_is_served(self) -> None:
         response = self.client.get("/uvtools/delete/foobar.ctb")
         expect(response.status_code).to_equal(200)

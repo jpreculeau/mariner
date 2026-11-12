@@ -2,7 +2,6 @@ import logging
 import os
 import subprocess
 import threading
-import traceback
 from enum import Enum
 from functools import partial
 from pathlib import Path
@@ -161,13 +160,14 @@ def _resolve_or_400(relative: Optional[str]) -> Path:
 
 @api.errorhandler(MarinerException)
 def handle_mariner_exception(exception: MarinerException) -> Tuple[Response, int]:
-    tb = traceback.TracebackException.from_exception(exception)
+    # Where it happened goes to the logs, not to whoever asks.
+    logger.warning("Printer error while serving %r", request.path, exc_info=exception)
     return (
         jsonify(
             {
+                "code": "printer_error",
                 "title": exception.get_title(),
                 "description": exception.get_description(),
-                "traceback": "".join(tb.format()),
             }
         ),
         500,
@@ -563,6 +563,16 @@ def upload_file() -> Union[str, Response]:
     except FileNotFoundError:
         # The folder was removed while the file was being written.
         abort(404)
+    except OSError as error:
+        # No room left on the drive, most often.
+        logger.warning("Could not store %r: %s", filename, error)
+        body = {
+            "code": "upload_not_stored",
+            "title": "File Not Stored",
+            "description": f"{filename} could not be stored. Check that the "
+            "drive has room for it.",
+        }
+        abort(make_response(jsonify(body), 500))
     os.sync()
     return jsonify({"success": True})
 

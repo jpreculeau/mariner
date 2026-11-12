@@ -609,16 +609,20 @@ class MarinerServerTest(TestCase):
         self.printer_mock.stop_printing.side_effect = UnexpectedPrinterResponse(
             "foobar\r\n"
         )
-        response = self.client.post("/api/printer/command/cancel_print")
+        # What went wrong inside goes to the logs, not to whoever asks.
+        with self.assertLogs("mariner.server.api", level="WARNING") as logs:
+            response = self.client.post("/api/printer/command/cancel_print")
         expect(response.status_code).to_equal(500)
         expect(response.get_json()).to_equal(
             {
+                "code": "printer_error",
                 "title": "Unexpected Printer Response",
                 "description": "The printer returned an unexpected response: "
                 + "'foobar\\r\\n'",
-                "traceback": ANY,
             }
         )
+        expect(len(logs.records)).to_equal(1)
+        expect(logs.records[0].exc_info is not None).to_equal(True)
         self.printer_mock.stop_printing.assert_called_once_with()
 
     def test_command_reboot(self) -> None:
@@ -765,6 +769,78 @@ class MarinerServerTest(TestCase):
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(400)
 
+    def test_an_error_nobody_planned_for_tells_nothing_of_the_inside(self) -> None:
+        with patch(
+            "mariner.server.api.os.scandir",
+            side_effect=RuntimeError("secret /home/mariner/thing"),
+        ), self.assertLogs("mariner.server.app", level="ERROR") as logs:
+            response = self.client.get("/api/list_files")
+        expect(response.status_code).to_equal(500)
+        body = response.get_json()
+        expect(body["code"]).to_equal("internal_error")
+        expect("secret" in response.get_data(as_text=True)).to_equal(False)
+        expect("Traceback" in response.get_data(as_text=True)).to_equal(False)
+        # Logged once, with the cause.
+        expect(len(logs.records)).to_equal(1)
+        expect(logs.records[0].exc_info is not None).to_equal(True)
+
+    def test_refusals_keep_their_own_status(self) -> None:
+        # The handler for the unplanned must not swallow the planned.
+        expect(self.client.get("/api/nothing-here").status_code).to_equal(404)
+        expect(self.client.get("/api/file_details").status_code).to_equal(400)
+        expect(self.client.put("/api/list_files").status_code).to_equal(405)
+
+    def test_the_app_does_not_run_in_debug_mode(self) -> None:
+        application = self.client.application
+        expect(application.debug).to_equal(False)
+        expect(bool(application.config.get("PROPAGATE_EXCEPTIONS"))).to_equal(False)
+
+    def test_every_answer_carries_the_protective_headers(self) -> None:
+        with patch("mariner.server.render_template", return_value="the page"):
+            answers = [
+                self.client.get("/"),
+                self.client.get("/api/list_files"),
+                self.client.get("/api/nothing-here"),
+                self.client.get("/api/list_files", headers={"Host": "evil.example"}),
+                self.client.get("/api/file_preview?filename=foobar.ctb"),
+            ]
+        for response in answers:
+            headers = response.headers
+            expect(headers["X-Content-Type-Options"]).to_equal("nosniff")
+            # Not shown inside a page of another site, where a click meant
+            # for that page could land on a button of this one.
+            expect(headers["X-Frame-Options"]).to_equal("DENY")
+            expect(headers["Referrer-Policy"]).to_equal("same-origin")
+            expect(headers["Cross-Origin-Resource-Policy"]).to_equal("same-origin")
+            policy = headers["Content-Security-Policy"]
+            for part in (
+                "default-src 'self'",
+                "script-src 'self'",
+                "object-src 'none'",
+                "frame-ancestors 'none'",
+                "base-uri 'self'",
+                "form-action 'self'",
+            ):
+                expect(part in policy.split("; ")).to_equal(True)
+            expect("'unsafe-eval'" in policy).to_equal(False)
+            expect("script-src 'self' 'unsafe-inline'" in policy).to_equal(False)
+
+    def test_what_the_api_tells_is_not_kept_by_browsers_or_proxies(self) -> None:
+        response = self.client.get("/api/list_files")
+        expect(response.headers["Cache-Control"]).to_equal("no-store")
+
+    def test_static_files_carry_the_headers_too(self) -> None:
+        from mariner.server.app import add_static_headers
+
+        headers: dict = {}
+        add_static_headers(headers, "/opt/dist/assets/index.js", "/assets/index.js")
+        expect(headers["X-Content-Type-Options"]).to_equal("nosniff")
+        expect(headers["Cross-Origin-Resource-Policy"]).to_equal("same-origin")
+        # And that is what serves them, for the page alone.
+        served_by = self.client.application.wsgi_app
+        expect(served_by.add_headers_function).to_equal(add_static_headers)
+        expect(served_by.allow_all_origins).to_equal(False)
+
     def test_requests_from_another_site_are_refused(self) -> None:
         elsewhere = {"Sec-Fetch-Site": "cross-site"}
         for method, url in (
@@ -876,9 +952,17 @@ class MarinerServerTest(TestCase):
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
         # The failure comes after some bytes were written, so the test fails
         # if the half-written scratch file is not removed.
-        with patch.object(FileStorage, "save", side_effect=self._save_half_then_fail):
-            with self.assertRaises(OSError):
-                self.client.post("/api/upload_file", data=data)
+        with patch.object(
+            FileStorage, "save", side_effect=self._save_half_then_fail
+        ), self.assertLogs("mariner.server.api", level="WARNING") as logs:
+            response = self.client.post("/api/upload_file", data=data)
+        # Said in words the page can show: the usual cause is a full drive.
+        expect(response.status_code).to_equal(500)
+        body = response.get_json()
+        expect(body["code"]).to_equal("upload_not_stored")
+        expect("myfile.ctb" in body["description"]).to_equal(True)
+        expect("disk full" in response.get_data(as_text=True)).to_equal(False)
+        expect(len(logs.records)).to_equal(1)
         expect(os.path.exists("/mnt/usb_share/myfile.ctb")).to_equal(False)
         expect(self._leftovers()).to_equal([])
 

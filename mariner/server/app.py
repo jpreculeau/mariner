@@ -3,9 +3,10 @@ import os
 import stat
 import tempfile
 from pathlib import Path
-from typing import Optional, Sequence, Tuple
+from typing import Any, Optional, Sequence, Tuple, Union, cast
 
 from flask import Flask, Response, jsonify, request
+from werkzeug.exceptions import HTTPException
 from flask_wtf.csrf import CSRFProtect
 from whitenoise import WhiteNoise
 
@@ -28,6 +29,45 @@ def get_frontend_assets_path() -> str:
     return str(path.absolute())
 
 
+# What the page may load and do, said to the browser with every answer. The
+# page's scripts come from Mariner alone, so that text which found its way
+# into the page, a file name say, cannot run as one. Styles are looser: the
+# interface sets some in place, and takes its fonts from Google's servers.
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' data: https://fonts.gstatic.com",
+        "img-src 'self' data: blob:",
+        "connect-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        # Not shown inside a page of another site, where a click meant for
+        # that page could land on a button of this one.
+        "frame-ancestors 'none'",
+    )
+)
+
+PROTECTIVE_HEADERS = {
+    # A file is what its type says, whatever its contents look like.
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    # The address of a page of Mariner's is not told to other sites.
+    "Referrer-Policy": "same-origin",
+    # Pictures and data are for Mariner's own pages to load.
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+}
+
+
+def add_static_headers(headers: Any, path: str, url: str) -> None:
+    """The same headers on the files of the page, served aside from Flask."""
+    for name, value in PROTECTIVE_HEADERS.items():
+        headers[name] = value
+
+
 frontend_dist_directory: str = get_frontend_assets_path()
 app: Flask = Flask(
     __name__,
@@ -36,7 +76,12 @@ app: Flask = Flask(
 )
 csrf = CSRFProtect(app)
 # pyre-ignore[8]: incompatible attribute type
-app.wsgi_app = WhiteNoise(app.wsgi_app)
+app.wsgi_app = WhiteNoise(
+    app.wsgi_app,
+    add_headers_function=add_static_headers,
+    # The page's own files are for the page.
+    allow_all_origins=False,
+)
 # pyre-ignore[16]: undefined attribute
 app.wsgi_app.add_files(frontend_dist_directory)
 
@@ -125,6 +170,36 @@ def refuse_other_sites() -> Optional[Tuple[Response, int]]:
     return jsonify(refusal.body()), 403
 
 
+@app.after_request
+def add_protective_headers(response: Response) -> Response:
+    for name, value in PROTECTIVE_HEADERS.items():
+        response.headers.setdefault(name, value)
+    if request.path.startswith(_GUARDED_PREFIXES):
+        # The state of the printer and of the files changes by the second.
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
+
+
+@app.errorhandler(Exception)
+def unexpected_error(error: Exception) -> Union[Response, Tuple[Response, int]]:
+    """Answer an error nobody planned for without telling of the inside.
+
+    The cause goes to the logs. The request path is quoted there: it is
+    the client's text, and could otherwise start a log line of its own.
+    """
+    if isinstance(error, HTTPException):
+        # A refusal that was meant: 400, 404 and the like.
+        return cast(Response, error)
+    logger.error("Unexpected error while serving %r", request.path, exc_info=error)
+    body = {
+        "code": "internal_error",
+        "title": "Unexpected Error",
+        "description": "Mariner ran into an error it did not expect. "
+        "Its logs say what happened.",
+    }
+    return jsonify(body), 500
+
+
 @app.errorhandler(413)
 def file_too_large(error: Exception) -> Tuple[Response, int]:
     megabytes = config.get_max_upload_bytes() // (1024 * 1024)
@@ -138,7 +213,9 @@ def file_too_large(error: Exception) -> Tuple[Response, int]:
 
 app.config.from_mapping(
     {
-        "DEBUG": True,
+        # Never the debug mode: it hands the inside of an error to whoever
+        # caused it.
+        "DEBUG": False,
         # Backend class name, not the legacy "filesystem" factory alias. The
         # lowercase aliases are deprecated in flask-caching 2.x and gone in
         # 3.x, where they fail at import with ImportStringError.
