@@ -598,6 +598,11 @@ describe("Files", () => {
     pick(input, new File(["x"], "dragon.ctb"));
     await screen.findByRole("progressbar");
 
+    // A named place of the page: it is neither its header nor its
+    // content.
+    expect(
+      screen.getByRole("region", { name: "File being sent" }),
+    ).toContainElement(screen.getByRole("progressbar"));
     // On a narrow screen the button goes under the name rather than
     // leave it a column one letter wide.
     expect(
@@ -818,6 +823,23 @@ describe("Files", () => {
     pick(input, new File(["x"], "dragon.ctb"));
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(vi.mocked(api.listFiles).mock.calls.length).toBeGreaterThan(
+        before,
+      ),
+    );
+  });
+
+  it("fetches the list again when the folder a file was sent to is gone", async () => {
+    vi.spyOn(api, "uploadFile").mockRejectedValue(
+      new ApiError(404, "This folder is no longer there.", "folder_gone"),
+    );
+    const input = renderFiles();
+    await screen.findByText("This folder is empty.");
+    const before = vi.mocked(api.listFiles).mock.calls.length;
+
+    pick(input, new File(["x"], "dragon.ctb"));
+
     await waitFor(() =>
       expect(vi.mocked(api.listFiles).mock.calls.length).toBeGreaterThan(
         before,

@@ -160,12 +160,20 @@ async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
  * Not with `fetch`, which cannot tell: files are hundreds of megabytes,
  * and minutes long over a slow link.
  */
-/** How long the answer is waited for once the whole file has gone. */
-const ANSWER_WAIT_MS = 5 * 60_000;
+/**
+ * How long the answer is waited for once the whole file has gone: the
+ * server then copies it into place and writes it out, which takes the
+ * longer the larger it is. Five minutes, and a second for every two
+ * megabytes.
+ */
+function answerWait(size: number): number {
+  return 5 * 60_000 + (size / (2 * 1024 * 1024)) * 1000;
+}
 
 function sendFile(
   url: string,
   body: FormData,
+  size: number,
   onProgress?: (fraction: number) => void,
   signal?: AbortSignal,
 ): Promise<Response> {
@@ -219,7 +227,7 @@ function sendFile(
       const wait = setTimeout(() => {
         unanswered = true;
         request.abort();
-      }, ANSWER_WAIT_MS);
+      }, answerWait(size));
       request.onloadend = () => clearTimeout(wait);
     };
     request.onload = () => {
@@ -310,9 +318,9 @@ export const api = {
     // A file refused for its token has been sent whole by then, and would
     // be sent whole again: make sure of the token first.
     await renewCsrfToken();
-    let res = await sendFile(url, formData, onProgress, signal);
+    let res = await sendFile(url, formData, file.size, onProgress, signal);
     if ((await tokenWasRefused(res)) && (await renewCsrfToken())) {
-      res = await sendFile(url, formData, onProgress, signal);
+      res = await sendFile(url, formData, file.size, onProgress, signal);
     }
     if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);
   },

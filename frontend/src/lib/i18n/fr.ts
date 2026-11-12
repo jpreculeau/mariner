@@ -86,6 +86,7 @@ export const fr: Record<TextKey, string> = {
   "files.uploading": "Envoi de {file} : {percent}",
   "files.finishing": "Fin de l'envoi de {file}…",
   "files.uploadProgress": "Avancement de l'envoi",
+  "files.uploadRegion": "Fichier en cours d'envoi",
   "files.uploaded": "{file} envoyé",
   "files.uploadCancel": "Annuler l'envoi",
   "files.uploadCancelled": "Envoi annulé",

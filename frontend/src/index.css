@@ -196,3 +196,19 @@
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
+
+/* A long message on a short screen (a page much zoomed) is scrolled,
+   from its first line, rather than cut off. */
+[data-sonner-toaster] [data-sonner-toast] {
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  align-items: safe center;
+}
+
+/* With colours forced by the system, the button of a message would be
+   bare text. */
+@media (forced-colors: active) {
+  [data-sonner-toaster] [data-sonner-toast] [data-button] {
+    border: 1px solid ButtonText;
+  }
+}

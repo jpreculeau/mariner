@@ -4,6 +4,27 @@ import { translate, useI18n, type Lang } from "@/lib/i18n";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
+// What last had focus outside the messages: where focus goes back when
+// the last of them is closed from within. A browser says nothing when
+// the button pressed goes with its message, and leaves focus on the page
+// as a whole.
+let lastOutside: Element | null = null;
+
+function noteFocus(event: FocusEvent) {
+  const on = event.target;
+  if (on instanceof Element && !on.closest("[data-sonner-toaster]")) {
+    lastOutside = on;
+  }
+}
+
+function focusBackOutside() {
+  const back =
+    lastOutside instanceof HTMLElement && lastOutside.isConnected
+      ? lastOutside
+      : document.getElementById("content");
+  back?.focus();
+}
+
 const NARROW = "(max-width: 640px)";
 
 /** Whether the screen is as narrow as a phone's. */
@@ -34,11 +55,18 @@ const Toaster = ({ ...props }: ToasterProps) => {
         !event.defaultPrevented &&
         document.querySelector('[data-sonner-toast]:not([data-removed="true"])')
       ) {
+        const within =
+          document.activeElement?.closest("[data-sonner-toaster]") != null;
         sonner.dismiss();
+        if (within) focusBackOutside();
       }
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
+    document.addEventListener("focusin", noteFocus);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("focusin", noteFocus);
+    };
   }, []);
   return (
     <Sonner
@@ -89,12 +117,13 @@ const toast = {
       duration: Infinity,
       cancel: {
         label: translate(pageLanguage(), "common.close"),
-        // On to the next message, if there is one: the button pressed
-        // goes with its own, and focus with it.
+        // On to the next message, if there is one, and else back to
+        // where focus was: the button pressed goes with its message.
         onClick: (event: { currentTarget: Element }) => {
           const here = event.currentTarget.closest("[data-sonner-toast]");
           const next = here?.nextElementSibling ?? here?.previousElementSibling;
           if (next instanceof HTMLElement) next.focus();
+          else focusBackOutside();
         },
       },
     }),

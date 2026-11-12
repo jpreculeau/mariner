@@ -37,7 +37,11 @@ export default function Index() {
   // that may have focus.
   const focus = useFocusWithin();
   useEffect(() => {
-    if (focus.lost()) focusContent();
+    if (focus.lost()) {
+      focusContent();
+      // Once: what was lost is not lost again at the next change.
+      focus.forget();
+    }
     // `focus` is new at every drawing; what it notes is not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, isLoading, unanswered]);

@@ -297,4 +297,43 @@ describe("Index", () => {
       content.remove();
     }
   });
+
+  it("moves focus once for a print that is over, not at every change after", async () => {
+    const content = withContent();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    try {
+      const status = vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+      vi.spyOn(api, "printerCommand").mockResolvedValue();
+      render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter>
+            <LanguageProvider>
+              <Index />
+            </LanguageProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+      const pause = await screen.findByRole("button", { name: "Pause" });
+      pause.focus();
+      status.mockResolvedValue({ ...printing, state: "IDLE" });
+      fireEvent.click(pause);
+      await screen.findByText("See the files");
+      expect(document.activeElement).toBe(content);
+
+      // The reader puts focus nowhere; the printer then stops answering.
+      act(() => content.blur());
+      expect(document.activeElement).toBe(document.body);
+      status.mockResolvedValue({ ...printing, state: "CLOSED" });
+      await act(async () => {
+        await client.invalidateQueries({ queryKey: ["printStatus"] });
+      });
+      await screen.findByText("Printer not answering");
+
+      expect(document.activeElement).toBe(document.body);
+    } finally {
+      content.remove();
+    }
+  });
 });

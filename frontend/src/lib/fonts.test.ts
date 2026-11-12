@@ -138,4 +138,16 @@ describe("the page's own files", () => {
       /\[data-sonner-toaster\] \{\s*font-family: var\(--font-body\);/,
     );
   });
+
+  it("lets a long message be read on a short screen, and its button be seen", () => {
+    const css = read("src/index.css");
+    // Scrolled, from its first line.
+    expect(css).toMatch(
+      /max-height: calc\(100dvh - 32px\);\s*overflow-y: auto;\s*align-items: safe center;/,
+    );
+    // With colours forced the button would be bare text.
+    expect(css).toMatch(
+      /forced-colors: active[^}]*\[data-button\] \{\s*border: 1px solid ButtonText;/,
+    );
+  });
 });

@@ -90,6 +90,7 @@ export const en = {
   "files.uploading": "Uploading {file}: {percent}",
   "files.finishing": "Finishing {file}…",
   "files.uploadProgress": "Upload progress",
+  "files.uploadRegion": "File being sent",
   "files.uploaded": "{file} uploaded",
   "files.uploadCancel": "Cancel the upload",
   "files.uploadCancelled": "Upload cancelled",

@@ -34,7 +34,10 @@ export function UploadStatus() {
   const shown = sending !== null;
   useEffect(() => {
     // Also when the button to give up goes, the bar staying.
-    if (focus.lost()) focusContent();
+    if (focus.lost()) {
+      focusContent();
+      focus.forget();
+    }
     if (!shown) focus.forget();
     // `focus` is new at every drawing; what it notes is not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -43,7 +46,11 @@ export function UploadStatus() {
   return (
     <>
       {sending && (
-        <div className="container pt-4" {...focus.area}>
+        <section
+          aria-label={t("files.uploadRegion")}
+          className="container pt-4"
+          {...focus.area}
+        >
           <div className="rounded-lg border bg-card p-4">
             {/* On a narrow screen the button goes under the name rather
                 than leave it a column one letter wide. */}
@@ -78,7 +85,7 @@ export function UploadStatus() {
               {said(quarter)}
             </p>
           </div>
-        </div>
+        </section>
       )}
 
       <PrinterOffDialog

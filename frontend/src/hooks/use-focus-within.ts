@@ -16,8 +16,23 @@ export function useFocusWithin() {
         last.current = event.target;
       },
       onBlur: (event: FocusEvent) => {
-        // Gone elsewhere by the reader's doing.
-        if (event.relatedTarget) last.current = null;
+        if (event.relatedTarget) {
+          // Gone elsewhere by the reader's doing.
+          last.current = null;
+          return;
+        }
+        // Gone nowhere: what had it is being taken away, or the reader
+        // pressed on the page where nothing takes focus. Only a moment
+        // later can the two be told apart: in the second it is still
+        // there.
+        const was = event.target;
+        setTimeout(() => {
+          const nowhere =
+            !document.activeElement || document.activeElement === document.body;
+          if (last.current === was && was.isConnected && nowhere) {
+            last.current = null;
+          }
+        });
       },
     },
     /**

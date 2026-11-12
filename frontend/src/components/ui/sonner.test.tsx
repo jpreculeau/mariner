@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@testing-library/react";
 import { toast as sonner, Toaster as Shown } from "sonner";
 import { toast, Toaster } from "./sonner";
@@ -133,5 +133,78 @@ describe("closing one message of several", () => {
     } finally {
       list.remove();
     }
+  });
+});
+
+describe("closing the last message", () => {
+  const list = document.createElement("ol");
+  list.setAttribute("data-sonner-toaster", "");
+  const row = document.createElement("button");
+
+  beforeEach(() => {
+    list.innerHTML =
+      '<li data-sonner-toast tabindex="0">only<button>Close</button></li>';
+    document.body.append(row, list);
+    vi.mocked(sonner.error).mockClear();
+    vi.mocked(sonner.dismiss).mockClear();
+  });
+  afterEach(() => {
+    list.remove();
+    row.remove();
+  });
+
+  const closeOf = () => {
+    toast.error("No room.");
+    const [, options] = vi.mocked(sonner.error).mock.calls[0];
+    return (
+      options?.cancel as {
+        onClick: (event: { currentTarget: Element }) => void;
+      }
+    ).onClick;
+  };
+
+  it("puts focus back where it was before the messages", () => {
+    // A browser says nothing when the button pressed goes: focus fell to
+    // the top of the page after every error.
+    render(<Toaster />);
+    row.focus();
+    const button = list.querySelector("button")!;
+    button.focus();
+
+    closeOf()({ currentTarget: button });
+
+    expect(document.activeElement).toBe(row);
+  });
+
+  it("puts it on the content when that place is gone", () => {
+    const content = document.createElement("main");
+    content.id = "content";
+    content.tabIndex = -1;
+    document.body.appendChild(content);
+    try {
+      render(<Toaster />);
+      row.focus();
+      const button = list.querySelector("button")!;
+      button.focus();
+      row.remove();
+
+      closeOf()({ currentTarget: button });
+
+      expect(document.activeElement).toBe(content);
+    } finally {
+      content.remove();
+    }
+  });
+
+  it("does the same on Escape pressed from within a message", () => {
+    render(<Toaster />);
+    row.focus();
+    const button = list.querySelector("button")!;
+    button.focus();
+
+    fireEvent.keyDown(button, { key: "Escape" });
+
+    expect(sonner.dismiss).toHaveBeenCalled();
+    expect(document.activeElement).toBe(row);
   });
 });

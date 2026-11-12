@@ -172,14 +172,14 @@ describe("sending a file", () => {
     const timers = vi.spyOn(globalThis, "setTimeout");
     FakeXhr.answers = [{ status: 200, held: true, sentBeforeHeld: true }];
     const sent = api.uploadFile(file()).catch((error) => error);
-    await vi.waitFor(() =>
-      expect(timers.mock.calls.some(([, wait]) => wait === 5 * 60_000)).toBe(
-        true,
-      ),
-    );
-    const expire = timers.mock.calls.find(
-      ([, wait]) => wait === 5 * 60_000,
-    )![0] as () => void;
+    // Five minutes, and more for a large file: the server copies it and
+    // writes it out after the last of it has come.
+    const waited = () =>
+      timers.mock.calls.find(
+        ([, wait]) => typeof wait === "number" && wait >= 5 * 60_000,
+      );
+    await vi.waitFor(() => expect(waited()).toBeDefined());
+    const expire = waited()![0] as () => void;
 
     expire();
 
@@ -187,6 +187,30 @@ describe("sending a file", () => {
     expect(outcome).toBeInstanceOf(ApiError);
     expect(outcome.code).toBe("upload_unanswered");
     expect(FakeXhr.requests[0].aborted).toBe(true);
+  });
+
+  it("waits longer for the answer to a larger file", async () => {
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    const waitFor = async (size: number) => {
+      timers.mockClear();
+      FakeXhr.answers = [{ status: 200, held: true, sentBeforeHeld: true }];
+      const large = new File(["x"], "model.ctb");
+      Object.defineProperty(large, "size", { value: size });
+      api.uploadFile(large).catch(() => {});
+      let wait = 0;
+      await vi.waitFor(() => {
+        wait = Math.max(
+          ...timers.mock.calls.map(([, ms]) => (ms as number) ?? 0),
+        );
+        expect(wait).toBeGreaterThanOrEqual(5 * 60_000);
+      });
+      FakeXhr.held.splice(0).forEach((deliver) => deliver());
+      return wait;
+    };
+    expect(await waitFor(1024)).toBeLessThan(5 * 60_000 + 1000);
+    // A second for every two megabytes: seventeen minutes more for two
+    // gigabytes.
+    expect(await waitFor(2048 * 1024 * 1024)).toBe(5 * 60_000 + 1024 * 1000);
   });
 
   it("says that all has gone only when all has", async () => {

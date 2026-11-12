@@ -62,9 +62,13 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         } else {
           // The server says why, e.g. the file is being printed.
           toast.error(errorText(err, t, lang));
-          if (err instanceof ApiError && err.code === "upload_unanswered") {
-            // The file may well be there.
-            queryClient.invalidateQueries({ queryKey: ["files", path] });
+          if (
+            err instanceof ApiError &&
+            (err.code === "upload_unanswered" || err.code === "folder_gone")
+          ) {
+            // The file may well be there; or the folder is not, and the
+            // list that shows it is old.
+            queryClient.invalidateQueries({ queryKey: ["files"] });
           }
         }
       } finally {
