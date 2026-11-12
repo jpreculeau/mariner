@@ -1,13 +1,35 @@
+import { useEffect, useState } from "react";
 import { Toaster as Sonner, toast as sonner } from "sonner";
 import { translate, useI18n, type Lang } from "@/lib/i18n";
 
 type ToasterProps = React.ComponentProps<typeof Sonner>;
 
+const NARROW = "(max-width: 640px)";
+
+/** Whether the screen is as narrow as a phone's. */
+function useNarrowScreen(): boolean {
+  const query = () =>
+    typeof window.matchMedia === "function" ? window.matchMedia(NARROW) : null;
+  const [narrow, setNarrow] = useState(() => query()?.matches ?? false);
+  useEffect(() => {
+    const media = query();
+    if (!media) return;
+    const follow = () => setNarrow(media.matches);
+    media.addEventListener("change", follow);
+    return () => media.removeEventListener("change", follow);
+  }, []);
+  return narrow;
+}
+
 const Toaster = ({ ...props }: ToasterProps) => {
   const { t } = useI18n();
+  const narrow = useNarrowScreen();
   return (
     <Sonner
       theme="dark"
+      // On a phone the bottom is where the buttons are: a message there
+      // sat on the very button it was about.
+      position={narrow ? "top-center" : "bottom-right"}
       // Above a dialog, which takes the page out of reach of the pointer:
       // what a toast says must still be dismissable.
       className="toaster group pointer-events-auto"

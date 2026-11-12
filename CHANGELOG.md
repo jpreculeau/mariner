@@ -111,6 +111,12 @@ Web interface
 - Say that the printer did not answer when it sent nothing back to an order to stop, instead of taking the print for cancelled
 - Do not ask again, three times over, what the server has refused
 - Leave a dialog open when a message shown above it is dismissed
+- No longer offer to give up an upload once the whole file has gone: the server stores it then, and the page said "upload cancelled" of a file that was there
+- Do not send a file whose name or kind the server would refuse: it was told so only once all of it had been sent
+- Say what the printer did not take in the page's own words in English too, instead of "unexpected response: ''"
+- Shutting down or restarting: when nothing answers, say that the computer may be going down or may not have been asked, instead of that it is going down; ask once however often the button is pressed, and say that it is being asked
+- Say that a folder is no longer there (`folder_gone`) instead of "error 404", and that a folder has the name a file was sent under (`folder_exists`)
+- Show messages at the top of a phone's screen: at the bottom they sat on the buttons they were about
 - Break a long file name in a question rather than let it push the question and its buttons off a phone's screen
 - Close a message shown above a dialog with Escape, before the dialog: the keyboard could not reach it, and it could cover the dialog's buttons. Show where the keyboard is on the button that closes a message
 - Give focus a place to go when what it was on goes away: the upload bar, the buttons of a print that is over, a list that could not be fetched; and put it back on the name of a folder that was refused

@@ -33,12 +33,12 @@ export function UploadStatus() {
   const focus = useFocusWithin();
   const shown = sending !== null;
   useEffect(() => {
-    if (shown) return;
+    // Also when the button to give up goes, the bar staying.
     if (focus.lost()) focusContent();
-    focus.forget();
+    if (!shown) focus.forget();
     // `focus` is new at every drawing; what it notes is not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown]);
+  }, [shown, finishing]);
 
   return (
     <>
@@ -52,15 +52,19 @@ export function UploadStatus() {
               >
                 {said(done)}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1.5"
-                onClick={cancel}
-              >
-                <X className="h-3.5 w-3.5" aria-hidden />
-                {t("files.uploadCancel")}
-              </Button>
+              {/* Nothing is left to give up once all of it has gone: the
+                  server has the file, and stores it. */}
+              {!finishing && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  onClick={cancel}
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                  {t("files.uploadCancel")}
+                </Button>
+              )}
             </div>
             <Progress
               value={done}

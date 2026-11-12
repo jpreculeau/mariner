@@ -31,6 +31,10 @@ export const fr: Record<TextKey, string> = {
   "power.shutdownAgain": "Appuyez de nouveau pour éteindre l'ordinateur.",
   "power.rebooting": "L'ordinateur redémarre. Cette page revient toute seule.",
   "power.shuttingDown": "L'ordinateur s'éteint.",
+  "power.rebootAsking": "Redémarrage…",
+  "power.shutdownAsking": "Arrêt…",
+  "power.noAnswer":
+    "Mariner n'a pas répondu\u00a0: l'ordinateur est peut-être en train de s'arrêter, ou n'a peut-être pas reçu la demande. Vérifiez avant de le débrancher.",
 
   "status.idle": "Prête",
   "status.printing": "Impression en cours",
@@ -144,7 +148,9 @@ export const fr: Record<TextKey, string> = {
   "error.name_not_allowed":
     'Ce nom ne peut pas être utilisé. Évitez les apostrophes, les barres obliques et ces caractères\u00a0: \\\u00a0:\u00a0*\u00a0?\u00a0"\u00a0<\u00a0>\u00a0|\u00a0; ne le commencez ni ne le terminez par un point, et restez sous 255\u00a0caractères.',
   "error.type_not_supported":
-    "Ce n'est pas un fichier que l'imprimante sait imprimer.",
+    "Ce n'est pas un fichier que l'imprimante sait imprimer. Mariner accepte\u00a0: {kinds}.",
+  "error.folder_gone":
+    "Ce dossier n'est plus là\u00a0: il a été supprimé ou renommé depuis l'affichage de la liste.",
   "error.file_gone":
     "Ce fichier n'est plus là\u00a0: il a été supprimé ou renommé depuis l'affichage de la liste.",
   "error.folder_not_created":

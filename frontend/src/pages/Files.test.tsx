@@ -13,6 +13,7 @@ import { UploadProvider } from "@/components/UploadProvider";
 import { UploadStatus } from "@/components/UploadStatus";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
+import { LanguageProvider, useI18n } from "@/lib/i18n";
 
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -602,6 +603,10 @@ describe("Files", () => {
     expect(screen.getAllByText("Finishing dragon.ctb…").length).toBeGreaterThan(
       0,
     );
+    // Nothing is left to give up: the server has it all, and stores it.
+    expect(
+      screen.queryByRole("button", { name: "Cancel the upload" }),
+    ).toBeNull();
   });
 
   it("keeps the keyboard's place when trying again fails again", async () => {
@@ -715,5 +720,84 @@ describe("Files", () => {
     expect(create).not.toBeDisabled();
     await screen.findByRole("alert");
     expect(document.activeElement).toBe(name);
+  });
+
+  describe("a file the server would refuse", () => {
+    // Told only once all of it had been sent: minutes, for a large one.
+    const told = document.createElement("meta");
+    told.name = "supported-extensions";
+    told.content = ".ctb,.fdg";
+
+    it("is not sent when it is not of a kind the printer takes", () => {
+      document.head.appendChild(told);
+      try {
+        const send = vi.spyOn(api, "uploadFile").mockResolvedValue();
+        pick(renderFiles(), new File(["x"], "model.STL"));
+        expect(send).not.toHaveBeenCalled();
+        expect(toast.error).toHaveBeenCalledWith(
+          "This is not a file the printer can print. Mariner takes: .ctb, .fdg.",
+        );
+      } finally {
+        told.remove();
+      }
+    });
+
+    it("is sent when it is, whatever the case of its name", async () => {
+      document.head.appendChild(told);
+      try {
+        const send = vi.spyOn(api, "uploadFile").mockResolvedValue();
+        pick(renderFiles(), new File(["x"], "MODEL.CTB"));
+        await waitFor(() => expect(send).toHaveBeenCalled());
+      } finally {
+        told.remove();
+      }
+    });
+
+    it.each(["bob's model.ctb", "what?.ctb", ".hidden.ctb", "a/b.ctb"])(
+      "is not sent under a name that cannot be used: %s",
+      (name) => {
+        const send = vi.spyOn(api, "uploadFile").mockResolvedValue();
+        pick(renderFiles(), new File(["x"], name));
+        expect(send).not.toHaveBeenCalled();
+        expect(vi.mocked(toast.error).mock.calls[0][0]).toContain(
+          "apostrophes",
+        );
+      },
+    );
+  });
+
+  it("says how an upload went in the language of the page as it is then", async () => {
+    // Minutes can pass, and the language be changed meanwhile.
+    function Switch() {
+      const { setLang } = useI18n();
+      return <button onClick={() => setLang("fr")}>switch</button>;
+    }
+    let done: () => void = () => {};
+    vi.spyOn(api, "uploadFile").mockReturnValue(
+      new Promise<void>((resolve) => (done = resolve)),
+    );
+    const { container } = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <LanguageProvider>
+            <Switch />
+            <UploadProvider>
+              <Files />
+            </UploadProvider>
+          </LanguageProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    pick(
+      container.querySelector('input[type="file"]') as HTMLInputElement,
+      new File(["x"], "dragon.ctb"),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "switch" }));
+
+    await act(async () => done());
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("dragon.ctb envoyé"),
+    );
   });
 });

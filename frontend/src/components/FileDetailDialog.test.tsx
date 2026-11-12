@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { FileDetailDialog } from "./FileDetailDialog";
@@ -460,5 +466,23 @@ describe("FileDetailDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start print" }));
 
     expect(await screen.findByText("the dashboard")).toBeInTheDocument();
+  });
+
+  it("deletes once when the confirmation is pressed twice in one go", async () => {
+    const remove = vi
+      .spyOn(api, "deleteFile")
+      .mockReturnValue(new Promise(() => {}));
+    renderDialog();
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    const confirm = await screen.findByRole("button", {
+      name: "Delete the file",
+    });
+
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+
+    expect(remove).toHaveBeenCalledTimes(1);
   });
 });

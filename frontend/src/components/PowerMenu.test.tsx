@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { PowerMenu } from "./PowerMenu";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
@@ -38,13 +44,13 @@ describe("PowerMenu", () => {
     );
   });
 
-  it("says nothing when the connection drops as the host goes down", async () => {
+  it("never says that the computer is going down on a failure", async () => {
     vi.spyOn(api, "hostShutdown").mockRejectedValue(
       new TypeError("Failed to fetch"),
     );
     await confirmShutdown();
-    await waitFor(() => expect(api.hostShutdown).toHaveBeenCalled());
-    expect(toast.error).not.toHaveBeenCalled();
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   it("says aloud that a second press is asked for", async () => {
@@ -88,18 +94,41 @@ describe("PowerMenu", () => {
     ).toBeInTheDocument();
   });
 
-  it("takes a connection that drops for the computer going down", async () => {
-    // It is what a computer that shuts down does.
+  it("does not say that the computer is going down when nothing answered", async () => {
+    // The computer answers before it goes down. No answer more often
+    // means it was never asked, and told otherwise the reader pulls the
+    // plug on a computer that is running.
     vi.spyOn(api, "hostShutdown").mockRejectedValue(
       new ApiError(0, "Mariner cannot be reached.", "network"),
     );
     await confirmShutdown();
 
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith(
-        "The computer is shutting down.",
+      expect(toast.error).toHaveBeenCalledWith(
+        "Mariner did not answer: the computer may be going down, or may not have been asked. Check before unplugging it.",
       ),
     );
-    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("asks once when the button is pressed twice in one go", async () => {
+    const shutdown = vi
+      .spyOn(api, "hostShutdown")
+      .mockReturnValue(new Promise(() => {}));
+    render(<PowerMenu />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Shut down or restart" }),
+    );
+    fireEvent.click(await screen.findByText("Shut down"));
+    const confirm = await screen.findByText("Confirm shutdown?");
+
+    act(() => {
+      confirm.click();
+      confirm.click();
+    });
+
+    expect(shutdown).toHaveBeenCalledTimes(1);
+    // And says that it is asking.
+    expect(await screen.findByText("Shutting down…")).toBeInTheDocument();
   });
 });

@@ -11,6 +11,8 @@ export interface Answer {
   fails?: boolean;
   /** Answer only when the test says so. */
   held?: boolean;
+  /** With `held`: the whole file has gone before the wait. */
+  sentBeforeHeld?: boolean;
 }
 
 /**
@@ -28,9 +30,10 @@ export class FakeXhr {
   status = 0;
   statusText = "";
   responseText = "";
-  upload: { onprogress: ((event: unknown) => void) | null } = {
-    onprogress: null,
-  };
+  upload: {
+    onprogress: ((event: unknown) => void) | null;
+    onload: (() => void) | null;
+  } = { onprogress: null, onload: null };
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
@@ -69,11 +72,14 @@ export class FakeXhr {
         this.onerror?.();
         return;
       }
+      // An answer comes once the whole file has gone.
+      if (!answer.sentBeforeHeld) this.upload.onload?.();
       this.status = answer.status;
       this.statusText = answer.statusText ?? "";
       this.responseText = answer.body ?? "";
       this.onload?.();
     };
+    if (answer.held && answer.sentBeforeHeld) this.upload.onload?.();
     if (answer.held) FakeXhr.held.push(deliver);
     else queueMicrotask(deliver);
   }

@@ -42,7 +42,8 @@ describe("sending a file", () => {
 
     await api.uploadFile(file(), ".", {}, (fraction) => seen.push(fraction));
 
-    expect(seen).toEqual([0.25, 0.5, 1]);
+    // The last of it is told by the browser saying that all has gone.
+    expect(seen).toEqual([0.25, 0.5, 0.999, 1]);
   });
 
   it("makes sure of its token before sending", async () => {
@@ -141,6 +142,41 @@ describe("sending a file", () => {
       const outcome = await api.uploadFile(file()).catch((error) => error);
       expect(outcome, `status ${status}`).toBeInstanceOf(ApiError);
     }
+  });
+
+  it("is not given up once the whole file has gone", async () => {
+    // The server then stores it whatever the browser does: dropping the
+    // answer would only leave the page saying something untrue.
+    FakeXhr.answers = [{ status: 200, held: true, sentBeforeHeld: true }];
+    const giveUp = new AbortController();
+    const seen: number[] = [];
+    const sent = api.uploadFile(
+      file(),
+      ".",
+      {},
+      (fraction) => seen.push(fraction),
+      giveUp.signal,
+    );
+    await vi.waitFor(() => expect(seen).toEqual([1]));
+
+    giveUp.abort();
+    FakeXhr.held.forEach((deliver) => deliver());
+
+    await expect(sent).resolves.toBeUndefined();
+    expect(FakeXhr.requests[0].aborted).toBe(false);
+  });
+
+  it("says that all has gone only when all has", async () => {
+    // The last report of progress can come before the last of the file.
+    FakeXhr.answers = [{ status: 200, held: true, progress: [1] }];
+    const seen: number[] = [];
+    api.uploadFile(file(), ".", {}, (fraction) => seen.push(fraction));
+    await vi.waitFor(() => expect(FakeXhr.held.length).toBe(1));
+    expect(seen).toEqual([]);
+
+    FakeXhr.held.forEach((deliver) => deliver());
+    await vi.waitFor(() => expect(seen.at(-1)).toBe(1));
+    expect(seen[0]).toBeLessThan(1);
   });
 
   it("says that Mariner could not be reached when the connection drops", async () => {

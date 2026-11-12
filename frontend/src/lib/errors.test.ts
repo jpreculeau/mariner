@@ -53,4 +53,46 @@ describe("errorText", () => {
       "Something went wrong (error ?).",
     );
   });
+
+  it("says in the page's words what the server words for its log", () => {
+    // In English too: "unexpected response: ''" is not for a reader.
+    const silent = new ApiError(
+      500,
+      "The printer returned an unexpected response: ''",
+      "printer_error",
+    );
+    expect(errorText(silent, t("en"), "en")).toBe(
+      "The printer did not accept the command. Check that it is switched on and that its cable is plugged in.",
+    );
+    const broken = new ApiError(500, "KeyError: 'x'", "internal_error");
+    expect(errorText(broken, t("en"), "en")).toBe(
+      "Mariner ran into an error. Its log says more.",
+    );
+  });
+
+  describe("a kind of file the printer does not take", () => {
+    const refused = new ApiError(
+      400,
+      "This is not a file the printer can print. Mariner takes: .ctb, .fdg.",
+      "type_not_supported",
+    );
+    const told = document.createElement("meta");
+    told.name = "supported-extensions";
+
+    it("lists the kinds it does take, in French too", () => {
+      told.content = ".fdg,.ctb";
+      document.head.appendChild(told);
+      try {
+        expect(errorText(refused, t("fr"), "fr")).toBe(
+          "Ce n'est pas un fichier que l'imprimante sait imprimer. Mariner accepte\u00a0: .ctb, .fdg.",
+        );
+      } finally {
+        told.remove();
+      }
+    });
+
+    it("keeps to the server's words when the page was not told the kinds", () => {
+      expect(errorText(refused, t("fr"), "fr")).toBe(refused.message);
+    });
+  });
 });

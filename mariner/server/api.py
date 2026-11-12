@@ -437,7 +437,7 @@ def list_files() -> Union[str, Response]:
     path = _resolve_or_400(request.args.get("path", "."))
     files_directory_resolved = config.get_files_directory().resolve()
     if not os.path.isdir(path):
-        abort(404)
+        _refuse_folder_gone()
     with os.scandir(path) as dir_entries:
         files = []
         directories = []
@@ -556,7 +556,7 @@ def upload_file() -> Union[str, Response]:
 
     folder = request.args.get("path", ".")
     if not os.path.isdir(_resolve_or_400(folder)):
-        abort(400)
+        _refuse_folder_gone()
 
     # The entry of that name in the folder, whatever it is at present.
     destination = resolve_entry_in_files_directory(os.path.join(folder, filename))
@@ -564,7 +564,11 @@ def upload_file() -> Union[str, Response]:
         abort(400)
     if os.path.isdir(destination):
         # A folder already has that name; a file cannot take its place.
-        abort(400)
+        _refuse(
+            "folder_exists",
+            "Name Taken By A Folder",
+            "A folder already has this name: a file cannot take its place.",
+        )
     try:
         # Checked again by the guard at the moment the file is moved into
         # place, in case a print started while it was being written to disk.
@@ -652,6 +656,16 @@ def _refuse_gone() -> NoReturn:
     )
 
 
+def _refuse_folder_gone() -> NoReturn:
+    _refuse(
+        "folder_gone",
+        "Folder No Longer There",
+        "This folder is no longer there: it was removed or renamed since "
+        "the list was shown.",
+        404,
+    )
+
+
 @api.route("/create_directory", methods=["POST"])
 def create_directory() -> Union[str, Response]:
     safe_name = safe_filename(request.args.get("name", type=str))
@@ -660,7 +674,7 @@ def create_directory() -> Union[str, Response]:
 
     parent = _resolve_or_400(request.args.get("path", "."))
     if not os.path.isdir(parent):
-        abort(400)
+        _refuse_folder_gone()
     new_path = parent / safe_name
     if folder_depth(new_path) > MAX_FOLDER_DEPTH:
         _refuse(

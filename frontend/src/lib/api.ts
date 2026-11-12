@@ -174,7 +174,17 @@ function sendFile(
       return;
     }
     const request = new XMLHttpRequest();
-    signal?.addEventListener("abort", () => request.abort(), { once: true });
+    // Once the whole file has gone the server stores it whatever the
+    // browser does: giving up then would only drop the answer, and leave
+    // the page saying that a file which is there was not sent.
+    let allSent = false;
+    signal?.addEventListener(
+      "abort",
+      () => {
+        if (!allSent) request.abort();
+      },
+      { once: true },
+    );
     request.onabort = () => reject(givenUp());
     // Cut short by the browser: taken for a connection that dropped.
     request.ontimeout = () => reject(unreachable());
@@ -183,8 +193,13 @@ function sendFile(
     if (csrf) request.setRequestHeader("X-CSRFToken", csrf);
     request.upload.onprogress = (event) => {
       if (onProgress && event.lengthComputable && event.total > 0) {
-        onProgress(event.loaded / event.total);
+        // Short of all of it, which only `onload` below can tell.
+        onProgress(Math.min(event.loaded / event.total, 0.999));
       }
+    };
+    request.upload.onload = () => {
+      allSent = true;
+      onProgress?.(1);
     };
     request.onload = () => {
       // An answer without content cannot carry any: 204, 304.

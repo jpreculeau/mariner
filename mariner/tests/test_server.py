@@ -1,6 +1,7 @@
 import hashlib
 import errno
 import io
+import contextlib
 import os
 import subprocess
 import pathlib
@@ -854,7 +855,13 @@ class MarinerServerTest(TestCase):
             expect(headers["Cache-Control"]).to_equal(
                 "max-age=31536000, public, immutable"
             )
-        for not_kept in ("/favicon.svg", "/licenses/x-OFL.txt", "/assets/plain.js"):
+        for not_kept in (
+            "/favicon.svg",
+            "/licenses/x-OFL.txt",
+            "/assets/plain.js",
+            # Named alike, but not by the build.
+            "/licenses/Hyperleg-ibleNext.txt",
+        ):
             headers = {"Cache-Control": "max-age=60, public"}
             add_static_headers(headers, "/opt/dist" + not_kept, not_kept)
             expect(headers["Cache-Control"]).to_equal("max-age=60, public")
@@ -1700,7 +1707,7 @@ class MarinerServerTest(TestCase):
     def test_upload_file_to_missing_directory(self) -> None:
         data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
         response = self.client.post("/api/upload_file?path=no_such_dir", data=data)
-        expect(response.status_code).to_equal(400)
+        expect(response.status_code).to_equal(404)
 
     def test_delete_file(self) -> None:
         expect(os.path.exists(config.get_files_directory() / "mariner.ctb")).to_equal(
@@ -1809,6 +1816,48 @@ class MarinerServerTest(TestCase):
         # The apostrophe, which is what most often gets a name refused.
         description = upload("bob's model.ctb").get_json()["description"]
         expect("apostrophe" in description).to_equal(True)
+
+    def test_a_folder_that_is_gone_is_said_to_be(self) -> None:
+        # Removed from another tab, or through the slicer, while the page
+        # showed it: "error 404" tells the reader nothing to do.
+        import io
+
+        for response in (
+            self.client.get("/api/list_files?path=gone"),
+            self.client.post("/api/create_directory?path=gone&name=new"),
+            self.client.post(
+                "/api/upload_file?path=gone",
+                data={"file": (io.BytesIO(b"x"), "model.ctb")},
+                content_type="multipart/form-data",
+            ),
+        ):
+            expect(response.status_code).to_equal(404)
+            body = response.get_json()
+            expect(body["code"]).to_equal("folder_gone")
+            expect(len(body["description"]) > 20).to_equal(True)
+
+    def test_a_file_is_not_put_in_the_place_of_a_folder(self) -> None:
+        import io
+
+        self.fs.create_dir("/mnt/usb_share/batch.ctb")
+        response = self.client.post(
+            "/api/upload_file",
+            data={"file": (io.BytesIO(b"x"), "batch.ctb")},
+            content_type="multipart/form-data",
+        )
+        expect(response.status_code).to_equal(400)
+        expect(response.get_json()["code"]).to_equal("folder_exists")
+
+    def test_a_file_removed_as_it_is_deleted_is_said_to_be_gone(self) -> None:
+        # By someone else, between the check and the removal.
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents="x")
+        with patch(
+            "mariner.server.api.remove_entry", side_effect=FileNotFoundError()
+        ), patch("mariner.server.api._guard_for_this_request") as guard:
+            guard.return_value = lambda path: contextlib.nullcontext()
+            response = self.client.post("/api/delete_file?filename=model.ctb")
+        expect(response.status_code).to_equal(404)
+        expect(response.get_json()["code"]).to_equal("file_gone")
 
     def test_a_file_that_is_gone_is_said_to_be(self) -> None:
         # Removed from another tab, or through the slicer, since the list

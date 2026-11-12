@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { toast as sonner } from "sonner";
-import { toast } from "./sonner";
+import { render } from "@testing-library/react";
+import { toast as sonner, Toaster as Shown } from "sonner";
+import { toast, Toaster } from "./sonner";
 
 vi.mock("sonner", () => ({
-  Toaster: () => null,
+  Toaster: vi.fn(() => null),
   toast: { error: vi.fn(), success: vi.fn(), dismiss: vi.fn() },
 }));
 
@@ -33,5 +34,27 @@ describe("toast", () => {
   it("lets a success pass by itself", () => {
     toast.success("Done");
     expect(sonner.success).toHaveBeenCalledWith("Done");
+  });
+});
+
+describe("where messages are shown", () => {
+  const screenIs = (narrow: boolean) =>
+    vi.stubGlobal("matchMedia", () => ({
+      matches: narrow,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+
+  it("is at the top on a phone, away from the buttons they are about", () => {
+    // At the bottom they sat on Pause, and on the buttons of a dialog.
+    screenIs(true);
+    render(<Toaster />);
+    expect(vi.mocked(Shown).mock.lastCall?.[0].position).toBe("top-center");
+  });
+
+  it("is at the bottom right on a wide screen", () => {
+    screenIs(false);
+    render(<Toaster />);
+    expect(vi.mocked(Shown).mock.lastCall?.[0].position).toBe("bottom-right");
   });
 });

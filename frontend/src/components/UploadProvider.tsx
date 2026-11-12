@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
+import { isSupportedKind, isUsableName, supportedKinds } from "@/lib/kinds";
 import {
   UploadsContext,
   type RefusedUpload,
@@ -87,7 +88,20 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       sending,
       busy,
       start: (file, path) => {
-        upload(file, path, false);
+        // What the server would refuse for its name alone, it would
+        // refuse only once the whole file had been sent.
+        const { t } = words.current;
+        if (!isUsableName(file.name)) {
+          toast.error(t("error.name_not_allowed"));
+        } else if (!isSupportedKind(file.name)) {
+          toast.error(
+            t("error.type_not_supported", {
+              kinds: supportedKinds().join(", "),
+            }),
+          );
+        } else {
+          upload(file, path, false);
+        }
       },
       cancel: () => underWay.current?.abort(),
       refused,

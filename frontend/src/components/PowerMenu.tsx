@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Power, PowerOff, RotateCcw } from "lucide-react";
 import {
   Popover,
@@ -16,6 +16,9 @@ export function PowerMenu() {
     null,
   );
   const [open, setOpen] = useState(false);
+  // What the computer is being asked: once, however often it is pressed.
+  const [asking, setAsking] = useState<"shutdown" | "reboot" | null>(null);
+  const underWay = useRef(false);
   const { t, lang } = useI18n();
 
   function reset() {
@@ -27,25 +30,28 @@ export function PowerMenu() {
       setConfirming(action);
       return;
     }
+    if (underWay.current) return;
+    underWay.current = true;
+    setAsking(action);
     try {
       if (action === "shutdown") {
         await api.hostShutdown();
       } else {
         await api.hostReboot();
       }
+      toast.success(
+        t(action === "shutdown" ? "power.shuttingDown" : "power.rebooting"),
+      );
     } catch (error) {
-      // A dropped connection is the host going down. An answer is the
-      // host saying no.
-      if (error instanceof ApiError && error.code !== "network") {
-        toast.error(errorText(error, t, lang));
-        setOpen(false);
-        reset();
-        return;
-      }
+      // The computer answers before it goes down. No answer may be it
+      // going down all the same, or it never having been asked: said as
+      // such, so that it is not unplugged while running.
+      const unanswered = error instanceof ApiError && error.code === "network";
+      toast.error(unanswered ? t("power.noAnswer") : errorText(error, t, lang));
+    } finally {
+      underWay.current = false;
+      setAsking(null);
     }
-    toast.success(
-      t(action === "shutdown" ? "power.shuttingDown" : "power.rebooting"),
-    );
     setOpen(false);
     reset();
   }
@@ -95,9 +101,11 @@ export function PowerMenu() {
             )}
           >
             <RotateCcw className="h-4 w-4" aria-hidden />
-            {confirming === "reboot"
-              ? t("power.rebootConfirm")
-              : t("power.reboot")}
+            {asking === "reboot"
+              ? t("power.rebootAsking")
+              : confirming === "reboot"
+                ? t("power.rebootConfirm")
+                : t("power.reboot")}
           </button>
           <button
             onClick={() => handleAction("shutdown")}
@@ -109,9 +117,11 @@ export function PowerMenu() {
             )}
           >
             <PowerOff className="h-4 w-4" aria-hidden />
-            {confirming === "shutdown"
-              ? t("power.shutdownConfirm")
-              : t("power.shutdown")}
+            {asking === "shutdown"
+              ? t("power.shutdownAsking")
+              : confirming === "shutdown"
+                ? t("power.shutdownConfirm")
+                : t("power.shutdown")}
           </button>
         </div>
       </PopoverContent>

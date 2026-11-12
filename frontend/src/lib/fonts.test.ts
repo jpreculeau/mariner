@@ -101,8 +101,13 @@ describe("the page's own files", () => {
     // The older form of the same letters would be a quarter of the page's
     // weight, for no reader.
     const css = read("src/index.css");
-    expect(css).toMatch(/opendyslexic-latin-400-normal\.woff2/);
-    expect(css).toMatch(/opendyslexic-latin-700-normal\.woff2/);
+    // Each weight from its own file.
+    expect(css).toMatch(
+      /font-weight: 400;\s*src: url\(\s*"[^"]*opendyslexic-latin-400-normal\.woff2"/,
+    );
+    expect(css).toMatch(
+      /font-weight: 700;\s*src: url\(\s*"[^"]*opendyslexic-latin-700-normal\.woff2"/,
+    );
     expect(css + read("src/main.tsx")).not.toMatch(/\.woff["')]/);
     expect(read("src/main.tsx")).not.toContain("@fontsource/opendyslexic");
   });

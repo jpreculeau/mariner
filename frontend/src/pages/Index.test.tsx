@@ -130,7 +130,7 @@ describe("Index", () => {
   it("says why a command was not taken", async () => {
     vi.spyOn(api, "printStatus").mockResolvedValue(printing);
     vi.spyOn(api, "printerCommand").mockRejectedValue(
-      new ApiError(500, "The printer did not answer.", "printer_error"),
+      new ApiError(503, "The printer did not answer.", "printer_not_answering"),
     );
     renderIndex();
 

@@ -32,6 +32,10 @@ export const en = {
   "power.rebooting":
     "The computer is restarting. This page comes back by itself.",
   "power.shuttingDown": "The computer is shutting down.",
+  "power.rebootAsking": "Restarting…",
+  "power.shutdownAsking": "Shutting down…",
+  "power.noAnswer":
+    "Mariner did not answer: the computer may be going down, or may not have been asked. Check before unplugging it.",
 
   // Printer state
   "status.idle": "Ready",
@@ -149,7 +153,10 @@ export const en = {
   "error.folder_exists": "A folder or a file of this name is already there.",
   "error.name_not_allowed":
     'This name cannot be used. Leave out apostrophes, slashes and the characters \\ : * ? " < > |, do not start or end it with a dot, and keep it under 255 characters.',
-  "error.type_not_supported": "This is not a file the printer can print.",
+  "error.type_not_supported":
+    "This is not a file the printer can print. Mariner takes: {kinds}.",
+  "error.folder_gone":
+    "This folder is no longer there: it was removed or renamed since the list was shown.",
   "error.file_gone":
     "This file is no longer there: it was removed or renamed since the list was shown.",
   "error.folder_not_created":
