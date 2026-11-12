@@ -240,7 +240,9 @@ def _remember_started(relative_path: str) -> None:
 
 def _query_printer() -> Tuple[PrintStatus, str]:
     with _open_printer() as printer:
-        status = retry(printer.get_print_status, TRANSIENT_ERRORS, num_retries=3)
+        # Asked once here: the printer class makes its own three attempts
+        # and reports a line failure as CLOSED instead of raising.
+        status = printer.get_print_status()
         if status.state == PrinterState.CLOSED:
             return (status, "")
         try:

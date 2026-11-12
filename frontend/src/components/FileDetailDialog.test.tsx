@@ -207,6 +207,24 @@ describe("FileDetailDialog", () => {
       expect(onOpenChange).not.toHaveBeenCalled();
     });
 
+    it("does not ask twice about the same deletion", async () => {
+      // The printer is still silent when the confirmed deletion is made,
+      // and the server says so again.
+      vi.spyOn(api, "deleteFile").mockRejectedValue(refusal);
+      renderDialog();
+
+      fireEvent.click(screen.getByText("Delete"));
+      fireEvent.click(await screen.findByText("Delete anyway"));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "The printer is not answering.",
+        ),
+      );
+      expect(screen.queryByText("Delete anyway")).toBeNull();
+      expect(api.deleteFile).toHaveBeenCalledTimes(2);
+    });
+
     it("shows why the confirmed deletion was refused after all", async () => {
       vi.spyOn(api, "deleteFile")
         .mockRejectedValueOnce(refusal)

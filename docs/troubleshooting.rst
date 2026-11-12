@@ -195,6 +195,29 @@ being uploaded into that folder through another interface at that moment.
    from being changed by other means, such as another computer writing to the
    same storage.
 
+.. rubric:: A transfer from a slicer is refused or disappears
+
+Slicers send a file over the network (SDCP) in pieces. Mariner keeps the
+pieces of each transfer apart by the address of the computer that sends them
+and by the transfer id the slicer chose:
+
+* a piece that names another file, or another size, than the transfer it
+  claims to continue is refused, and so is a piece from the middle of a
+  transfer that is not under way;
+* a slicer can only end its own transfer;
+* a declared MD5 checksum that is not 32 hexadecimal digits is refused;
+* a transfer that receives nothing for five minutes is abandoned and what
+  was received is removed. Send the file again.
+* a transfer whose last bytes cannot be stored, for want of room, is refused
+  and the previous file is kept. Free some space and send the file again.
+
+Two slicers on the **same** computer that send the same file name and size
+at the same time, under the same transfer id or both without one, cannot be
+told apart: the
+second one to start takes over, and pieces still arriving from the first
+can end up in its file. Slicers that ask for the checksum to be verified
+are protected: the file is then refused.
+
 Printing
 --------
 
@@ -214,27 +237,6 @@ is about to begin. The web API answers 409 with the code
 
 In both cases UVtools receives a 409, and a slicer using SDCP is told that
 the printer is busy.
-
-.. rubric:: A transfer from a slicer is refused or disappears
-
-Slicers send a file over the network (SDCP) in pieces. Mariner keeps the
-pieces of each transfer apart by the address of the computer that sends them
-and by the transfer id the slicer chose:
-
-* a piece that names another file, or another size, than the transfer it
-  claims to continue is refused, and so is a piece from the middle of a
-  transfer that is not under way;
-* a slicer can only end its own transfer;
-* a declared MD5 checksum that is not 32 hexadecimal digits is refused;
-* a transfer that receives nothing for five minutes is abandoned and what
-  was received is removed. Send the file again.
-
-Two slicers on the **same** computer that send the same file name and size
-at the same time, under the same transfer id or both without one, cannot be
-told apart: the
-second one to start takes over, and pieces still arriving from the first
-can end up in its file. Slicers that ask for the checksum to be verified
-are protected: the file is then refused.
 
 .. rubric:: The dashboard shows progress but no layer count
 

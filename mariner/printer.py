@@ -332,7 +332,12 @@ class ChiTuPrinter:
             raise UnexpectedPrinterResponse(response)
 
     def reboot(self, delay_in_ms: int = 0) -> None:
-        self._send((f"M6040 I{delay_in_ms}").encode())
+        # No answer is waited for: the printer restarts.
+        try:
+            self._send((f"M6040 I{delay_in_ms}").encode())
+        except _LINE_FAILURES as exception:
+            self._is_connected = False
+            raise CommandNotSent("") from exception
 
     def _send_and_read(self, data: bytes, timeout_secs: Optional[float] = None) -> str:
         """Send *data* as one command line and give the first line of the answer.

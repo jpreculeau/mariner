@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
 
-import serial
 from pyexpect import expect
 from pyfakefs.fake_filesystem import FakeFilesystem
 from pyfakefs.fake_filesystem_unittest import TestCase
@@ -50,19 +49,31 @@ class PrinterAccessTest(TestCase):
         # The printer changed state on its own; a real one would be noticed
         # once the remembered status expires.
         printer_access.forget_status()
-        self.printer_mock.get_print_status.return_value = PrintStatus(
-            state=state,
-            current_byte=10,
-            total_bytes=100,
-            counters_seen=True,
-            # CLOSED stands for a printer that is switched off.
-            silent=state == PrinterState.CLOSED,
-        )
+        if state == PrinterState.CLOSED:
+            # Stands for a printer that is switched off.
+            status = PrintStatus(state=state, silent=True)
+        elif state == PrinterState.IDLE:
+            status = PrintStatus(state=state, counters_seen=True)
+        else:
+            status = PrintStatus(
+                state=state, current_byte=10, total_bytes=100, counters_seen=True
+            )
+        self.printer_mock.get_print_status.return_value = status
         self.printer_mock.get_selected_file.return_value = selected
 
     @staticmethod
     def _in_use(path: Path) -> bool:
         return printer_access.usage_of(path) is not printer_access.Usage.FREE
+
+    def _printer_reports_without_forgetting(
+        self, state: PrinterState, selected: str
+    ) -> None:
+        # What the printer would say if asked, while Mariner still
+        # remembers its previous answer.
+        self.printer_mock.get_print_status.return_value = PrintStatus(
+            state=state, current_byte=10, total_bytes=100, counters_seen=True
+        )
+        self.printer_mock.get_selected_file.return_value = selected
 
     # ---- one conversation with the printer at a time ----
 
@@ -235,16 +246,15 @@ class PrinterAccessTest(TestCase):
             printer_access.read_status()
         expect(free_when_stored).to_equal([False])
 
-    def test_read_status_reports_closed_when_the_printer_does_not_answer(self) -> None:
-        for error in (
-            UnexpectedPrinterResponse(""),
-            serial.SerialException("unplugged"),
-            OSError("no such device"),
-        ):
-            self.printer_mock.get_print_status.side_effect = error
-            status, selected = printer_access.read_status()
-            expect(status.state).to_equal(PrinterState.CLOSED)
-            expect(selected).to_equal("")
+    def test_read_status_reports_closed_when_the_port_cannot_be_used(self) -> None:
+        # The printer class reports line failures itself. This is the net
+        # under it, for what it does not foresee.
+        self.printer_mock.get_print_status.side_effect = OSError("no such device")
+        status, selected = printer_access.read_status()
+        expect(status.state).to_equal(PrinterState.CLOSED)
+        expect(status.silent).to_equal(False)
+        expect(selected).to_equal("")
+        self.printer_mock.get_print_status.assert_called_once_with()
 
     def test_read_status_does_not_ask_a_silent_printer_for_its_file(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "model.ctb")
@@ -529,9 +539,11 @@ class PrinterAccessTest(TestCase):
             self.printer_mock.get_selected_file.return_value = "model.ctb"
             printer_access.read_status()
 
+            # By now the answer read at 1002 is too old to be relied on,
+            # so the printer is asked again. Nothing else forgets the print
+            # that was started.
             clock.return_value = 1004.0
             self._printer_still_says_idle()
-            printer_access.forget_status()
             expect(printer_access.usage_of(Path("/mnt/usb_share/model.ctb"))).to_equal(
                 printer_access.Usage.FREE
             )
@@ -730,7 +742,7 @@ class PrinterAccessTest(TestCase):
         expect("\n" in str(refusal)).to_equal(False)
         expect("forged.ctb" in str(refusal)).to_equal(True)
 
-    def test_unless_in_use_says_when_the_printer_could_not_be_asked(self) -> None:
+    def test_unless_in_use_says_when_the_printer_is_silent(self) -> None:
         self._printer_reports(PrinterState.CLOSED, "")
         with self.assertRaises(printer_access.FileInUse) as raised:
             with printer_access.unless_in_use(Path("/mnt/usb_share/model.ctb")):
@@ -851,6 +863,32 @@ class PrinterAccessTest(TestCase):
             with self.assertRaises(printer_access.FileInUse) as raised:
                 with printer_access.unless_in_use(
                     Path("/mnt/usb_share/model.ctb"), even_if_unreachable=True
+                ):
+                    pass
+        expect(raised.exception.usage).to_equal(printer_access.Usage.PRINTING)
+
+    def test_an_override_asks_about_a_file_that_appeared_meanwhile(self) -> None:
+        # No file when the request arrived, so the printer was not asked
+        # then. By the time the change can be made, an upload has put one
+        # there. A silence remembered from before must not be enough.
+        self._printer_reports(PrinterState.CLOSED, "")
+        self._in_use(Path("/mnt/usb_share/model.ctb"))
+        self._printer_reports_without_forgetting(PrinterState.PRINTING, "late.ctb")
+        change_lock = printer_access._change_lock
+        test = self
+
+        class FileAppearsMeanwhile:
+            def __enter__(self) -> None:
+                test.fs.create_file("/mnt/usb_share/late.ctb", contents=b"x")
+                change_lock.acquire()
+
+            def __exit__(self, *_: Any) -> None:
+                change_lock.release()
+
+        with patch.object(printer_access, "_change_lock", FileAppearsMeanwhile()):
+            with self.assertRaises(printer_access.FileInUse) as raised:
+                with printer_access.unless_in_use(
+                    Path("/mnt/usb_share/late.ctb"), even_if_unreachable=True
                 ):
                     pass
         expect(raised.exception.usage).to_equal(printer_access.Usage.PRINTING)

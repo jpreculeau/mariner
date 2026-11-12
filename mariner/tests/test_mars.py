@@ -418,6 +418,18 @@ class ChiTuPrinterTest(TestCase):
             self.printer.pause_printing()
         self.serial_port_mock.write.assert_not_called()
 
+    def test_a_reboot_that_could_not_be_written_says_so(self) -> None:
+        # The one command that waits for no answer. With the printer off,
+        # the port is not open and the write itself fails.
+        for failure in (
+            serial.PortNotOpenError(),
+            termios.error(5, "Input/output error"),
+        ):
+            self.serial_port_mock.write.side_effect = failure
+            self.printer.open()
+            with self.assertRaises(CommandNotSent):
+                self.printer.reboot()
+
     def test_a_command_whose_answer_was_lost_may_have_been_sent(self) -> None:
         for failure in (
             serial.SerialException("lost"),

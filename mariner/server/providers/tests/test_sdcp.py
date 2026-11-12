@@ -1367,6 +1367,27 @@ class UploadManagerTest(TestCase):
         )
         expect(result.completed).to_equal(True)
 
+    def test_a_transfer_whose_last_bytes_could_not_be_stored_is_not_complete(
+        self,
+    ) -> None:
+        # The end of the last chunk is only written out when the file is
+        # closed. With no room left for it, the file on disk is short,
+        # whatever the checksum of what was received says.
+        self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"previous")
+        self._send(0, b"AAAA")
+        session = next(iter(self.manager._sessions.values()))
+        session.handle.close()
+        session.handle = Mock(close=Mock(side_effect=OSError(28, "No space left")))
+
+        result = self._send(4, b"AAAA")
+
+        expect(result.ok).to_equal(False)
+        expect(result.completed).to_equal(False)
+        expect(result.error).to_equal(int(constants.UploadError.FILE_OPEN_FAILED))
+        expect(self._stored("model.ctb")).to_equal(b"previous")
+        expect(os.listdir("/mnt/usb_share")).to_equal(["model.ctb"])
+        expect(self.manager.is_transferring()).to_equal(False)
+
     def test_a_failed_write_leaves_nothing_behind(self) -> None:
         self._send(0, b"AAAA")
         session = next(iter(self.manager._sessions.values()))
@@ -1634,6 +1655,30 @@ class ServiceHousekeepingTest(IsolatedAsyncioTestCase):
         service._bridge.firmware_version.side_effect = RuntimeError("no printer")
         with self.assertLogs("mariner.server.providers.sdcp.service", "WARNING"):
             await service._learn_firmware_version()
+
+    async def test_the_service_reads_the_firmware_version_as_it_starts(self) -> None:
+        service = self._service()
+        service._bridge = Mock(spec=PrinterBridge)
+        runner = Mock()
+        runner.cleanup = Mock(wraps=_no_reply)
+
+        async def http_started(port: int) -> Any:
+            return runner
+
+        async def no_discovery(port: int) -> Any:
+            return None
+
+        async def poll_once() -> None:
+            # Lets what was scheduled before it run, then stops the service.
+            await asyncio.sleep(0)
+            raise asyncio.CancelledError()
+
+        with patch.object(service, "_start_http", http_started), patch.object(
+            service, "_start_discovery", no_discovery
+        ), patch.object(service, "_poll_status_forever", poll_once):
+            with self.assertRaises(asyncio.CancelledError):
+                await service._main()
+        service._bridge.firmware_version.assert_called_once_with()
 
     async def test_terminate_is_asked_for_the_client_that_sent_it(self) -> None:
         service = self._service()

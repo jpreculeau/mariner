@@ -1,7 +1,7 @@
 ## [unreleased]
 
-<!-- This section is written by hand, one line per change in behaviour.
-     Regenerating it from the commit subjects would lose that detail. -->
+<!-- This section is written by hand and states the behaviour as it now is.
+     Regenerating it from the commit subjects would lose that. -->
 
 ### 🚀 Features
 
@@ -9,73 +9,50 @@
 
 ### 🐛 Bug Fixes
 
-- Validate the file name before a print is started from the web API
-- Validate the upload id of network (SDCP) transfers
-- Keep uploaded file and folder names instead of rewriting them
-- Write uploads to a temporary file and move them into place
-- Answer 404 instead of 500 for a missing folder or an unknown printer command
-- List a folder that contains a dangling symbolic link
-- Let only one request at a time talk to the printer's serial port
-- Refuse to replace or delete the file being printed, however the print was started
-- Leave existing files alone while the printer does not answer; new names are still accepted
-- Let a web API client override that refusal when the user confirms the printer is switched off
-- Ask in the web interface before deleting or replacing a file while the printer does not answer
-- Tell a printer that answers unclearly from one that does not answer, and allow the override for the latter only
-- Do not protect a file whose print cannot have started: the printer did not select it, or the print command could not be written
-- Refuse to delete a folder over SDCP while a file is being uploaded into it
-- Recognise the names reserved for transfers in progress whatever their case
-- Keep line breaks in client-supplied names out of the logs
-- Answer 404 when a file or folder disappears during a deletion or an upload
-- Refuse to start a print while the printer reports one under way
-- Treat a terminal failure on the serial line like any other line failure, in every printer command and while the port is being opened
-- Refuse, over SDCP too, a name with a line break at either end instead of trimming it
-- Trim an uploaded file's name before looking at its extension, as UVtools and SDCP do
-- Follow only symbolic links when listing a folder, so that large folders list quickly
-- Check once more that a folder is not a transfer folder right before removing it over SDCP
-- Do not let a link named like the SDCP transfer folder lead transfers elsewhere
-- Do not ask the printer about a stray SDCP chunk
-- Read the firmware version when the SDCP service starts, so that discovery announces it from the first reply
-- Refuse to start a second print until the printer reports the first, with its own explanation (`print_just_started`)
-- Check that the file can be printed at the moment the command is sent, with file changes held off
-- Count as silence only a printer from which not one byte came, late answers included
-- Ask again a moment later after an unclear answer, instead of keeping it for half a minute
-- Refuse a file name with a line break at either end instead of trimming it
-- Let a slicer delete a symbolic link to a folder; the folder itself stays
-- Check once more that an entry is not a transfer in progress right before removing it
-- Keep listings whole when they hold a symbolic link that leads back to itself
-- Remove what an SDCP transfer received even when moving it into place fails unexpectedly
-- Explain apart a file whose print was only just started (`print_just_started`)
-- Allow the "printer is off" override only when the printer was asked and stayed silent, not when the serial port could not be used or failed
-- Withdraw the "delete anyway" question when another file is shown, and ignore an answer that comes back for a file no longer on screen
-- Take one upload at a time in the web interface, a confirmed one included
-- Refuse an SDCP chunk from the middle of a transfer that is not under way, and let a client end its own transfer only
-- Drop unfinished SDCP transfers with no client connected
-- Keep an SDCP listing whole when it holds a link whose target is gone
-- Answer a UVtools command the printer turned down, or an upload that cannot be stored, instead of leaving it unhandled
-- Keep SDCP transfers apart by client address as well as id, and refuse a chunk that names another file or size
-- Abandon an SDCP transfer that has received nothing for five minutes
-- Refuse a declared MD5 that is not one
-- Leave no empty transfer folder behind after a refused or failed SDCP transfer
-- Replace a symbolic link itself, not its target, when a file is uploaded onto it from UVtools or SDCP
-- Do not read or show what a symbolic link leads to outside the files directory or in a transfer in progress
-- Refuse a deletion name containing a NUL byte or invalid Unicode instead of failing
-- Refuse file names containing C1 control characters or Unicode line separators
-- Refuse file names the printer's FAT filesystem cannot store
-- Give each upload its own temporary file and remove leftovers at startup
-- Send the printer the path it knows when a print is started with another form of it, from any interface
-- Check the file extension before printing from UVtools
-- Treat a bare string in an SDCP delete request as one path, and report entries that are not paths as failures
-- Answer the SDCP discovery broadcast without waiting on the printer
-- Refuse names that are not valid Unicode instead of dropping the SDCP connection
-- Protect a file from the moment its print is started through Mariner
-- Show in the web interface why an upload or a deletion was refused
-- Give each SDCP transfer its own temporary file, even when ids are reused
+File names and paths
+
+- Keep uploaded file and folder names instead of rewriting them, and refuse those that cannot be used safely: a quote, a control character or line separator anywhere (ends included, instead of trimming it), text that is not valid Unicode, and names the printer's FAT filesystem cannot store
+- Validate the file name before a print is started, from every interface, and send the printer the path it knows whatever form the client used
+- Check the file extension before printing from UVtools, and trim an uploaded file's name before looking at its extension on every interface
+- Keep every client-supplied path inside the files directory, on every route
+- Delete or replace a symbolic link itself, not what it points to, including a link whose target is gone; do not read or show what a link leads to outside the files directory
+- Keep listings whole when they hold a dangling link, a link that leads back to itself or a file that cannot be parsed, and quick in large folders
+- Answer 404 instead of 500 for a missing folder, an unknown printer command, or a file or folder that disappears during a deletion or an upload
 - Refuse to upload a file onto the name of a folder
-- Keep transfers in progress out of reach of every file route
-- Delete a symbolic link itself, not the file it points to, including a link whose target is gone
+- Let a leftover whose name is no longer allowed be deleted from every interface
+- Keep line breaks in client-supplied names and values out of the logs
+
+Uploads
+
+- Write each upload to its own temporary file and move it into place in one step, so that a failed or refused upload leaves the previous file intact; remove leftovers at startup
+- Keep transfers in progress out of reach of every route, whatever the case of their name, and check once more right before a removal
+- Refuse to delete a folder over SDCP while a file is being uploaded into it
+- Keep SDCP transfers apart by client address as well as id; refuse a chunk that names another file or size, or that comes from the middle of a transfer that is not under way; let a client end its own transfer only
+- Validate the upload id and the declared MD5 of SDCP transfers
+- Abandon an SDCP transfer that has received nothing for five minutes, with or without a client connected, and leave nothing behind after a refused, failed or abandoned one
+- Refuse an SDCP transfer whose last bytes could not be stored, instead of replacing the previous file with a short one
+- Treat a bare string in an SDCP delete request as one path, and report entries that are not paths as failures
+
+Printer and prints
+
+- Let only one request at a time talk to the printer's serial port
+- Refuse to replace or delete the file being printed, or a folder holding it, however the print was started
+- Protect a file from the moment its print is started through Mariner, for half a minute or until the printer reports the print; not when the print cannot have started
+- Refuse to start a print while the printer reports one, or until it reports the one Mariner just started (`print_in_progress`, `print_just_started`)
+- Check that the file can be printed at the moment the command is sent, with file changes held off
+- Leave existing files alone unless the printer says clearly that it is not reading them; new names are always accepted
+- Tell apart a printer that answers unclearly from one that sends nothing at all, late answers included, and ask again a moment later after an unclear answer
+- Let a web API client override the refusal only for a printer that was asked and stayed silent, once the user has confirmed that it is switched off
+- Handle a failure of the serial line, of any kind, in every printer command and while the port is being opened
 - Keep the dashboard working when the file being printed cannot be read
-- Read the firmware version from boards that end lines with CRLF
-- Treat undecodable bytes from the printer as a bad answer instead of crashing
+- Read the firmware version from boards that end lines with CRLF, and treat undecodable bytes from the printer as a bad answer instead of crashing
+- Answer the SDCP discovery broadcast without waiting on the printer, with the firmware version read when the service starts
+
+Web interface
+
+- Show why an upload or a deletion was refused
+- Ask before deleting or replacing a file while the printer does not answer; withdraw the question when another file is shown
+- Take one upload at a time
 
 ### 🚜 Refactor
 

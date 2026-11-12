@@ -69,10 +69,20 @@ class _Session:
     hasher: Any = field(default_factory=hashlib.md5)
 
     def close(self) -> None:
+        """Close the scratch file of a transfer that is being given up."""
         try:
             self.handle.close()
         except OSError:
             pass
+
+    def finish(self) -> None:
+        """Close the scratch file of a transfer that has received everything.
+
+        The end of the last chunk is only written out here. Raises OSError
+        if it cannot be, for want of room say: the file is then short of
+        what was received, and must not be taken for the whole of it.
+        """
+        self.handle.close()
 
 
 class UploadManager:
@@ -312,9 +322,18 @@ class UploadManager:
             if not (session.total_size and session.offset >= session.total_size):
                 return ChunkResult(ok=True)
 
-            # Complete. The session leaves the table here, under the lock;
-            # the rest happens outside it because it talks to the printer.
-            session.close()
+            # Complete, if all of it made it to the disk.
+            try:
+                session.finish()
+            except OSError as exc:
+                logger.warning("SDCP: write failed: %s", exc)
+                self._discard(key, session)
+                return ChunkResult(
+                    ok=False, error=constants.UploadError.FILE_OPEN_FAILED
+                )
+
+            # The session leaves the table here, under the lock; the rest
+            # happens outside it because it talks to the printer.
             self._sessions.pop(key, None)
 
         return self._finalize(session)
