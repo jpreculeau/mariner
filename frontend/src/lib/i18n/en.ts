@@ -75,7 +75,8 @@ export const en = {
   "settings.password.current": "Current password",
   "settings.password.repeat": "Repeat the new password",
   "settings.password.change": "Change the password",
-  "settings.password.changed": "Password changed. Other browsers were signed out.",
+  "settings.password.changed":
+    "Password changed. Other browsers were signed out.",
   "settings.signOut": "Sign out",
 
   // Appearance menu
