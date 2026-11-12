@@ -120,6 +120,50 @@ class EarlyRefusalTest(TestCase):
             expect(json.loads(body)["code"]).to_equal(code)
         expect(self.called).to_equal([])
 
+    def _asking_for_the_password(self) -> None:
+        def unless_signed_in(path: str, cookies: str) -> Any:
+            if path.startswith("/api/") and "signed-in" not in cookies:
+                return {"code": "login_required"}
+            return None
+
+        patcher = patch.object(early, "password_refusal", unless_signed_in)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_who_is_not_signed_in_is_refused_before_the_body_is_sent(self) -> None:
+        # Else anyone could have two gigabytes written to the drive, to be
+        # told only then that a password is asked for.
+        self._asking_for_the_password()
+        status, _, body = self._exchange(
+            "POST /api/upload_file HTTP/1.1\nHost: 127.0.0.1\n"
+            "Content-Length: 500000000\n"
+        )
+        expect(status).to_equal(401)
+        expect(json.loads(body)["code"]).to_equal("login_required")
+        expect(self.called).to_equal([])
+
+    def test_who_is_signed_in_has_the_body_taken(self) -> None:
+        self._asking_for_the_password()
+        status, _, body = self._exchange(
+            "POST /api/upload_file HTTP/1.1\nHost: 127.0.0.1\n"
+            "Cookie: mariner_session=signed-in\nContent-Length: 4\n",
+            b"data",
+            wait_for_body=True,
+        )
+        expect(status).to_equal(200)
+        expect(self.called).to_equal(["/api/upload_file"])
+
+    def test_a_slicer_is_not_asked_for_a_password(self) -> None:
+        # It would not know what to answer: its addresses have a switch.
+        self._asking_for_the_password()
+        status, _, _ = self._exchange(
+            "POST /uvtools/upload/model.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+            "Content-Length: 4\n",
+            b"data",
+            wait_for_body=True,
+        )
+        expect(status).to_equal(200)
+
     def test_a_request_without_a_body_is_left_to_the_application(self) -> None:
         # Nothing to spare the drive, and the application answers a person
         # who opened Mariner under a foreign name with a page to read.

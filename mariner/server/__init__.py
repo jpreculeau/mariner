@@ -1,6 +1,7 @@
 import logging
 import multiprocessing
 import os
+import sys
 import tempfile
 from typing import Dict
 
@@ -10,8 +11,9 @@ from mariner import config
 from mariner.file_formats.reading import MalformedFile
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
+from mariner.server.auth import auth_api as auth_blueprint
 from mariner.server.app import UPLOAD_OVERHEAD_BYTES, app as flask_app, csrf
-from mariner.server import origin, state
+from mariner.server import auth, early, origin, sessions, settings, state
 from mariner.server.early import serve
 from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
@@ -26,6 +28,11 @@ from mariner.printer import has_control_character
 logger: logging.Logger = logging.getLogger(__name__)
 
 flask_app.register_blueprint(api_blueprint)
+flask_app.register_blueprint(auth_blueprint)
+flask_app.register_blueprint(settings.settings_api)
+# Before the slicers' interfaces are set up: two of the settings changed
+# from the page are their switches.
+settings.note_what_runs()
 register_providers(flask_app, csrf)
 
 
@@ -144,6 +151,16 @@ def use_spool_directory() -> None:
 
 
 def main() -> None:
+    arguments = sys.argv[1:]
+    if arguments == ["reset-password"]:
+        sys.exit(auth.clear_from_the_command_line(sys.stdout))
+    if arguments:
+        print(
+            "usage: mariner                  start Mariner\n"
+            "       mariner reset-password   clear a password that is lost",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     # Global log level applies to mariner.* and waitress output.
     log_level = getattr(logging, config.get_log_level(), logging.INFO)
     if not logging.getLogger().handlers:
@@ -165,9 +182,17 @@ def main() -> None:
     CacheBootstrapper().start()
     start_providers()
 
+    # A password that is lost is cleared by a file on the boot drive.
+    auth.clear_if_asked_on_the_boot_drive()
+
     # The same key at every start: a page left open goes on working, and
     # whoever is signed in stays so.
     flask_app.config["SECRET_KEY"] = state.session_key()
+
+    # Asked for before a body is taken in, not once it has been stored.
+    early.password_refusal = lambda path, cookies: auth.refusal(
+        path, sessions.read(flask_app, cookies)
+    )
 
     for ignored in config.ignored_settings() + origin.unusable_entries():
         logger.warning("Configuration: %s", ignored)

@@ -5,16 +5,17 @@ import os
 import re
 import stat
 import tempfile
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, Union, cast
 
-from flask import Flask, Response, jsonify, make_response, request
+from flask import Flask, Response, jsonify, make_response, request, session
 from werkzeug.exceptions import HTTPException
 from flask_wtf.csrf import CSRFError, CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
-from mariner.server import origin, refusals
+from mariner.server import auth, origin, refusals, sessions
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -86,6 +87,7 @@ app: Flask = Flask(
     template_folder=frontend_dist_directory,
     static_folder=frontend_dist_directory,
 )
+app.session_interface = sessions.Sessions()
 csrf = CSRFProtect(app)
 # pyre-ignore[8]: incompatible attribute type
 app.wsgi_app = WhiteNoise(
@@ -195,10 +197,24 @@ def refuse_other_sites() -> Optional[Tuple[Response, int]]:
     return jsonify(refusal.body()), 403
 
 
+@app.before_request
+def ask_for_the_password() -> Optional[Tuple[Response, int]]:
+    """Answer the page's own addresses only to who is signed in.
+
+    See ``mariner.server.auth``. As above, the web server Mariner runs
+    under has already made this check for a request that has a body.
+    """
+    refused = auth.refusal(request.path, session)
+    if refused is None:
+        return None
+    return jsonify(refused), 401
+
+
 # First of all: before the check of the token a form carries, which reads
 # the whole form, file included.
-app.before_request_funcs.setdefault(None, []).remove(refuse_other_sites)
-app.before_request_funcs[None].insert(0, refuse_other_sites)
+for early in (ask_for_the_password, refuse_other_sites):
+    app.before_request_funcs.setdefault(None, []).remove(early)
+    app.before_request_funcs[None].insert(0, early)
 
 
 def _wants_a_page() -> bool:
@@ -335,6 +351,11 @@ app.config.from_mapping(
         # "Strict"): the page would otherwise be given a new token, and
         # the tabs already open would hold one that is refused.
         "SESSION_COOKIE_SAMESITE": "Lax",
+        # A name of Mariner's own, kept from scripts. Kept a month from
+        # the last visit: who is signed in stays so.
+        "SESSION_COOKIE_NAME": sessions.COOKIE_NAME,
+        "SESSION_COOKIE_HTTPONLY": True,
+        "PERMANENT_SESSION_LIFETIME": timedelta(days=30),
         # Left to itself the token is refused after an hour: a page left
         # open on a long print could then not pause or stop it. It still
         # ends when Mariner restarts, or a month after the cookie that

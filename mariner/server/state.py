@@ -88,6 +88,24 @@ def _path(name: str) -> Path:
     return directory() / name
 
 
+def exists(name: str) -> bool:
+    """Whether anything is kept under *name*, usable or not."""
+    return os.path.lexists(_path(name))
+
+
+def peek(name: str) -> Optional[bytes]:
+    """As ``read``, without making the folder if there is none yet.
+
+    For what is looked at when Mariner is merely loaded: nothing is then
+    made on the drive.
+    """
+    if _directory is None:
+        wanted = [config.get_state_directory()] + _FALLBACKS
+        if not any(os.path.isdir(os.path.expanduser(one)) for one in wanted):
+            return None
+    return read(name)
+
+
 def read(name: str) -> Optional[bytes]:
     """What is kept under *name*, or None.
 

@@ -310,7 +310,15 @@ def _guard_for_this_request() -> Callable[[Path], ContextManager[None]]:
 
 
 def _printer_declared_off() -> bool:
-    return request.args.get("ignore_unreachable_printer") == "1"
+    """Whether a printer that does not answer is to be taken for off.
+
+    Said for this request by whoever was asked, or once and for all in
+    the settings.
+    """
+    return (
+        request.args.get("ignore_unreachable_printer") == "1"
+        or config.get_assume_printer_off()
+    )
 
 
 def _refuse_early_if_in_use(destination: Path) -> None:

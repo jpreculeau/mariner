@@ -72,6 +72,11 @@ class MarinerServerTest(TestCase):
         self.client = app.test_client()
         printer_access.forget_everything()
         app.config["WTF_CSRF_ENABLED"] = False
+        # As the page once signed in: what is asked of who is not is in
+        # test_auth.
+        signed_in = patch("mariner.server.auth.signed_in_with", return_value=True)
+        signed_in.start()
+        self.addCleanup(signed_in.stop)
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
         self.printer_patcher = patch("mariner.server.printer_access.ChiTuPrinter")

@@ -35,6 +35,10 @@ class StartupTest(TestCase):
             server, "serve", side_effect=record("serve")
         ), patch.object(
             server.state, "session_key", return_value=b"k" * 32
+        ), patch.object(
+            server.sys, "argv", ["mariner"]
+        ), patch.object(
+            server.auth, "clear_if_asked_on_the_boot_drive"
         ):
             server.main()
 
@@ -71,10 +75,28 @@ class StartupTest(TestCase):
         ), patch.object(
             server.state, "session_key", return_value=b"k" * 32
         ), patch.object(
+            server.sys, "argv", ["mariner"]
+        ), patch.object(
+            server.auth, "clear_if_asked_on_the_boot_drive"
+        ), patch.object(
             server, "serve"
         ) as serve:
             server.main()
         return serve
+
+    def test_the_web_server_asks_for_the_password_before_taking_a_body(self) -> None:
+        # With the session the request's cookies make, as the application
+        # itself would.
+        with patch.object(server, "use_spool_directory"):
+            self._started()
+        with patch.object(server.sessions, "read", return_value={"held": 1}) as read:
+            with patch.object(
+                server.auth, "refusal", return_value={"code": "x"}
+            ) as refusal:
+                answer = server.early.password_refusal("/api/upload_file", "a=b")
+        self.assertEqual(answer, {"code": "x"})
+        read.assert_called_once_with(server.flask_app, "a=b")
+        refusal.assert_called_once_with("/api/upload_file", {"held": 1})
 
     def test_sessions_are_signed_with_the_key_that_is_kept(self) -> None:
         # The same at every start: a page left open goes on working, and
@@ -166,3 +188,28 @@ class StartupTest(TestCase):
             serve = self._started()
             serve.assert_called_once()
         self.assertEqual(order, ["spool"])
+
+
+class CommandLineTest(TestCase):
+    def test_reset_password_clears_it_and_starts_nothing(self) -> None:
+        with patch.object(
+            server.sys, "argv", ["mariner", "reset-password"]
+        ), patch.object(
+            server.auth, "clear_from_the_command_line", return_value=0
+        ) as clear, patch.object(
+            server, "serve"
+        ) as serve:
+            with self.assertRaises(SystemExit) as stopped:
+                server.main()
+        self.assertEqual(stopped.exception.code, 0)
+        clear.assert_called_once()
+        serve.assert_not_called()
+
+    def test_anything_else_is_said_not_to_be_known(self) -> None:
+        with patch.object(
+            server.sys, "argv", ["mariner", "--frobnicate"]
+        ), patch.object(server, "serve") as serve:
+            with self.assertRaises(SystemExit) as stopped:
+                server.main()
+        self.assertEqual(stopped.exception.code, 2)
+        serve.assert_not_called()

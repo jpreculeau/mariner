@@ -35,7 +35,23 @@ def get_files_directory() -> Path:
     return Path(str(config.get("files_directory", "/mnt/usb_share")))
 
 
+# What was changed from Mariner's page, which comes before the file: see
+# mariner.server.settings, which fills this in.
+overrides: Dict[str, Any] = {}
+
+
+def get_assume_printer_off() -> bool:
+    """Whether a printer that does not answer is taken for switched off.
+
+    Changing or deleting a file then goes ahead without the question the
+    page otherwise asks. Set from the page only.
+    """
+    return overrides.get("assume_printer_off") is True
+
+
 def get_printer_display_name() -> Optional[str]:
+    if isinstance(overrides.get("printer_display_name"), str):
+        return overrides["printer_display_name"]
     printer_config = _get_config().get("printer")
     if not isinstance(printer_config, dict):
         return None
@@ -218,6 +234,8 @@ def _switch(value: object) -> bool:
 
 def get_uvtools_enabled() -> bool:
     """Whether the routes UVtools sends files and commands to are served."""
+    if isinstance(overrides.get("uvtools_enabled"), bool):
+        return overrides["uvtools_enabled"]
     uvtools_config = _get_config().get("uvtools")
     if not isinstance(uvtools_config, dict):
         return True
@@ -234,6 +252,8 @@ def _sdcp_config() -> Dict[str, Any]:
 
 
 def get_sdcp_enabled() -> bool:
+    if isinstance(overrides.get("sdcp_enabled"), bool):
+        return overrides["sdcp_enabled"]
     return _switch(_sdcp_config().get("enabled", True))
 
 

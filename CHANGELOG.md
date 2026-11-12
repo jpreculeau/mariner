@@ -6,6 +6,10 @@
 ### 🚀 Features
 
 - Add support for SDCP
+- Ask for a password. One password opens Mariner's page and everything the page does (files, print commands, shutting down, settings); it is chosen at the first visit and kept as a hash (scrypt) that does not give it away. Who is signed in stays so for a month from the last visit, through restarts; changing the password signs every other page out. After a few wrong passwords the next attempt waits, up to half a minute. A file sent by who is not signed in is refused before any of it is taken in. The interfaces slicers speak (UVtools, SDCP) know nothing of passwords and are not behind this one: each has a switch
+- A password that is lost is cleared, not read back: `sudo mariner reset-password`, or a file named `reset-password` on the card's boot drive, obeyed at the next start. The next visit chooses a new one
+- Settings that can be changed from the page, once signed in (`/api/settings`): the printer's name, the two slicer interfaces, and taking a printer that does not answer for switched off without asking. They are kept in the state directory and come before `config.toml`. Mariner can be restarted from the page where it runs as a service
+- A cookie of the same name set by another program on the same computer (they go by host name, not by port) no longer signs everyone out or keeps the page from acting: every cookie of that name is tried, and only one Mariner signed is taken
 
 ### 🐛 Bug Fixes
 
