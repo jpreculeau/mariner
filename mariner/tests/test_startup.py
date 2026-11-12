@@ -87,7 +87,20 @@ class StartupTest(TestCase):
         # everyone else out for as long.
         with patch.object(server, "use_spool_directory"):
             serve = self._started()
-        self.assertLessEqual(serve.call_args.kwargs["channel_timeout"], 60)
+        timeout = serve.call_args.kwargs["channel_timeout"]
+        # Not so short that a phone that hesitates in the middle of an
+        # upload loses it.
+        self.assertGreaterEqual(timeout, 45)
+        self.assertLessEqual(timeout, 90)
+
+    def test_entries_that_can_match_nothing_are_said_at_start(self) -> None:
+        with patch.object(
+            server.origin, "unusable_entries", return_value=["an entry"]
+        ), patch.object(server, "use_spool_directory"), self.assertLogs(
+            "mariner.server", level="WARNING"
+        ) as logs:
+            self._started()
+        self.assertTrue(any("an entry" in r.getMessage() for r in logs.records))
 
     def test_the_web_server_is_the_one_that_refuses_early(self) -> None:
         from mariner.server import early

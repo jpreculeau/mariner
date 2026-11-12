@@ -79,7 +79,14 @@ async def refuse_other_sites(request: web.Request, handler: Any) -> Any:
     """
     refusal = origin.refusal_for(request.headers)
     if refusal is not None:
-        refusals.log("SDCP", request.remote, refusal.code, request.headers)
+        refusals.log(
+            "SDCP",
+            request.remote,
+            refusal.code,
+            request.headers,
+            request.method,
+            request.path,
+        )
         response = web.json_response(refusal.body(), status=403)
     else:
         try:

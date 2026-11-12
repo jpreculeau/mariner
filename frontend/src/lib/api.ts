@@ -37,9 +37,66 @@ export interface FileDetailsResponse {
   print_time_secs: number;
 }
 
+// The token asked for again since the page was loaded, if any.
+let renewedCsrfToken: string | null = null;
+
 function getCsrfToken(): string | null {
+  if (renewedCsrfToken) return renewedCsrfToken;
   const meta = document.querySelector('meta[name="csrf-token"]');
   return meta?.getAttribute("content") ?? null;
+}
+
+/**
+ * Ask for a new token. The one the page was loaded with stops being taken
+ * when Mariner restarts or the browser ends its session, which a page left
+ * open on a long print can live through.
+ */
+async function renewCsrfToken(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/csrf_token");
+    if (!res.ok) return false;
+    const body = await res.json();
+    if (body && typeof body.csrf_token === "string") {
+      renewedCsrfToken = body.csrf_token;
+      return true;
+    }
+  } catch {
+    // Mariner cannot be reached: the first answer is the one to show.
+  }
+  return false;
+}
+
+async function tokenWasRefused(res: Response): Promise<boolean> {
+  if (res.status !== 400) return false;
+  try {
+    const body = await (res.clone ? res.clone() : res).json();
+    return body?.code === "token_refused";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send a request with the page's token. If the token is refused as out of
+ * date, get a new one and send the request again, once.
+ */
+async function fetchWithToken(
+  url: string,
+  options: RequestInit = {},
+): Promise<Response> {
+  const send = () => {
+    const headers: Record<string, string> = {
+      ...(options.headers as Record<string, string>),
+    };
+    const csrf = getCsrfToken();
+    if (csrf) headers["X-CSRFToken"] = csrf;
+    return fetch(url, { ...options, headers });
+  };
+  const res = await send();
+  if ((await tokenWasRefused(res)) && (await renewCsrfToken())) {
+    return send();
+  }
+  return res;
 }
 
 /**
@@ -105,16 +162,7 @@ export interface FileChangeOptions {
 }
 
 async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
-  const headers: Record<string, string> = {
-    ...(options.headers as Record<string, string>),
-  };
-
-  const csrf = getCsrfToken();
-  if (csrf) {
-    headers["X-CSRFToken"] = csrf;
-  }
-
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetchWithToken(url, options);
   if (!res.ok) {
     throw await errorFrom(res, `API error: ${res.status} ${res.statusText}`);
   }
@@ -149,16 +197,12 @@ export const api = {
   ): Promise<void> {
     const formData = new FormData();
     formData.append("file", file);
-    const csrf = getCsrfToken();
-    const headers: Record<string, string> = {};
-    if (csrf) headers["X-CSRFToken"] = csrf;
     const q = new URLSearchParams({ path });
     if (options.ignoreUnreachablePrinter) {
       q.set("ignore_unreachable_printer", "1");
     }
-    const res = await fetch(`/api/upload_file?${q.toString()}`, {
+    const res = await fetchWithToken(`/api/upload_file?${q.toString()}`, {
       method: "POST",
-      headers,
       body: formData,
     });
     if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);

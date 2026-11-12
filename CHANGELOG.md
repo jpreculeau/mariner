@@ -65,11 +65,11 @@ Requests from the web
 - Keep what went wrong inside out of error answers: no call trace for a printer error (`printer_error`), a plain answer for an error nobody planned for (`internal_error`), debug mode off; the cause goes to the logs
 - Say that a file could not be stored (`upload_not_stored`) when an upload fails for want of room, on the printer's drive or where uploads wait. An upload that announces a size larger than the room where uploads wait, less 64 MB left to the system, is refused before any of it is taken in; the file itself is counted too where files are kept on that same drive
 - Refuse a request with a body as soon as its headers are in when it comes under a foreign name or from another site, whatever address it is sent to, or when it is too large for the room: the web server used to take in and store the whole body first, up to the largest size allowed, before anything was checked. Only the addresses files are sent to take a body over 512 KB (`request_too_large`)
-- Close a connection that has said nothing for 30 seconds, and name at start the entries of `allowed_hosts` and `allowed_origins` that are plainly malformed
+- Close a connection that has said nothing for a minute or so (it was two to two and a half), and name at start the entries of `allowed_hosts` and `allowed_origins` that are plainly malformed
 - Add `[http] allowed_origins` for a relay in front of Mariner that asks it under another name or port than the browser used. A name in `allowed_hosts` no longer makes pages served under it Mariner's own
 - Keep the page out of caches, and the cookie that goes with its token out of what other sites have the browser post or load (it still goes with a link followed to Mariner)
-- Write refused requests to the log, with who sent them and what they said, once a minute at most for the same client and reason, which bounds what a web page can have written, not a device of the network
-- Keep the page's token good until Mariner restarts or the browser is closed: after an hour, a page left open on a long print could no longer pause or stop it until reloaded. When a token is not taken, say so and what to do (`token_refused`)
+- Write refused requests to the log, with who sent them, what they asked for and what they said, once a minute at most for the same client and reason, which bounds what a web page can have written, not a device of the network
+- Keep a page left open able to act: its token was refused after an hour, so that a page open on a long print could no longer pause or stop it until reloaded. The token now lasts until Mariner restarts (or a month), and the page then asks for a new one by itself and sends its request again; if that fails it says to reload (`token_refused`)
 
 Reading files
 

@@ -164,7 +164,14 @@ def refuse_other_sites() -> Optional[Tuple[Response, int]]:
     refusal = origin.request_refusal(request.path, request.headers)
     if refusal is None:
         return None
-    refusals.log("Web", request.remote_addr, refusal.code, request.headers)
+    refusals.log(
+        "Web",
+        request.remote_addr,
+        refusal.code,
+        request.headers,
+        request.method,
+        request.path,
+    )
     if refusal.code == "host_not_allowed" and _wants_a_page():
         return _name_not_allowed_page(), 403
     return jsonify(refusal.body()), 403
@@ -308,9 +315,10 @@ app.config.from_mapping(
         # "Strict"): the page would otherwise be given a new token, and
         # the tabs already open would hold one that is refused.
         "SESSION_COOKIE_SAMESITE": "Lax",
-        # The token lasts as long as the browser keeps the page's cookie.
-        # Left to itself it is refused after an hour: a page left open on
-        # a long print could then not pause or stop it.
+        # Left to itself the token is refused after an hour: a page left
+        # open on a long print could then not pause or stop it. It still
+        # ends when Mariner restarts, or a month after the cookie that
+        # goes with it was made; the page then asks for a new one.
         "WTF_CSRF_TIME_LIMIT": None,
         # Backend class name, not the legacy "filesystem" factory alias. The
         # lowercase aliases are deprecated in flask-caching 2.x and gone in

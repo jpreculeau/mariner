@@ -249,7 +249,9 @@ minute at most for the same client and reason.
 .. rubric:: An action answers "Page Out Of Date" (error 400, ``token_refused``)
 
 The page was open when Mariner restarted, or the browser ended its
-session. Reload the page: actions work again.
+session. The page normally notices, asks Mariner for a new token and sends
+its request again without a word. If you do see this message, reload the
+page.
 
 When a browser says which page a request comes from, Mariner serves only
 its own pages' requests. A bookmark, a typed address and a link to Mariner
@@ -299,7 +301,16 @@ switch these addresses off (``[uvtools] enabled = false``).
 Only the addresses files are sent to (``/api/upload_file`` and
 ``/uvtools/upload/``) take 512 KB or more, or data of no size said
 beforehand. Nothing Mariner's page or a slicer sends elsewhere comes near
-that.
+that size. A script that sends even a small request in pieces
+(``Transfer-Encoding: chunked``) to another address is refused too: have it
+say the length.
+
+.. rubric:: An upload stops without an answer
+
+Mariner closes a connection on which nothing has moved for a minute to a
+minute and a half: there are only so many, and one that hangs keeps others
+out. A phone that goes to sleep or changes network in the middle of an
+upload loses it; send the file again.
 
 .. rubric:: A file is refused as too large (error 413)
 

@@ -100,6 +100,20 @@ class CrossSiteTest(TestCase):
                 refusal = _refusal({"Origin": other}, "127.0.0.1:5050")
                 expect(none_throws(refusal).code).to_equal("cross_site_request")
 
+    def test_a_relay_that_passes_the_name_on_without_a_port(self) -> None:
+        # In front of Mariner, serving the page over https: the browser
+        # says https and no port, and so does the name passed on.
+        with patch.object(
+            origin.config,
+            "get_http_allowed_hosts",
+            return_value=["printer.example.org"],
+        ):
+            own = {"Origin": "https://printer.example.org"}
+            expect(_refusal(own, "printer.example.org")).to_equal(None)
+        expect(_refusal({"Origin": "http://printer.lan"}, "printer.lan")).to_equal(None)
+        refusal = _refusal({"Origin": "https://printer.lan:8443"}, "printer.lan")
+        expect(none_throws(refusal).code).to_equal("cross_site_request")
+
     def test_a_name_allowed_to_be_asked_for_is_not_thereby_a_friend(self) -> None:
         with patch.object(
             origin.config, "get_http_allowed_hosts", return_value=["printer.lan", "*"]
@@ -122,6 +136,57 @@ class CrossSiteTest(TestCase):
     def test_a_program_that_is_not_a_browser_is_let_through(self) -> None:
         # Slicers and scripts send neither.
         expect(_refusal({})).to_equal(None)
+
+
+class UnusableEntriesTest(TestCase):
+    def _named(self, hosts: list, origins: list) -> list:
+        with patch.object(
+            origin.config, "get_http_allowed_hosts", return_value=hosts
+        ), patch.object(
+            origin.config, "get_http_allowed_origins", return_value=origins
+        ):
+            return origin.unusable_entries()
+
+    def test_entries_that_work_are_not_named(self) -> None:
+        hosts = ["good.example.org", "*", "My_Printer.Example.ORG.", "192.168.1.9"]
+        origins = ["https://good.example.org:8443", "HTTP://printer.lan/"]
+        expect(self._named(hosts, origins)).to_equal([])
+
+    def test_names_that_can_match_nothing_are_named(self) -> None:
+        hosts = [
+            "evil.com:5000",
+            "*.evil.com",
+            "http://evil.com",
+            "evil.com/",
+            "exa mple.org",
+            "user@host",
+            "",
+        ]
+        named = self._named(hosts, [])
+        expect(len(named)).to_equal(len(hosts))
+        for entry, line in zip(hosts, named):
+            expect(f"allowed_hosts entry {entry!r}" in line).to_equal(True)
+
+    def test_an_address_among_the_names_is_not_needed(self) -> None:
+        # Not wrong: Mariner answers to any address as it is.
+        for address in ("fe80::1", "[::1]", "10.0.0.7"):
+            expect(self._named([address], [])).to_equal([])
+
+    def test_addresses_that_can_match_nothing_are_named(self) -> None:
+        origins = [
+            "printer.example.org",
+            "*",
+            "http://",
+            "https://printer.example.org:abc",
+            "http://[x",
+            "https://*.example.org",
+            "https://a.example.org, https://b.example.org",
+            "ftp://printer.example.org",
+        ]
+        named = self._named([], origins)
+        expect(len(named)).to_equal(len(origins))
+        for entry, line in zip(origins, named):
+            expect(f"allowed_origins entry {entry!r}" in line).to_equal(True)
 
 
 class BrowserTest(TestCase):

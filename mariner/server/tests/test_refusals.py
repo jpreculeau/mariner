@@ -58,20 +58,86 @@ class LogTest(TestCase):
             "User-Agent": "Agent/1.0",
         }
         with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
-            refusals.log("Web", "192.168.1.99", "host_not_allowed", headers)
+            refusals.log(
+                "Web",
+                "192.168.1.99",
+                "host_not_allowed",
+                headers,
+                "POST",
+                "/api/delete_file",
+            )
         message = logs.records[0].getMessage()
         for told in (
             "Web",
             "192.168.1.99",
             "host_not_allowed",
+            "POST",
+            "/api/delete_file",
             "evil.example",
             "o.example",
-            "r.example/page",
+            "http://r.example",
             "cross-site",
             "Agent/1.0",
         ):
             expect(told in message).to_equal(True)
         expect("\n" in message).to_equal(False)
+
+    def test_of_the_page_a_request_came_from_only_the_site_is_kept(self) -> None:
+        # The rest is where someone was on another site.
+        headers = {"Referer": "https://mail.example/inbox/letter?to=someone"}
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log("Web", "192.168.1.99", "x", headers)
+        message = logs.records[0].getMessage()
+        expect("https://mail.example" in message).to_equal(True)
+        expect("inbox" in message or "someone" in message).to_equal(False)
+        # One that cannot be read is said to be so.
+        refusals.said.clear()
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log("Web", "192.168.1.99", "x", {"Referer": "http://[x/a"})
+        expect("unreadable" in logs.records[0].getMessage()).to_equal(True)
+
+    def test_what_only_browsers_and_players_say_is_named(self) -> None:
+        # Else a script refused for it looks like any other in the log.
+        headers = {"User-Agent": "curl/8.5.0", "range": "bytes=0-", "Accept": "*/*"}
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log("Web", "192.168.1.99", "browser_not_served", headers)
+        message = logs.records[0].getMessage()
+        expect("also sent: range" in message.lower()).to_equal(True)
+        expect("accept" in message.lower().replace("also sent", "")).to_equal(False)
+
+    def test_many_at_once_are_counted_right(self) -> None:
+        import threading
+
+        said = refusals.Sparingly()
+        written = []
+
+        def knock() -> None:
+            for _ in range(2000):
+                if said.unwritten("kind") is not None:
+                    written.append(1)
+
+        threads = [threading.Thread(target=knock) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        expect(len(written)).to_equal(1)
+        with patch.object(refusals.time, "monotonic", return_value=10**9):
+            expect(said.unwritten("kind")).to_equal(8 * 2000 - 1)
+
+    def test_no_room_says_how_much_there_is_and_how_much_is_kept(self) -> None:
+        body = refusals.no_room_body(66 * 1024 * 1024, 64 * 1024 * 1024)
+        expect("66 MB are free" in body["description"]).to_equal(True)
+        expect("64 MB" in body["description"]).to_equal(True)
+        expect("MB" in refusals.no_room_body(None)["description"]).to_equal(False)
+        refusals.said.clear()
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log_no_room(
+                3_000_000, "192.168.1.99", 66 * 1024 * 1024, "/var/tmp"
+            )
+        message = logs.records[0].getMessage()
+        for told in ("3000000", "192.168.1.99", "66 MB", "/var/tmp"):
+            expect(told in message).to_equal(True)
 
     def test_what_the_client_said_is_cut(self) -> None:
         for name in ("Host", "Origin", "Referer", "Sec-Fetch-Site", "User-Agent"):
@@ -88,7 +154,7 @@ class LogTest(TestCase):
             refusals.log("Web", "192.168.1.99", "x", {"User-Agent": agent})
         message = logs.records[0].getMessage()
         expect("User-Agent \"x', Origin 'http://192.168.1.20" in message).to_equal(True)
-        expect('y";' in message).to_equal(True)
+        expect('y", also sent' in message).to_equal(True)
 
     def test_the_same_refusal_is_written_once_a_minute(self) -> None:
         with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:

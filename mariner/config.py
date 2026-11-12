@@ -155,19 +155,6 @@ def ignored_settings() -> List[str]:
                 f"[http] max_upload_size_mb = {megabytes!r} is not a whole "
                 f"number above zero: {DEFAULT_MAX_UPLOAD_SIZE_MB} is used"
             )
-    for host in get_http_allowed_hosts():
-        if host != "*" and any(sign in host for sign in ":/*"):
-            found.append(
-                f"[http] allowed_hosts entry {host!r} can match nothing: a "
-                'name is given alone, without scheme or port, and "*" stands '
-                "only by itself"
-            )
-    for address in get_http_allowed_origins():
-        if not address.lower().startswith(("http://", "https://")):
-            found.append(
-                f"[http] allowed_origins entry {address!r} can match nothing: "
-                'an address is given whole, as "https://printer.example.org"'
-            )
     for section in ("uvtools", "sdcp"):
         section_config = _get_config().get(section)
         if isinstance(section_config, dict) and "enabled" in section_config:

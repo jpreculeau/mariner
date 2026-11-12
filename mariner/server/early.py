@@ -40,8 +40,9 @@ from mariner.server import origin, refusals
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# Left free where uploads wait: that drive is the system's own, and
-# filled to the last byte more than uploads would stop working.
+# Left free where uploads wait: as Mariner is installed that drive is the
+# system's own, and filled to the last byte more than uploads would stop
+# working.
 KEPT_FREE_BYTES = 64 * 1024 * 1024
 # Where a file is sent: the only requests with a body of any size.
 UPLOAD_PREFIXES = ("/api/upload_file", "/uvtools/upload/")
@@ -92,7 +93,7 @@ def copies_kept(content_type: str) -> int:
 
 
 def room_refusal(
-    length: int, content_type: str, kept_in_memory: int
+    length: int, content_type: str, kept_in_memory: int, peer: Optional[str] = None
 ) -> Optional[Dict[str, str]]:
     """Why a body of *length* bytes cannot wait where uploads do; else None.
 
@@ -106,7 +107,8 @@ def room_refusal(
         return None
     if length * copies_kept(content_type) <= free - KEPT_FREE_BYTES:
         return None
-    return refusals.no_room_body(free)
+    refusals.log_no_room(length, peer, free, tempfile.gettempdir())
+    return refusals.no_room_body(free, KEPT_FREE_BYTES)
 
 
 def _too_large_body() -> Dict[str, str]:
@@ -145,7 +147,7 @@ class _Parser(HTTPRequestParser):
         # at that address would read it.
         refusal = origin.body_refusal(self.path, headers)
         if refusal is not None:
-            refusals.log("Web", self.peer, refusal.code, headers)
+            self._log(refusal.code, headers)
             self._refuse(403, refusal.body())
             return
         # Below this the web server keeps a body in memory, not in a file.
@@ -153,14 +155,20 @@ class _Parser(HTTPRequestParser):
         if not self.path.startswith(UPLOAD_PREFIXES) and (
             self.chunked or self.content_length >= kept_in_memory
         ):
+            self._log("request_too_large", headers)
             self._refuse(413, _too_large_body())
             return
         no_room = room_refusal(
-            self.content_length, headers.get("Content-Type", ""), kept_in_memory
+            self.content_length,
+            headers.get("Content-Type", ""),
+            kept_in_memory,
+            self.peer,
         )
         if no_room is not None:
-            refusals.log_no_room(self.content_length)
             self._refuse(507, no_room)
+
+    def _log(self, code: str, headers: Dict[str, str]) -> None:
+        refusals.log("Web", self.peer, code, headers, self.command, self.path)
 
     def _refuse(self, code: int, body: Dict[str, str]) -> None:
         self.error = _Refused(code, body)
@@ -169,10 +177,13 @@ class _Parser(HTTPRequestParser):
 
 class _Channel(HTTPChannel):
     def parser_class(self, adj: Any) -> _Parser:
-        """A reader of headers that knows whose request it reads."""
+        """A reader of headers that knows whose request it reads.
+
+        In the place of the class the web server keeps under this name
+        and calls to make one.
+        """
         parser = _Parser(adj)
-        address = self.addr
-        parser.peer = str(address[0]) if isinstance(address, tuple) else None
+        parser.peer = str(self.addr[0])
         return parser
 
     def send_continue(self) -> None:

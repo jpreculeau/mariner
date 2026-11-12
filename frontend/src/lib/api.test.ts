@@ -204,6 +204,118 @@ describe("api client", () => {
     document.head.removeChild(meta);
   });
 
+  describe("when the page's token is out of date", () => {
+    const refused = () =>
+      Promise.resolve({
+        ok: false,
+        status: 400,
+        statusText: "BAD REQUEST",
+        json: () =>
+          Promise.resolve({
+            code: "token_refused",
+            title: "Page Out Of Date",
+            description: "Reload the page and try again.",
+          }),
+      });
+    const newToken = () =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ csrf_token: "fresh-token" }),
+      });
+    const served = () =>
+      Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+
+    it("asks for a new one and sends the request again", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(refused)
+        .mockImplementationOnce(newToken)
+        .mockImplementationOnce(served);
+      globalThis.fetch = fetchMock;
+
+      await api.printerCommand("pause_print");
+
+      expect(fetchMock.mock.calls.map((call) => call[0])).toEqual([
+        "/api/printer/command/pause_print",
+        "/api/csrf_token",
+        "/api/printer/command/pause_print",
+      ]);
+      expect(fetchMock.mock.calls[2][1].headers["X-CSRFToken"]).toBe(
+        "fresh-token",
+      );
+      // And keeps it for what follows.
+      fetchMock.mockImplementationOnce(served);
+      await api.printerCommand("resume_print");
+      expect(fetchMock.mock.calls[3][1].headers["X-CSRFToken"]).toBe(
+        "fresh-token",
+      );
+    });
+
+    it("sends an upload again too", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(refused)
+        .mockImplementationOnce(newToken)
+        .mockImplementationOnce(served);
+      globalThis.fetch = fetchMock;
+
+      await api.uploadFile(new File(["x"], "model.ctb"), ".");
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[2][1].headers["X-CSRFToken"]).toBe(
+        "fresh-token",
+      );
+      expect(fetchMock.mock.calls[2][1].body).toBeInstanceOf(FormData);
+    });
+
+    it("tries once only, then says what the server said", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(refused)
+        .mockImplementationOnce(newToken)
+        .mockImplementationOnce(refused);
+      globalThis.fetch = fetchMock;
+
+      await expect(api.printerCommand("pause_print")).rejects.toMatchObject({
+        code: "token_refused",
+        message: "Reload the page and try again.",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("says what the server said when no new token can be had", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementationOnce(refused)
+        .mockImplementationOnce(() => Promise.reject(new Error("offline")));
+      globalThis.fetch = fetchMock;
+
+      await expect(api.printerCommand("pause_print")).rejects.toMatchObject({
+        code: "token_refused",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not send again a request refused for another reason", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "BAD REQUEST",
+        json: () =>
+          Promise.resolve({
+            code: "folder_too_deep",
+            description: "Too deep.",
+          }),
+      });
+      globalThis.fetch = fetchMock;
+
+      await expect(api.createDirectory(".", "x")).rejects.toMatchObject({
+        code: "folder_too_deep",
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("sends printer commands with POST", async () => {
     vi.spyOn(global, "fetch").mockResolvedValue({
       ok: true,

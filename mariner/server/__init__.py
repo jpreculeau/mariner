@@ -11,6 +11,7 @@ from mariner.file_formats.reading import MalformedFile
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
 from mariner.server.app import UPLOAD_OVERHEAD_BYTES, app as flask_app, csrf
+from mariner.server import origin
 from mariner.server.early import serve
 from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
@@ -121,7 +122,7 @@ def keep_requests_on_one_line() -> None:
 
 
 CONNECTION_LIMIT = 32
-CHANNEL_TIMEOUT_SECONDS = 30
+CHANNEL_TIMEOUT_SECONDS = 60
 
 
 def use_spool_directory() -> None:
@@ -164,7 +165,7 @@ def main() -> None:
     CacheBootstrapper().start()
     start_providers()
 
-    for ignored in config.ignored_settings():
+    for ignored in config.ignored_settings() + origin.unusable_entries():
         logger.warning("Configuration: %s", ignored)
     use_spool_directory()
     serve(
@@ -175,7 +176,7 @@ def main() -> None:
         max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
         # Each connection can hold an upload waiting on the drive.
         connection_limit=CONNECTION_LIMIT,
-        # A connection that says nothing is closed after this long. It
-        # holds one of the few there are.
+        # A connection that says nothing is closed after this long, or up
+        # to half as long again. It holds one of the few there are.
         channel_timeout=CHANNEL_TIMEOUT_SECONDS,
     )

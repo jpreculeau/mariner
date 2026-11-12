@@ -1035,13 +1035,14 @@ class MarinerServerTest(TestCase):
         application = self.client.application
         with patch.dict(application.config, {"WTF_CSRF_ENABLED": True}):
             token = self._page_with_its_token()
-            later = time.time() + 30 * 3600
-            with patch("time.time", return_value=later):
-                response = self.client.post(
-                    "/api/printer/command/cancel_print",
-                    headers={"X-CSRFToken": token},
-                )
-            expect(response.status_code != 400).to_equal(True)
+            for hours in (30, 20 * 24):
+                later = time.time() + hours * 3600
+                with patch("time.time", return_value=later):
+                    response = self.client.post(
+                        f"/api/create_directory?path=.&name=after-{hours}",
+                        headers={"X-CSRFToken": token},
+                    )
+                expect(response.status_code).to_equal(200)
             # Without the token it is refused as before, in words the
             # page can show: a token goes stale when Mariner restarts.
             response = self.client.post("/api/printer/command/cancel_print")
@@ -1049,6 +1050,30 @@ class MarinerServerTest(TestCase):
             body = response.get_json()
             expect(body["code"]).to_equal("token_refused")
             expect("Reload" in body["description"]).to_equal(True)
+
+    def test_a_page_whose_token_went_stale_can_ask_for_a_new_one(self) -> None:
+        # After Mariner restarted, say: the page then sends its request
+        # again without the person having to reload it.
+        application = self.client.application
+        with patch.dict(application.config, {"WTF_CSRF_ENABLED": True}):
+            stale = {"X-CSRFToken": "made by the Mariner that is gone"}
+            response = self.client.post(
+                "/api/create_directory?path=.&name=new", headers=stale
+            )
+            expect(response.get_json()["code"]).to_equal("token_refused")
+            response = self.client.get("/api/csrf_token")
+            expect(response.status_code).to_equal(200)
+            expect(response.headers["Cache-Control"]).to_equal("no-store")
+            fresh = {"X-CSRFToken": response.get_json()["csrf_token"]}
+            response = self.client.post(
+                "/api/create_directory?path=.&name=new", headers=fresh
+            )
+            expect(response.status_code).to_equal(200)
+        # Not for a page of another site to ask for.
+        response = self.client.get(
+            "/api/csrf_token", headers={"Referer": "http://evil.example/"}
+        )
+        expect(response.status_code).to_equal(403)
 
     def test_a_refusal_is_written_to_the_log(self) -> None:
         from mariner.server import refusals

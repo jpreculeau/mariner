@@ -6,8 +6,10 @@ to none of them.
 
 import json
 import logging
+import threading
 import time
 from typing import Dict, Hashable, Mapping, Optional, Tuple
+from urllib.parse import urlsplit
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -24,20 +26,23 @@ class Sparingly:
         self._seconds = seconds
         self._remembered = remembered
         self._kinds: Dict[Hashable, Tuple[float, int]] = {}
+        # Asked from the web server's threads and from SDCP's at once.
+        self._lock = threading.Lock()
 
     def unwritten(self, kind: Hashable) -> Optional[int]:
         """None to keep quiet; else how many were kept quiet since the last."""
         now = time.monotonic()
-        known = self._kinds.get(kind)
-        if known is not None and now - known[0] < self._seconds:
-            self._kinds[kind] = (known[0], known[1] + 1)
-            return None
-        if known is None and len(self._kinds) >= self._remembered:
-            # A client can give itself any number of addresses. The
-            # oldest known makes room.
-            del self._kinds[next(iter(self._kinds))]
-        self._kinds[kind] = (now, 0)
-        return known[1] if known is not None else 0
+        with self._lock:
+            known = self._kinds.get(kind)
+            if known is not None and now - known[0] < self._seconds:
+                self._kinds[kind] = (known[0], known[1] + 1)
+                return None
+            if known is None and len(self._kinds) >= self._remembered:
+                # A client can give itself any number of addresses. The
+                # oldest known makes room.
+                del self._kinds[next(iter(self._kinds))]
+            self._kinds[kind] = (now, 0)
+            return known[1] if known is not None else 0
 
     def clear(self) -> None:
         self._kinds.clear()
@@ -49,10 +54,22 @@ class Sparingly:
 said = Sparingly()
 
 
+# What a browser, a player of sound or video or a reader of feeds says
+# with a request, and a slicer has no cause to.
+NOT_SAID_BY_SLICERS = frozenset(
+    ("accept-language", "range", "icy-metadata", "purpose", "sec-purpose")
+)
+
+
 def log(
-    interface: str, peer: Optional[str], code: str, headers: Mapping[str, str]
+    interface: str,
+    peer: Optional[str],
+    code: str,
+    headers: Mapping[str, str],
+    method: Optional[str] = None,
+    path: Optional[str] = None,
 ) -> None:
-    """Write a refused request to the log: who, why, and what it said.
+    """Write a refused request to the log: who, what, why, and what it said.
 
     Enough to tell a slicer or a script turned away from a page that was.
     One line a minute for the same client and reason. That holds a page
@@ -62,20 +79,38 @@ def log(
     unwritten = said.unwritten((interface, peer, code))
     if unwritten is None:
         return
+    also = sorted(name.lower() for name in headers.keys())
+    also = [name for name in also if name in NOT_SAID_BY_SLICERS]
     logger.warning(
-        "%s: refused a request from %s: %s (Host %s, Origin %s, Referer %s, "
-        "Sec-Fetch-Site %s, User-Agent %s; %d more like it not written here "
-        "since the last)",
+        "%s: refused %s %s from %s: %s (Host %s, Origin %s, Referer %s, "
+        "Sec-Fetch-Site %s, User-Agent %s, also sent: %s; %d more like it not "
+        "written here since the last)",
         interface,
+        method or "a request",
+        _quoted(path) if path is not None else "",
         peer,
         code,
         _quoted(headers.get("Host")),
         _quoted(headers.get("Origin")),
-        _quoted(headers.get("Referer")),
+        _quoted(_site_of(headers.get("Referer"))),
         _quoted(headers.get("Sec-Fetch-Site")),
         _quoted(headers.get("User-Agent")),
+        ", ".join(also) or "none",
         unwritten,
     )
+
+
+def _site_of(page: Optional[str]) -> Optional[str]:
+    """The site a page address is on. The rest is where someone was there."""
+    if page is None:
+        return None
+    try:
+        parts = urlsplit(page)
+    except ValueError:
+        return "unreadable"
+    if not parts.scheme or not parts.netloc:
+        return "unreadable"
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def _quoted(value: Optional[str]) -> str:
@@ -89,25 +124,36 @@ def _quoted(value: Optional[str]) -> str:
     return json.dumps(value[:100])
 
 
-def log_no_room(length: int) -> None:
+def log_no_room(length: int, peer: Optional[str], free: int, directory: str) -> None:
     unwritten = said.unwritten("no room")
     if unwritten is None:
         return
     logger.warning(
-        "Refused an upload of %d bytes: no room for it to wait in "
-        "(%d more like it not written here since the last)",
+        "Refused an upload of %d bytes from %s: no room for it to wait in "
+        "(%d MB free in %s; %d more like it not written here since the last)",
         length,
+        peer,
+        free // (1024 * 1024),
+        _quoted(directory),
         unwritten,
     )
 
 
-def no_room_body(free: Optional[int]) -> Dict[str, str]:
+def no_room_body(free: Optional[int], kept_free: int = 0) -> Dict[str, str]:
     """The answer to an upload there is no room for.
 
     *free* is the room there was before any of it arrived, when that is
-    known: once some of it is stored the figure would mislead.
+    known: once some of it is stored the figure would mislead. *kept_free*
+    is what of it is not for uploads.
     """
-    room = "" if free is None else f": {free // (1024 * 1024)} MB are free there"
+    room = ""
+    if free is not None:
+        room = f": {free // (1024 * 1024)} MB are free there"
+        if kept_free:
+            room += (
+                f", of which Mariner leaves {kept_free // (1024 * 1024)} MB "
+                "to the system"
+            )
     return {
         "code": "upload_not_stored",
         "title": "File Not Stored",

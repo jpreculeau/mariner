@@ -27,6 +27,7 @@ from flask import (
     make_response,
     request,
 )
+from flask_wtf.csrf import generate_csrf
 from pyre_extensions import none_throws
 
 from mariner import config
@@ -329,6 +330,17 @@ def _refuse_early_if_in_use(destination: Path) -> None:
         if error.usage is Usage.PRINTER_UNREACHABLE and _printer_declared_off():
             return
         raise
+
+
+@api.route("/csrf_token", methods=["GET"])
+def csrf_token() -> Response:
+    """Give the page a token for its requests, as the page itself carries.
+
+    For a page whose own went stale while it was open: Mariner restarted,
+    or the browser's session ended. Another site's page cannot read the
+    answer, and would be given a token for a session of its own.
+    """
+    return jsonify({"csrf_token": generate_csrf()})
 
 
 @api.route("/print_status", methods=["GET"])

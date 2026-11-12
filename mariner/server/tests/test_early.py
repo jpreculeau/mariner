@@ -198,18 +198,32 @@ class EarlyRefusalTest(TestCase):
         # The drive uploads wait on is the system's own: filled to the
         # last byte, more than uploads would stop working.
         usage = shutil.disk_usage("/")
+        import tempfile
+
         reserve = early.KEPT_FREE_BYTES
-        expect(reserve >= 32 * 1024 * 1024).to_equal(True)
+        expect(reserve).to_equal(64 * 1024 * 1024)
+        refusals.said.clear()
         with patch.object(
             early.shutil,
             "disk_usage",
-            return_value=usage._replace(free=reserve + 1_000_000),
-        ):
-            status, _, _ = self._exchange(
+            return_value=usage._replace(free=reserve + 2 * 1024 * 1024),
+        ) as measured, self.assertLogs(
+            "mariner.server.refusals", level="WARNING"
+        ) as logs:
+            status, _, body = self._exchange(
                 "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
-                "Content-Length: 1100000\n"
+                "Content-Length: 3000000\n"
             )
-            expect(status).to_equal(507)
+        expect(status).to_equal(507)
+        # The place uploads wait in is the one measured.
+        measured.assert_called_with(tempfile.gettempdir())
+        # Said in full: 66 MB free and a file of 3 would not add up.
+        description = json.loads(body)["description"]
+        expect("66 MB are free" in description).to_equal(True)
+        expect("64 MB" in description).to_equal(True)
+        message = logs.records[0].getMessage()
+        expect("127.0.0.1" in message).to_equal(True)
+        expect(tempfile.gettempdir() in message).to_equal(True)
 
     def test_what_the_web_server_refuses_itself_is_left_to_it(self) -> None:
         # Larger than any file may be: not a matter of room.
@@ -237,6 +251,17 @@ class EarlyRefusalTest(TestCase):
                 )
                 expect(status).to_equal(507)
         expect(len(logs.records)).to_equal(1)
+
+    def test_a_request_refused_as_too_large_is_written_to_the_log(self) -> None:
+        refusals.said.clear()
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            self._exchange(
+                "POST /api/create_directory HTTP/1.1\nHost: 127.0.0.1\n"
+                "Content-Length: 600000\n"
+            )
+        message = logs.records[0].getMessage()
+        for told in ("request_too_large", "POST", "/api/create_directory"):
+            expect(told in message).to_equal(True)
 
     def test_one_with_nothing_to_send_is_answered_not_told_to_go_on(self) -> None:
         # Told to go on, the web server then waits for a body that is not

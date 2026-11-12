@@ -39,10 +39,11 @@ import ipaddress
 import re
 import socket
 from dataclasses import dataclass
-from typing import Mapping, Optional, Tuple
+from typing import List, Mapping, Optional, Tuple
 from urllib.parse import urlsplit
 
 from mariner import config
+from mariner.server import refusals
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,11 @@ def _is_address(name: str) -> bool:
     return True
 
 
+def _is_a_name(name: str) -> bool:
+    """Whether *name* is written as a machine is named: an address, or words."""
+    return _is_address(name) or _NAME.fullmatch(name) is not None
+
+
 def _is_allowed_name(name: str) -> bool:
     allowed = [entry.strip().lower().rstrip(".") for entry in _allowed_hosts()]
     if "*" in allowed:
@@ -145,7 +151,7 @@ def _site(address: str) -> Optional[Tuple[str, str, str]]:
     if parts.scheme not in _DEFAULT_PORTS or not parts.netloc:
         return None
     name = name_and_port(parts.netloc)
-    if name is None:
+    if name is None or not _is_a_name(name[0].rstrip(".")):
         return None
     return parts.scheme, name[0].rstrip("."), name[1] or _DEFAULT_PORTS[parts.scheme]
 
@@ -201,13 +207,6 @@ def is_browser(headers: Mapping[str, str]) -> bool:
     return agent.startswith(("mozilla/", "opera/"))
 
 
-# What a browser, a player of sound or video or a reader of feeds says
-# with a request, and a slicer has no cause to.
-_NOT_SAID_BY_SLICERS = frozenset(
-    ("accept-language", "range", "icy-metadata", "purpose", "sec-purpose")
-)
-
-
 def browser_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
     """Why a request to a route made for slicers is not served.
 
@@ -219,7 +218,7 @@ def browser_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
     if is_browser(headers):
         return _NOT_A_SLICER
     said = {name.lower() for name in headers.keys()}
-    return _NOT_A_SLICER if said & _NOT_SAID_BY_SLICERS else None
+    return _NOT_A_SLICER if said & refusals.NOT_SAID_BY_SLICERS else None
 
 
 def host_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
@@ -284,6 +283,33 @@ def request_refusal(path: str, headers: Mapping[str, str]) -> Optional[Refusal]:
     if refusal is None and path.startswith(SLICER_PREFIXES):
         refusal = browser_refusal(headers)
     return refusal
+
+
+def unusable_entries() -> List[str]:
+    """What the configuration lists that can match nothing, in words.
+
+    For the log at start: such an entry looks like one that was applied.
+    Judged by what does the matching, so that the two cannot disagree.
+    """
+    found = []
+    for host in config.get_http_allowed_hosts():
+        name = host.strip().lower().rstrip(".")
+        if name.startswith("[") and name.endswith("]"):
+            name = name[1:-1]
+        if name == "*" or _is_a_name(name):
+            continue
+        found.append(
+            f"[http] allowed_hosts entry {host!r} can match nothing: a name "
+            'is given alone, without scheme or port, and "*" stands only by '
+            "itself"
+        )
+    for address in config.get_http_allowed_origins():
+        if _site(address) is None:
+            found.append(
+                f"[http] allowed_origins entry {address!r} can match nothing: "
+                'one address is given whole, as "https://printer.example.org"'
+            )
+    return found
 
 
 def body_refusal(path: str, headers: Mapping[str, str]) -> Optional[Refusal]:
