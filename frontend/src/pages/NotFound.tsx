@@ -8,9 +8,7 @@ const NotFound = () => {
 
   return (
     <div className="container py-16 text-center">
-      <h1 className="mb-4 text-2xl font-bold tracking-tight">
-        {t("notFound.heading")}
-      </h1>
+      <h1 className="mb-4 text-2xl font-bold">{t("notFound.heading")}</h1>
       <p className="mb-6 text-muted-foreground">{t("notFound.text")}</p>
       <Link to="/" className="text-primary underline hover:text-primary/90">
         {t("notFound.home")}

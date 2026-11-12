@@ -45,7 +45,7 @@ export function PrinterOffDialog({
           <DialogTitle>{t("printerOff.title")}</DialogTitle>
           <DialogDescription>{reason}</DialogDescription>
         </DialogHeader>
-        <p className="text-sm">{t("printerOff.text")}</p>
+        <p className="text-base leading-relaxed">{t("printerOff.text")}</p>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button type="button" variant="ghost" onClick={onCancel}>
             {t("common.cancel")}

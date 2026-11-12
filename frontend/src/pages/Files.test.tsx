@@ -9,6 +9,8 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import Files from "./Files";
+import { UploadProvider } from "@/components/UploadProvider";
+import { UploadStatus } from "@/components/UploadStatus";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
 
@@ -24,7 +26,10 @@ function renderFiles() {
       }
     >
       <MemoryRouter>
-        <Files />
+        <UploadProvider>
+          <UploadStatus />
+          <Files />
+        </UploadProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -59,6 +64,7 @@ describe("Files", () => {
       ".",
       { ignoreUnreachablePrinter: false },
       expect.any(Function),
+      expect.any(AbortSignal),
     );
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -99,11 +105,15 @@ describe("Files", () => {
     const button = screen.getByRole("button", { name: "Upload a file" });
 
     pick(input, new File(["x"], "first.ctb"));
-    await waitFor(() => expect(button).toHaveProperty("disabled", true));
+    await waitFor(() =>
+      expect(button).toHaveAttribute("aria-disabled", "true"),
+    );
     pick(input, new File(["x"], "second.ctb"));
     finish();
 
-    await waitFor(() => expect(button).toHaveProperty("disabled", false));
+    await waitFor(() =>
+      expect(button).not.toHaveAttribute("aria-disabled", "true"),
+    );
     expect(api.uploadFile).toHaveBeenCalledTimes(1);
   });
 
@@ -165,6 +175,7 @@ describe("Files", () => {
         ".",
         { ignoreUnreachablePrinter: true },
         expect.any(Function),
+        expect.any(AbortSignal),
       );
       expect(screen.queryByText("Replace anyway")).toBeNull();
     });
@@ -201,11 +212,15 @@ describe("Files", () => {
 
       pick(input, new File(["x"], "model.ctb"));
       fireEvent.click(await screen.findByText("Replace anyway"));
-      await waitFor(() => expect(button).toHaveProperty("disabled", true));
+      await waitFor(() =>
+        expect(button).toHaveAttribute("aria-disabled", "true"),
+      );
       pick(input, new File(["x"], "other.ctb"));
       finish();
 
-      await waitFor(() => expect(button).toHaveProperty("disabled", false));
+      await waitFor(() =>
+        expect(button).not.toHaveAttribute("aria-disabled", "true"),
+      );
       expect(api.uploadFile).toHaveBeenCalledTimes(2);
     });
 
@@ -254,6 +269,7 @@ describe("Files", () => {
         ".",
         { ignoreUnreachablePrinter: true },
         expect.any(Function),
+        expect.any(AbortSignal),
       );
     });
 
@@ -302,6 +318,87 @@ describe("Files", () => {
         expect(toast.success).toHaveBeenCalledWith("dragon.ctb uploaded"),
       );
       expect(screen.queryByRole("progressbar")).toBeNull();
+    });
+
+    it("says how far it is to those who cannot see the bar, a quarter at a time", async () => {
+      let report: (fraction: number) => void = () => {};
+      vi.spyOn(api, "uploadFile").mockImplementation(
+        (_file, _path, _options, onProgress) => {
+          report = onProgress!;
+          return new Promise<void>(() => {});
+        },
+      );
+      const input = renderFiles();
+      pick(input, new File(["x"], "dragon.ctb"));
+      await screen.findByRole("progressbar");
+      const said = () =>
+        screen
+          .getAllByRole("status")
+          .map((status) => status.textContent)
+          .filter((text) => text?.includes("dragon.ctb"));
+
+      expect(said()).toEqual(["Uploading dragon.ctb: 0%"]);
+      // Not at every step: it would never stop talking.
+      act(() => report(0.1));
+      act(() => report(0.2));
+      expect(said()).toEqual(["Uploading dragon.ctb: 0%"]);
+      act(() => report(0.26));
+      expect(said()).toEqual(["Uploading dragon.ctb: 25%"]);
+      act(() => report(0.8));
+      expect(said()).toEqual(["Uploading dragon.ctb: 75%"]);
+    });
+
+    it("can be given up", async () => {
+      let given: AbortSignal | undefined;
+      vi.spyOn(api, "uploadFile").mockImplementation(
+        (_file, _path, _options, _onProgress, signal) => {
+          given = signal;
+          return new Promise<void>((_resolve, reject) => {
+            signal!.addEventListener("abort", () =>
+              reject(new ApiError(0, "Upload cancelled.", "cancelled")),
+            );
+          });
+        },
+      );
+      const input = renderFiles();
+      pick(input, new File(["x"], "dragon.ctb"));
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Cancel the upload" }),
+      );
+
+      expect(given!.aborted).toBe(true);
+      await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+      // Said as what the reader did, not as something that went wrong.
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(toast.success).toHaveBeenCalledWith("Upload cancelled");
+      // And another file can be sent.
+      expect(
+        screen.getByRole("button", { name: "Upload a file" }),
+      ).not.toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("warns before the page is left, and only then", async () => {
+      // Leaving the page drops the upload.
+      const leaving = () => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      };
+      let finish: () => void = () => {};
+      vi.spyOn(api, "uploadFile").mockReturnValue(
+        new Promise<void>((resolve) => (finish = resolve)),
+      );
+      const input = renderFiles();
+      expect(leaving()).toBe(false);
+
+      pick(input, new File(["x"], "dragon.ctb"));
+      await screen.findByRole("progressbar");
+      expect(leaving()).toBe(true);
+
+      await act(async () => finish());
+      await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+      expect(leaving()).toBe(false);
     });
 
     it("removes the bar when the upload is refused", async () => {
@@ -381,7 +478,9 @@ describe("Files", () => {
     expect(await screen.findByLabelText("Folder name")).toBeInTheDocument();
   });
 
-  it("says why a folder could not be made", async () => {
+  it("says why a folder could not be made, by the field it is about", async () => {
+    // Not in a passing message at the foot of the screen, under the
+    // keyboard of a phone.
     vi.spyOn(api, "createDirectory").mockRejectedValue(
       new ApiError(
         400,
@@ -391,16 +490,23 @@ describe("Files", () => {
     );
     renderFiles();
     fireEvent.click(screen.getByRole("button", { name: "New folder" }));
-    fireEvent.change(await screen.findByLabelText("Folder name"), {
-      target: { value: "prints" },
-    });
+    const field = await screen.findByLabelText("Folder name");
+    expect(field).not.toHaveAttribute("aria-invalid", "true");
+    fireEvent.change(field, { target: { value: "prints" } });
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 
-    await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith(
-        "A folder of this name is already there.",
-      ),
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("A folder of this name is already there.");
+    expect(field).toHaveAttribute("aria-invalid", "true");
+    expect(field).toHaveAccessibleDescription(
+      "A folder of this name is already there.",
     );
+    expect(toast.error).not.toHaveBeenCalled();
+
+    // Gone as soon as the name is changed.
+    fireEvent.change(field, { target: { value: "prints2" } });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(field).not.toHaveAttribute("aria-invalid", "true");
   });
 
   it("tells a file that can be printed from one that cannot, in words", async () => {
@@ -429,5 +535,39 @@ describe("Files", () => {
     expect(
       screen.getByRole("button", { name: "Open folder batch" }),
     ).toBeInTheDocument();
+  });
+
+  it("puts focus on the list, named by its folder, when a folder is opened", async () => {
+    // The row that was pressed is gone with the list it was in.
+    vi.mocked(api.listFiles).mockImplementation((path = ".") =>
+      Promise.resolve(
+        path === "."
+          ? { directories: [{ dirname: "batch" }], files: [] }
+          : { directories: [], files: [] },
+      ),
+    );
+    renderFiles();
+    const folder = await screen.findByRole("button", {
+      name: "Open folder batch",
+    });
+    folder.focus();
+    fireEvent.click(folder);
+
+    const list = await screen.findByRole("region", { name: "Folder: /batch" });
+    await waitFor(() => expect(list).toHaveFocus());
+
+    // And when going back up.
+    const up = screen.getByRole("button", { name: "Up to the folder above" });
+    up.focus();
+    fireEvent.click(up);
+    await waitFor(() =>
+      expect(screen.getByRole("region", { name: "Folder: /" })).toHaveFocus(),
+    );
+  });
+
+  it("leaves focus alone when the list is first shown", async () => {
+    renderFiles();
+    await screen.findByText("This folder is empty.");
+    expect(screen.getByRole("region", { name: "Folder: /" })).not.toHaveFocus();
   });
 });

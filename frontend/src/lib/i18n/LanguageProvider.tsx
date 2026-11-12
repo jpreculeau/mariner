@@ -10,7 +10,7 @@ import {
   I18nContext,
   LANGUAGE_KEY,
   detectLanguage,
-  translate,
+  i18nFor,
   type I18n,
   type Lang,
 } from "./core";
@@ -29,14 +29,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     setLangState(next);
   }, []);
 
-  const value = useMemo<I18n>(
-    () => ({
-      lang,
-      setLang,
-      t: (key, values) => translate(lang, key, values),
-    }),
-    [lang, setLang],
-  );
+  const value = useMemo<I18n>(() => i18nFor(lang, setLang), [lang, setLang]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }

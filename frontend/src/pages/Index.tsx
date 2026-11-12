@@ -46,16 +46,15 @@ export default function Index() {
       ?.getAttribute("content") || undefined;
 
   const header = (
-    <div className="mb-6 flex items-center justify-between gap-4">
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">
-          {t("dashboard.heading")}
-        </h1>
+        <h1 className="text-2xl font-bold">{t("dashboard.heading")}</h1>
         {printerName && (
           <p className="text-sm text-muted-foreground">{printerName}</p>
         )}
       </div>
-      {data && <StatusIndicator status={status} />}
+      {/* Not what Mariner last said once it has stopped answering. */}
+      {data && !error && <StatusIndicator status={status} />}
     </div>
   );
 
@@ -90,7 +89,7 @@ export default function Index() {
           <h2 className="mt-4 text-lg font-semibold">
             {t("dashboard.unreachable.title")}
           </h2>
-          <p className="mt-1 max-w-prose text-center text-sm text-muted-foreground">
+          <p className="mt-1 max-w-prose text-center text-base leading-relaxed text-muted-foreground">
             {t("dashboard.unreachable.text")}
           </p>
         </div>
@@ -138,7 +137,7 @@ export default function Index() {
           <h2 className="mt-4 text-lg font-semibold">
             {t("dashboard.idle.title")}
           </h2>
-          <p className="mt-1 text-center text-sm text-muted-foreground">
+          <p className="mt-1 text-center text-base leading-relaxed text-muted-foreground">
             {t("dashboard.idle.text")}
           </p>
           <Button asChild className="mt-4">
@@ -155,7 +154,7 @@ export default function Index() {
           <h2 className="mt-4 text-lg font-semibold">
             {t("dashboard.offline.title")}
           </h2>
-          <p className="mt-1 max-w-prose text-center text-sm text-muted-foreground">
+          <p className="mt-1 max-w-prose text-center text-base leading-relaxed text-muted-foreground">
             {t("dashboard.offline.text")}
           </p>
         </div>

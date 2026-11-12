@@ -35,7 +35,7 @@ describe("AppNav", () => {
   it("is a named place to go to", () => {
     renderNav("/");
     expect(
-      screen.getByRole("navigation", { name: "Main" }),
+      screen.getByRole("navigation", { name: "Main navigation" }),
     ).toBeInTheDocument();
   });
 });

@@ -22,9 +22,7 @@ describe("errorText", () => {
   });
 
   it("says it in French by the code the server gave", () => {
-    expect(errorText(refused, t("fr"), "fr")).toContain(
-      "en cours d'impression",
-    );
+    expect(errorText(refused, t("fr"), "fr")).toContain("imprime déjà");
   });
 
   it("falls back on the server's words for a code it has no French for", () => {

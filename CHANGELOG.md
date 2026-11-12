@@ -111,6 +111,11 @@ Web interface
 - Make the page usable without seeing it: name every button and link at every width of screen, announce the state of the printer and what is loading, label the field of a new folder, give the page a main area, a link to skip to it, a title of its own in the browser's tab, and say which page and which choices are the current ones other than by colour
 - Make it readable: text, the red of errors and the Elegoo Mars theme are set apart from their ground (4.5:1), the edge of fields can be seen (3:1), no text is smaller than 12 px, and dialogs and menus are dark like the page they open on
 - Stop what turns or pulses without end for a reader who asked their system for stillness
+- Keep the keyboard's place: focus goes back to what opened a dialog when it closes, stays on a button while its command lasts, goes to the content when another page is shown and to the list when a folder is opened, and is not left under the bar at the top
+- Let dialogs and menus scroll when the screen is too low for them (a phone held sideways, a zoomed page), with the choice that destroys nothing first
+- Keep an error on screen until it is closed; say why a folder could not be made by the field it is about; say aloud that the power menu wants a second press, and that the computer is going down
+- Go on showing an upload on whichever page is shown, say how far it is a quarter at a time to those who cannot see the bar, let it be given up, and warn before the page is left while it lasts
+- Write durations, percentages and decimals as each language does
 
 ### 🚜 Refactor
 

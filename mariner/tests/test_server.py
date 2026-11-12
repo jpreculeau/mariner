@@ -1774,12 +1774,16 @@ class MarinerServerTest(TestCase):
             ("..", "name_not_allowed"),
             ("a/b", "name_not_allowed"),
             ("", "name_not_allowed"),
+            ("x" * 300, "name_not_allowed"),
         ):
             response = self.client.post(f"/api/create_directory?path=.&name={name}")
             expect(response.status_code).to_equal(400)
             body = response.get_json()
             expect(body["code"]).to_equal(code)
             expect(len(body["description"]) > 10).to_equal(True)
+            if code == "name_not_allowed":
+                # Whichever of its faults the name has is among those said.
+                expect("too long" in body["description"]).to_equal(True)
         with patch("os.mkdir", side_effect=OSError(36, "File name too long")):
             response = self.client.post("/api/create_directory?path=.&name=new")
         expect(response.status_code).to_equal(400)

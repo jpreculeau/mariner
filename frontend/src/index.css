@@ -113,6 +113,16 @@
     @apply border-border;
   }
 
+  html {
+    /* What focus scrolls to is not left under the bar at the top. */
+    scroll-padding-top: 4.5rem;
+  }
+
+  /* OpenDyslexic joins "fi" into one shape, which undoes what it is for. */
+  [data-font="opendyslexic"] {
+    font-variant-ligatures: none;
+  }
+
   body {
     @apply bg-background text-foreground font-body antialiased;
   }

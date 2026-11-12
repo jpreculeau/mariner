@@ -127,7 +127,10 @@ describe("Index", () => {
     expect(toast.success).not.toHaveBeenCalled();
     // And the button can be pressed again.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled(),
+      expect(screen.getByRole("button", { name: "Pause" })).not.toHaveAttribute(
+        "aria-disabled",
+        "true",
+      ),
     );
   });
 
@@ -152,6 +155,28 @@ describe("Index", () => {
     );
   });
 
+  it("does not go on showing a state it no longer knows", async () => {
+    // Mariner stopped answering during a print: what it last said of the
+    // printer is not what the printer is doing now.
+    vi.spyOn(api, "printStatus")
+      .mockResolvedValueOnce(printing)
+      .mockRejectedValue(
+        new ApiError(0, "Mariner cannot be reached.", "network"),
+      );
+    vi.spyOn(api, "printerCommand").mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    renderIndex();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Mariner cannot be reached" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(screen.queryByText("Printing")).toBeNull();
+  });
+
   it("is read in French by a French reader", async () => {
     vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
     vi.spyOn(api, "printStatus").mockResolvedValue(printing);
@@ -171,5 +196,10 @@ describe("Index", () => {
     );
     expect(document.title).toBe("Tableau de bord · Mariner");
     expect(screen.getByText("Couche en cours")).toBeInTheDocument();
+    // Figures as French writes them.
+    expect(screen.getByText("1 h 20 min")).toBeInTheDocument();
+    expect(
+      screen.getByRole("progressbar", { name: "Avancement de l'impression" }),
+    ).toHaveAttribute("aria-valuetext", "39,6\u00a0%");
   });
 });

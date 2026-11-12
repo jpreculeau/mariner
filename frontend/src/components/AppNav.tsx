@@ -24,9 +24,7 @@ export function AppNav() {
           >
             <Printer className="h-4 w-4 text-primary-foreground" />
           </div>
-          <span className="font-display text-lg font-bold tracking-tight">
-            Mariner 2
-          </span>
+          <span className="font-display text-lg font-bold">Mariner 2</span>
         </div>
 
         <div className="flex items-center gap-1">
@@ -41,7 +39,7 @@ export function AppNav() {
                   className={cn(
                     "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                     isActive
-                      ? "bg-primary/10 text-primary"
+                      ? "bg-primary/10 text-primary forced-colors:underline"
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >

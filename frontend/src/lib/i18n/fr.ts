@@ -6,7 +6,7 @@ import type { TextKey } from "./en";
  */
 export const fr: Record<TextKey, string> = {
   "app.skipToContent": "Aller au contenu",
-  "nav.main": "Principale",
+  "nav.main": "Navigation principale",
   "nav.dashboard": "Tableau de bord",
   "nav.files": "Fichiers",
   "title.dashboard": "Tableau de bord",
@@ -14,19 +14,23 @@ export const fr: Record<TextKey, string> = {
   "title.notFound": "Page introuvable",
 
   "appearance.open": "Apparence",
-  "appearance.theme": "Couleurs de l'imprimante",
+  "appearance.theme": "Thème de couleurs",
   "appearance.typeface": "Police de caractères",
   "appearance.language": "Langue",
   "font.hyperlegible.hint": "Des lettres dessinées pour ne pas se confondre",
   "font.opendyslexic.hint":
     "Des lettres lestées, pour les lecteurs dyslexiques",
 
-  "power.open": "Alimentation",
+  "power.open": "Éteindre ou redémarrer",
   "power.heading": "Ordinateur qui fait tourner Mariner",
   "power.reboot": "Redémarrer",
   "power.rebootConfirm": "Confirmer le redémarrage ?",
   "power.shutdown": "Éteindre",
   "power.shutdownConfirm": "Confirmer l'arrêt ?",
+  "power.rebootAgain": "Appuyez de nouveau pour redémarrer l'ordinateur.",
+  "power.shutdownAgain": "Appuyez de nouveau pour éteindre l'ordinateur.",
+  "power.rebooting": "L'ordinateur redémarre. Cette page revient toute seule.",
+  "power.shuttingDown": "L'ordinateur s'éteint.",
 
   "status.idle": "Prête",
   "status.printing": "Impression en cours",
@@ -41,8 +45,8 @@ export const fr: Record<TextKey, string> = {
     "Vérifiez que l'ordinateur qui fait tourner Mariner est allumé et relié au réseau. Cette page réessaie toute seule.",
   "dashboard.idle.title": "Prête à imprimer",
   "dashboard.idle.text":
-    "Choisissez un fichier dans Fichiers pour lancer une impression.",
-  "dashboard.idle.open": "Ouvrir Fichiers",
+    "Choisissez un fichier dans la page Fichiers pour lancer une impression.",
+  "dashboard.idle.open": "Voir les fichiers",
   "dashboard.offline.title": "L'imprimante ne répond pas",
   "dashboard.offline.text":
     "Vérifiez que l'imprimante est allumée et que son câble vers l'ordinateur qui fait tourner Mariner est branché.",
@@ -62,7 +66,7 @@ export const fr: Record<TextKey, string> = {
   "print.cancel.title": "Annuler cette impression ?",
   "print.cancel.text":
     "{file} est imprimé à {progress}. Une impression annulée ne peut pas être reprise : il faut la relancer depuis la première couche.",
-  "print.cancel.keep": "Continuer l'impression",
+  "print.cancel.keep": "Ne pas annuler",
   "print.cancel.confirm": "Annuler l'impression",
   "print.paused": "Impression en pause",
   "print.resumed": "Impression reprise",
@@ -76,8 +80,10 @@ export const fr: Record<TextKey, string> = {
   "files.uploading": "Envoi de {file} : {percent}",
   "files.uploadProgress": "Avancement de l'envoi",
   "files.uploaded": "{file} envoyé",
+  "files.uploadCancel": "Annuler l'envoi",
+  "files.uploadCancelled": "Envoi annulé",
   "files.loading": "Chargement des fichiers…",
-  "files.error.title": "La liste des fichiers n'a pas pu être obtenue",
+  "files.error.title": "Impossible d'afficher les fichiers",
   "files.error.retry": "Réessayer",
   "files.empty": "Ce dossier est vide.",
   "files.up": "Remonter au dossier parent",
@@ -113,6 +119,7 @@ export const fr: Record<TextKey, string> = {
 
   "common.cancel": "Annuler",
   "common.close": "Fermer",
+  "toasts.region": "Messages",
 
   "notFound.heading": "Page introuvable",
   "notFound.text": "Il n'y a rien à cette adresse.",
@@ -127,12 +134,12 @@ export const fr: Record<TextKey, string> = {
   "error.request_too_large":
     "Cette demande dépasse la taille que Mariner accepte.",
   "error.upload_not_stored":
-    "Il n'y a pas assez de place pour enregistrer ce fichier. Libérez de la place et renvoyez-le.",
+    "Il n'y a pas assez de place pour enregistrer ce fichier. Libérez de la place et envoyez-le de nouveau.",
   "error.folder_too_deep":
     "Les dossiers ne peuvent pas être imbriqués plus profondément.",
   "error.folder_exists": "Un dossier ou un fichier porte déjà ce nom.",
   "error.name_not_allowed":
-    "Un dossier ne peut pas porter ce nom. Évitez les barres obliques et les noms faits seulement de points.",
+    "Un dossier ne peut pas porter ce nom\u00a0: évitez les barres obliques et les noms faits seulement de points, et choisissez un nom court.",
   "error.folder_not_created":
     "Le dossier n'a pas pu être créé\u00a0: son nom est peut-être trop long, ou le disque plein.",
   "error.printer_not_answering":
@@ -142,15 +149,15 @@ export const fr: Record<TextKey, string> = {
   "error.host_command_refused":
     "L'ordinateur qui fait tourner Mariner n'a pas accepté la commande.",
   "error.print_in_progress":
-    "Ce fichier est en cours d'impression : il ne peut pas être modifié avant la fin.",
+    "L'imprimante imprime déjà. Attendez la fin de l'impression ou annulez-la d'abord.",
   "error.print_just_started":
-    "Une impression vient d'être lancée : attendez que l'imprimante indique ce qu'elle imprime.",
+    "Une impression vient d'être lancée. Les fichiers sont protégés pendant une demi-minute après un lancement, même si l'impression a été annulée. Réessayez dans un instant.",
   "error.file_in_use":
-    "Ce fichier est en cours d'impression\u00a0: il ne peut pas être modifié avant la fin.",
+    "Ce fichier est en cours d'impression\u00a0: il ne peut pas être modifié avant la fin de l'impression.",
   "error.print_file_unknown":
     "L'imprimante imprime mais n'indique pas quel fichier\u00a0: celui-ci n'a pas été modifié. Réessayez dans un instant.",
   "error.browser_not_served":
-    "Cette adresse est réservée aux trancheurs, pas à un navigateur web.",
+    "Cette adresse est réservée aux logiciels de découpe (slicers), pas à un navigateur web.",
   "error.printer_error":
     "L'imprimante n'a pas accepté la commande. Vérifiez qu'elle est allumée et que son câble est branché.",
   "error.file_unreadable":
@@ -159,7 +166,7 @@ export const fr: Record<TextKey, string> = {
   "error.internal_error":
     "Mariner a rencontré une erreur. Son journal en dit plus.",
   "error.cross_site_request":
-    "Mariner a refusé cette demande, comme venant d'un autre site.",
+    "Mariner a refusé cette demande car elle semble venir d'un autre site.",
   "error.host_not_allowed":
     "Mariner ne répond pas au nom sous lequel cette page a été ouverte.",
 };

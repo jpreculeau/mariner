@@ -164,9 +164,20 @@ function sendFile(
   url: string,
   body: FormData,
   onProgress?: (fraction: number) => void,
+  signal?: AbortSignal,
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
+    // Given up by the reader: not something that went wrong.
+    const givenUp = () => new ApiError(0, "Upload cancelled.", "cancelled");
+    if (signal?.aborted) {
+      reject(givenUp());
+      return;
+    }
     const request = new XMLHttpRequest();
+    signal?.addEventListener("abort", () => request.abort(), { once: true });
+    request.onabort = () => reject(givenUp());
+    // Cut short by the browser: taken for a connection that dropped.
+    request.ontimeout = () => reject(unreachable());
     request.open("POST", url);
     const csrf = getCsrfToken();
     if (csrf) request.setRequestHeader("X-CSRFToken", csrf);
@@ -243,6 +254,7 @@ export const api = {
     path: string = ".",
     options: FileChangeOptions = {},
     onProgress?: (fraction: number) => void,
+    signal?: AbortSignal,
   ): Promise<void> {
     const formData = new FormData();
     formData.append("file", file);
@@ -254,9 +266,9 @@ export const api = {
     // A file refused for its token has been sent whole by then, and would
     // be sent whole again: make sure of the token first.
     await renewCsrfToken();
-    let res = await sendFile(url, formData, onProgress);
+    let res = await sendFile(url, formData, onProgress, signal);
     if ((await tokenWasRefused(res)) && (await renewCsrfToken())) {
-      res = await sendFile(url, formData, onProgress);
+      res = await sendFile(url, formData, onProgress, signal);
     }
     if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);
   },
@@ -313,13 +325,6 @@ export function mapPrinterState(state: string): PrinterStatus {
     default:
       return "idle";
   }
-}
-
-export function formatTime(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
 }
 
 export function formatFileSize(bytes: number): string {

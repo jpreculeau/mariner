@@ -624,8 +624,8 @@ def create_directory() -> Union[str, Response]:
         _refuse_folder(
             "name_not_allowed",
             "Name Not Allowed",
-            "A folder cannot have this name. Leave out slashes, and names "
-            "made of dots only.",
+            "A folder cannot have this name. Leave out slashes and names "
+            "made of dots only, and do not make it too long.",
         )
 
     parent = _resolve_or_400(request.args.get("path", "."))

@@ -36,10 +36,16 @@ export function PowerMenu() {
     } catch (error) {
       // A dropped connection is the host going down. An answer is the
       // host saying no.
-      if (error instanceof ApiError) {
+      if (error instanceof ApiError && error.code !== "network") {
         toast.error(errorText(error, t, lang));
+        setOpen(false);
+        reset();
+        return;
       }
     }
+    toast.success(
+      t(action === "shutdown" ? "power.shuttingDown" : "power.rebooting"),
+    );
     setOpen(false);
     reset();
   }
@@ -60,7 +66,21 @@ export function PowerMenu() {
           <Power className="h-4 w-4" aria-hidden />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-64 p-2">
+      <PopoverContent
+        align="end"
+        aria-label={t("power.open")}
+        className="w-64 p-2"
+      >
+        {/* Said aloud: the name of a button that has focus is not read
+            again when it changes, and the second press switches the
+            computer off. */}
+        <p role="status" className="sr-only">
+          {confirming === "shutdown"
+            ? t("power.shutdownAgain")
+            : confirming === "reboot"
+              ? t("power.rebootAgain")
+              : ""}
+        </p>
         <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">
           {t("power.heading")}
         </p>

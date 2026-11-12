@@ -310,7 +310,7 @@ describe("FileDetailDialog", () => {
 
       await deleteConfirmed();
       const waiting = await screen.findByRole("button", { name: "Deleting…" });
-      expect(waiting).toBeDisabled();
+      expect(waiting).toHaveAttribute("aria-disabled", "true");
       fireEvent.click(waiting);
 
       expect(api.deleteFile).toHaveBeenCalledTimes(1);
@@ -366,7 +366,7 @@ describe("FileDetailDialog", () => {
       await waitFor(() =>
         expect(
           screen.getByRole("button", { name: "Start print" }),
-        ).toBeEnabled(),
+        ).not.toHaveAttribute("aria-disabled", "true"),
       );
     });
 
@@ -379,9 +379,12 @@ describe("FileDetailDialog", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Start print" }));
       const waiting = await screen.findByRole("button", { name: "Starting…" });
-      expect(waiting).toBeDisabled();
+      expect(waiting).toHaveAttribute("aria-disabled", "true");
       // Nor can the file be deleted while its print is being started.
-      expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Delete" })).toHaveAttribute(
+        "aria-disabled",
+        "true",
+      );
       fireEvent.click(waiting);
 
       expect(api.printerCommand).toHaveBeenCalledTimes(1);

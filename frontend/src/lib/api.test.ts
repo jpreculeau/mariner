@@ -1,11 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-  api,
-  ApiError,
-  mapPrinterState,
-  formatTime,
-  formatFileSize,
-} from "./api";
+import { api, ApiError, mapPrinterState, formatFileSize } from "./api";
 
 describe("mapPrinterState", () => {
   it("maps PRINTING to printing", () => {
@@ -30,24 +24,6 @@ describe("mapPrinterState", () => {
 
   it("maps unknown states to idle", () => {
     expect(mapPrinterState("UNKNOWN")).toBe("idle");
-  });
-});
-
-describe("formatTime", () => {
-  it("formats seconds to minutes only", () => {
-    expect(formatTime(300)).toBe("5m");
-  });
-
-  it("formats seconds to hours and minutes", () => {
-    expect(formatTime(3720)).toBe("1h 2m");
-  });
-
-  it("formats zero seconds", () => {
-    expect(formatTime(0)).toBe("0m");
-  });
-
-  it("formats large values", () => {
-    expect(formatTime(16740)).toBe("4h 39m");
   });
 });
 

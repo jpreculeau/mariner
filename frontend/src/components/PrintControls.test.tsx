@@ -67,7 +67,7 @@ describe("PrintControls", () => {
     const { onCancel } = controls();
     fireEvent.click(button("Cancel print"));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Keep printing" }),
+      await screen.findByRole("button", { name: "Do not cancel" }),
     );
 
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -95,13 +95,15 @@ describe("PrintControls", () => {
     fireEvent.click(button("Pause"));
     // Said while it lasts, and nothing else can be asked meanwhile.
     const waiting = await screen.findByRole("button", { name: "Pausing…" });
-    expect(waiting).toBeDisabled();
-    expect(button("Cancel print")).toBeDisabled();
+    expect(waiting).toHaveAttribute("aria-disabled", "true");
+    expect(button("Cancel print")).toHaveAttribute("aria-disabled", "true");
     fireEvent.click(waiting);
     expect(onPause).toHaveBeenCalledTimes(1);
 
     done();
-    await waitFor(() => expect(button("Pause")).toBeEnabled());
+    await waitFor(() =>
+      expect(button("Pause")).not.toHaveAttribute("aria-disabled", "true"),
+    );
   });
 
   it("can be used again after a command that failed", async () => {
@@ -111,6 +113,25 @@ describe("PrintControls", () => {
     fireEvent.click(button("Pause"));
 
     await waitFor(() => expect(onPause).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(button("Pause")).toBeEnabled());
+    await waitFor(() =>
+      expect(button("Pause")).not.toHaveAttribute("aria-disabled", "true"),
+    );
+  });
+
+  it("keeps focus on the button that was pressed while its command lasts", async () => {
+    // Switched off, a button drops focus to the top of the page.
+    let done: () => void = () => {};
+    const onPause = vi.fn(
+      () => new Promise<void>((resolve) => (done = resolve)),
+    );
+    controls({ onPause });
+    const pause = button("Pause");
+    pause.focus();
+    fireEvent.click(pause);
+
+    const waiting = await screen.findByRole("button", { name: "Pausing…" });
+    expect(waiting).toHaveFocus();
+    done();
+    await waitFor(() => expect(button("Pause")).toHaveFocus());
   });
 });

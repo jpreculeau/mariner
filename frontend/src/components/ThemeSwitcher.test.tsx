@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { ThemeSwitcher } from "./ThemeSwitcher";
 import { LanguageProvider } from "@/lib/i18n";
 
@@ -74,5 +74,34 @@ describe("ThemeSwitcher", () => {
       screen.getByText("Des lettres dessinées pour ne pas se confondre"),
     ).toBeInTheDocument();
     expect(localStorage.getItem("mariner-language")).toBe("fr");
+  });
+
+  it("is a named place, with its choices in named groups", async () => {
+    render(<ThemeSwitcher />);
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Appearance" }),
+    ).toBeInTheDocument();
+    for (const [group, choice] of [
+      ["Printer theme", "Elegoo Saturn"],
+      ["Typeface", "OpenDyslexic"],
+      ["Language", "Français"],
+    ]) {
+      const named = screen.getByRole("group", { name: group });
+      expect(
+        within(named).getByRole("button", { name: new RegExp(choice) }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("marks the choice made other than by a shade of grey", async () => {
+    render(<ThemeSwitcher />);
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    const chosen = await screen.findByRole("button", {
+      name: /Atkinson Hyperlegible/,
+    });
+    const other = screen.getByRole("button", { name: /OpenDyslexic/ });
+    expect(chosen.querySelector("[data-chosen]")).not.toBeNull();
+    expect(other.querySelector("[data-chosen]")).toBeNull();
   });
 });

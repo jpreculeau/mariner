@@ -5,7 +5,7 @@
 export const en = {
   // Around every page
   "app.skipToContent": "Skip to content",
-  "nav.main": "Main",
+  "nav.main": "Main navigation",
   "nav.dashboard": "Dashboard",
   "nav.files": "Files",
   "title.dashboard": "Dashboard",
@@ -21,12 +21,17 @@ export const en = {
   "font.opendyslexic.hint": "Weighted letters, for dyslexic readers",
 
   // Power menu
-  "power.open": "Power",
+  "power.open": "Shut down or restart",
   "power.heading": "Computer running Mariner",
   "power.reboot": "Restart",
   "power.rebootConfirm": "Confirm restart?",
   "power.shutdown": "Shut down",
   "power.shutdownConfirm": "Confirm shutdown?",
+  "power.rebootAgain": "Press again to restart the computer.",
+  "power.shutdownAgain": "Press again to shut the computer down.",
+  "power.rebooting":
+    "The computer is restarting. This page comes back by itself.",
+  "power.shuttingDown": "The computer is shutting down.",
 
   // Printer state
   "status.idle": "Ready",
@@ -42,8 +47,8 @@ export const en = {
   "dashboard.unreachable.text":
     "Check that the computer running Mariner is switched on and on the network. This page tries again by itself.",
   "dashboard.idle.title": "Ready to print",
-  "dashboard.idle.text": "Choose a file in Files to start a print.",
-  "dashboard.idle.open": "Open Files",
+  "dashboard.idle.text": "Choose a file on the Files page to start a print.",
+  "dashboard.idle.open": "See the files",
   "dashboard.offline.title": "Printer not answering",
   "dashboard.offline.text":
     "Check that the printer is switched on and that its cable to the computer running Mariner is plugged in.",
@@ -64,7 +69,7 @@ export const en = {
   "print.cancel.title": "Cancel this print?",
   "print.cancel.text":
     "{file} is {progress} done. A cancelled print cannot be resumed: it has to be started again from the first layer.",
-  "print.cancel.keep": "Keep printing",
+  "print.cancel.keep": "Do not cancel",
   "print.cancel.confirm": "Cancel the print",
   "print.paused": "Print paused",
   "print.resumed": "Print resumed",
@@ -79,6 +84,8 @@ export const en = {
   "files.uploading": "Uploading {file}: {percent}",
   "files.uploadProgress": "Upload progress",
   "files.uploaded": "{file} uploaded",
+  "files.uploadCancel": "Cancel the upload",
+  "files.uploadCancelled": "Upload cancelled",
   "files.loading": "Loading files…",
   "files.error.title": "The files could not be listed",
   "files.error.retry": "Try again",
@@ -119,6 +126,7 @@ export const en = {
   // Shared
   "common.cancel": "Cancel",
   "common.close": "Close",
+  "toasts.region": "Messages",
 
   // Page not found
   "notFound.heading": "Page not found",
@@ -133,23 +141,23 @@ export const en = {
   "error.file_too_large": "This file is larger than Mariner accepts.",
   "error.request_too_large": "This request is larger than Mariner accepts.",
   "error.upload_not_stored":
-    "There is not enough room to store this file. Free some room and send it again.",
+    "There is not enough space to store this file. Free some space and send it again.",
   "error.folder_too_deep": "Folders cannot be nested any deeper than this.",
   "error.folder_exists": "A folder or a file of this name is already there.",
   "error.name_not_allowed":
-    "A folder cannot have this name. Leave out slashes, and names made of dots only.",
+    "A folder cannot have this name: leave out slashes and names made of dots only, and keep it short.",
   "error.folder_not_created":
     "The folder could not be made: its name may be too long, or the drive full.",
   "error.printer_not_answering":
-    "The printer did not answer, so there is no telling whether this file is being printed. It was left untouched.",
+    "The printer did not answer, so Mariner cannot tell whether this file is being printed. It was left untouched.",
   "error.printer_answer_unclear":
     "Mariner could not get a clear answer from the printer, so this file was left untouched. Try again in a moment.",
   "error.host_command_refused":
     "The computer running Mariner did not accept the command.",
   "error.print_in_progress":
-    "This file is being printed: it cannot be changed until the print is over.",
+    "The printer is already printing. Wait for the print to finish, or cancel it first.",
   "error.print_just_started":
-    "A print was started a moment ago: wait until the printer says what it is printing.",
+    "A print was started a moment ago. Files are protected for half a minute after a print starts, even if it was cancelled. Try again in a moment.",
   "error.file_in_use":
     "This file is being printed: it cannot be changed until the print is over.",
   "error.print_file_unknown":

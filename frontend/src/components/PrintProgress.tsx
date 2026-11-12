@@ -1,5 +1,4 @@
 import { Progress } from "@/components/ui/progress";
-import { formatTime } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
 export interface PrintJob {
@@ -17,14 +16,14 @@ interface PrintProgressProps {
 }
 
 export function PrintProgress({ job }: PrintProgressProps) {
-  const { t } = useI18n();
-  const percent = `${job.progress.toFixed(1)}%`;
+  const { t, duration, percent: asPercent } = useI18n();
+  const percent = asPercent(job.progress, 1);
 
   return (
     <div className="space-y-6">
       {/* Big percentage. The bar below says the same to a screen reader. */}
       <div className="text-center" aria-hidden>
-        <span className="font-mono text-6xl font-bold tracking-tight text-primary sm:text-7xl">
+        <span className="font-mono text-6xl font-bold text-primary sm:text-7xl">
           {percent}
         </span>
       </div>
@@ -48,11 +47,11 @@ export function PrintProgress({ job }: PrintProgressProps) {
         />
         <StatBlock
           label={t("print.elapsed")}
-          value={formatTime(job.elapsedTime)}
+          value={duration(job.elapsedTime)}
         />
         <StatBlock
           label={t("print.remaining")}
-          value={formatTime(job.remainingTime)}
+          value={duration(job.remainingTime)}
         />
       </dl>
 

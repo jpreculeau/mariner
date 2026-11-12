@@ -143,6 +143,42 @@ describe("sending a file", () => {
   });
 });
 
+describe("giving up on a file being sent", () => {
+  beforeEach(() => {
+    useFakeXhr();
+    globalThis.fetch = vi.fn().mockImplementation(noNewToken);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("stops sending and says that it was given up", async () => {
+    FakeXhr.answers = [{ status: 200, held: true }];
+    const giveUp = new AbortController();
+    const sent = api
+      .uploadFile(file(), ".", {}, undefined, giveUp.signal)
+      .catch((error) => error);
+    await vi.waitFor(() => expect(FakeXhr.requests).toHaveLength(1));
+
+    giveUp.abort();
+
+    const outcome = await sent;
+    expect(FakeXhr.requests[0].aborted).toBe(true);
+    expect(outcome).toBeInstanceOf(ApiError);
+    expect(outcome.code).toBe("cancelled");
+  });
+
+  it("sends nothing when it was given up before it started", async () => {
+    const giveUp = new AbortController();
+    giveUp.abort();
+
+    const outcome = await api
+      .uploadFile(file(), ".", {}, undefined, giveUp.signal)
+      .catch((error) => error);
+
+    expect(outcome.code).toBe("cancelled");
+    expect(FakeXhr.requests).toHaveLength(0);
+  });
+});
+
 describe("asking Mariner", () => {
   afterEach(() => vi.unstubAllGlobals());
 

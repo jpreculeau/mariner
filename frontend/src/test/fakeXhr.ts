@@ -9,6 +9,8 @@ export interface Answer {
   progress?: number[];
   /** The connection drops instead of an answer. */
   fails?: boolean;
+  /** Answer only when the test says so. */
+  held?: boolean;
 }
 
 /**
@@ -31,6 +33,15 @@ export class FakeXhr {
   };
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  aborted = false;
+  /** Answers held back until `release()`: an upload still under way. */
+  static held: (() => void)[] = [];
+
+  abort() {
+    this.aborted = true;
+    this.onabort?.();
+  }
 
   open(method: string, url: string) {
     this.method = method;
@@ -45,7 +56,8 @@ export class FakeXhr {
     this.body = body;
     FakeXhr.requests.push(this);
     const answer = FakeXhr.answers.shift() ?? { status: 200, body: "{}" };
-    queueMicrotask(() => {
+    const deliver = () => {
+      if (this.aborted) return;
       for (const fraction of answer.progress ?? []) {
         this.upload.onprogress?.({
           lengthComputable: true,
@@ -61,7 +73,9 @@ export class FakeXhr {
       this.statusText = answer.statusText ?? "";
       this.responseText = answer.body ?? "";
       this.onload?.();
-    });
+    };
+    if (answer.held) FakeXhr.held.push(deliver);
+    else queueMicrotask(deliver);
   }
 }
 
@@ -69,5 +83,6 @@ export class FakeXhr {
 export function useFakeXhr() {
   FakeXhr.requests = [];
   FakeXhr.answers = [];
+  FakeXhr.held = [];
   vi.stubGlobal("XMLHttpRequest", FakeXhr);
 }

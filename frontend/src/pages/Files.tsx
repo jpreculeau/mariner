@@ -1,14 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  api,
-  ApiError,
-  formatTime,
-  type FileEntry,
-  type DirectoryEntry,
-} from "@/lib/api";
+import { api, ApiError, type FileEntry, type DirectoryEntry } from "@/lib/api";
 import { FileDetailDialog } from "@/components/FileDetailDialog";
-import { PrinterOffDialog } from "@/components/PrinterOffDialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,10 +11,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Progress } from "@/components/ui/progress";
 import { toast } from "@/components/ui/sonner";
 import { errorText } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
+import { useUploads } from "@/lib/uploads";
 import { usePageTitle } from "@/hooks/use-page-title";
 import {
   Folder,
@@ -66,20 +59,11 @@ export default function Files() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
-  // An upload the server refused but that the user may still confirm.
-  const [refusedUpload, setRefusedUpload] = useState<{
-    file: File;
-    path: string;
-    reason: string;
-  } | null>(null);
-  // One upload at a time: see upload.
-  const [uploading, setUploading] = useState(false);
-  // The file being sent and how much of it has gone, from 0 to 1.
-  const [sending, setSending] = useState<{
-    name: string;
-    fraction: number;
-  } | null>(null);
-  const { t, lang } = useI18n();
+  // Why the folder asked for could not be made, until the name changes.
+  const [folderError, setFolderError] = useState<string | null>(null);
+  // Uploads live above the pages: one goes on when another page is shown.
+  const uploads = useUploads();
+  const { t, lang, duration } = useI18n();
   usePageTitle(t("title.files"));
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
@@ -98,13 +82,29 @@ export default function Files() {
       setNewFolderName("");
     },
     onError: (err: Error) => {
-      toast.error(errorText(err, t, lang));
+      // By the field it is about, where it is read and stays.
+      setFolderError(errorText(err, t, lang));
     },
   });
 
   useEffect(() => {
     if (!newFolderOpen) setNewFolderName("");
+    setFolderError(null);
   }, [newFolderOpen]);
+
+  // When the list shown changes and focus was on something that went
+  // with it, put focus on the list rather than let it fall to the top of
+  // the page. Not when the list is first shown: nothing was lost.
+  const listRef = useRef<HTMLDivElement>(null);
+  const listShown = useRef<typeof data>(undefined);
+  useEffect(() => {
+    if (!data) return;
+    const first = listShown.current === undefined;
+    listShown.current = data;
+    const lost =
+      !document.activeElement || document.activeElement === document.body;
+    if (!first && lost) listRef.current?.focus();
+  }, [data]);
 
   const handleDirectoryClick = (dirname: string) => {
     if (dirname === "..") {
@@ -123,53 +123,12 @@ export default function Files() {
     setDialogOpen(true);
   };
 
-  const upload = async (
-    file: File,
-    path: string,
-    ignoreUnreachablePrinter: boolean,
-  ) => {
-    // A second upload while one is under way is not taken: if both were
-    // refused, the question about the second would replace the first's.
-    if (uploading) return;
-    setUploading(true);
-    setRefusedUpload(null);
-    setSending({ name: file.name, fraction: 0 });
-    try {
-      await api.uploadFile(
-        file,
-        path,
-        { ignoreUnreachablePrinter },
-        (fraction) => setSending({ name: file.name, fraction }),
-      );
-      queryClient.invalidateQueries({ queryKey: ["files", path] });
-      toast.success(t("files.uploaded", { file: file.name }));
-    } catch (err) {
-      if (
-        err instanceof ApiError &&
-        err.canBeOverridden &&
-        !ignoreUnreachablePrinter
-      ) {
-        // The printer sent nothing back: the user decides.
-        setRefusedUpload({ file, path, reason: errorText(err, t, lang) });
-        return;
-      }
-      // The server says why, e.g. the file is being printed.
-      toast.error(errorText(err, t, lang));
-    } finally {
-      setUploading(false);
-      setSending(null);
-    }
-  };
-
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    try {
-      await upload(file, currentPath, false);
-    } finally {
-      // Lets the same file be picked again after a refusal.
-      e.target.value = "";
-    }
+    uploads.start(file, currentPath);
+    // Lets the same file be picked again after a refusal.
+    e.target.value = "";
   };
 
   const handleCreateFolder = () => {
@@ -179,7 +138,6 @@ export default function Files() {
   };
 
   const shownPath = currentPath === "." ? "/" : `/${currentPath}`;
-  const percent = sending ? `${Math.round(sending.fraction * 100)}%` : "";
   const row =
     "flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
@@ -187,14 +145,12 @@ export default function Files() {
     <div className="container py-6">
       <div className="mb-6 flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight">
-            {t("files.heading")}
-          </h1>
-          <p className="break-all font-mono text-sm text-muted-foreground">
-            <span className="sr-only">
-              {t("files.folder", { path: shownPath })}
-            </span>
-            <span aria-hidden>{shownPath}</span>
+          <h1 className="text-2xl font-bold">{t("files.heading")}</h1>
+          <p
+            className="break-all font-mono text-sm text-muted-foreground"
+            aria-hidden
+          >
+            {shownPath}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -224,8 +180,10 @@ export default function Files() {
             variant="outline"
             size="sm"
             className="gap-1.5"
-            disabled={uploading}
-            onClick={() => fileInputRef.current?.click()}
+            aria-disabled={uploads.busy}
+            onClick={() => {
+              if (!uploads.busy) fileInputRef.current?.click();
+            }}
           >
             <Upload className="h-3.5 w-3.5" aria-hidden />
             <span className="sr-only sm:not-sr-only">{t("files.upload")}</span>
@@ -233,21 +191,15 @@ export default function Files() {
         </div>
       </div>
 
-      {sending && (
-        <div className="mb-4 rounded-lg border bg-card p-4">
-          <p className="mb-2 break-all text-sm">
-            {t("files.uploading", { file: sending.name, percent })}
-          </p>
-          <Progress
-            value={Math.round(sending.fraction * 100)}
-            aria-label={t("files.uploadProgress")}
-            aria-valuetext={percent}
-            className="h-2 bg-muted"
-          />
-        </div>
-      )}
-
-      <div className="rounded-lg border bg-card">
+      {/* Where focus goes when the list changes under it: the row that
+          was pressed is gone with the folder it was in. */}
+      <div
+        ref={listRef}
+        tabIndex={-1}
+        role="region"
+        aria-label={t("files.folder", { path: shownPath })}
+        className="rounded-lg border bg-card focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
         {isLoading ? (
           <div role="status" className="flex items-center justify-center py-16">
             <Loader2
@@ -320,7 +272,7 @@ export default function Files() {
               <li key={file.filename}>
                 <button onClick={() => handleFileClick(file)} className={row}>
                   <FileIcon canBePrinted={file.can_be_printed} />
-                  <span className="min-w-0 flex-1 truncate font-mono text-sm">
+                  <span className="min-w-0 flex-1 break-all font-mono text-sm">
                     {file.filename}
                   </span>
                   <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
@@ -329,11 +281,11 @@ export default function Files() {
                         <Clock className="h-3 w-3" aria-hidden />
                         <span className="sr-only">
                           {t("files.printTime", {
-                            time: formatTime(file.print_time_secs),
+                            time: duration(file.print_time_secs),
                           })}
                         </span>
                         <span aria-hidden>
-                          {formatTime(file.print_time_secs)}
+                          {duration(file.print_time_secs)}
                         </span>
                       </span>
                     )}
@@ -365,17 +317,6 @@ export default function Files() {
         onOpenChange={setDialogOpen}
       />
 
-      <PrinterOffDialog
-        reason={refusedUpload?.reason ?? null}
-        confirmLabel={t("printerOff.replace")}
-        onConfirm={() => {
-          if (refusedUpload) {
-            upload(refusedUpload.file, refusedUpload.path, true);
-          }
-        }}
-        onCancel={() => setRefusedUpload(null)}
-      />
-
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
@@ -400,9 +341,23 @@ export default function Files() {
                 autoFocus
                 autoComplete="off"
                 value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
+                aria-invalid={folderError !== null}
+                aria-describedby={folderError ? "new-folder-error" : undefined}
+                onChange={(e) => {
+                  setNewFolderName(e.target.value);
+                  setFolderError(null);
+                }}
                 className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
+              {folderError && (
+                <p
+                  id="new-folder-error"
+                  role="alert"
+                  className="text-sm leading-relaxed text-danger"
+                >
+                  {folderError}
+                </p>
+              )}
             </div>
             <DialogFooter className="gap-2 sm:gap-0">
               <Button

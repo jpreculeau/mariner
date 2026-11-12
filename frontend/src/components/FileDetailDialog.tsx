@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Play, Layers, Clock, Ruler, Trash2, Loader2 } from "lucide-react";
-import { api, ApiError, formatTime, type FileEntry } from "@/lib/api";
+import { api, ApiError, type FileEntry } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import { PrinterOffDialog } from "@/components/PrinterOffDialog";
@@ -30,7 +30,7 @@ export function FileDetailDialog({
 }: FileDetailDialogProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { t, lang } = useI18n();
+  const { t, lang, duration, number } = useI18n();
   // Why the server refused a deletion that the user may still confirm. It
   // is always about the file on screen: it is set only for that file, and
   // withdrawn as soon as another one is shown or the dialog is closed.
@@ -116,7 +116,15 @@ export function FileDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-md"
+        // On the dialog itself, not on its first button: what the file is
+        // comes before what can be done with it.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          (event.currentTarget as HTMLElement).focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="break-all font-mono text-base">
             {file.filename}
@@ -130,7 +138,7 @@ export function FileDetailDialog({
 
         {file.can_be_printed && (
           <>
-            <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-md border bg-muted">
+            <div className="mx-auto flex aspect-square max-h-[40vh] w-full max-w-full items-center justify-center overflow-hidden rounded-md border bg-muted">
               <img
                 src={api.filePreviewUrl(file.path)}
                 alt={t("file.preview")}
@@ -152,12 +160,12 @@ export function FileDetailDialog({
                 <MetaItem
                   icon={Clock}
                   label={t("file.time")}
-                  value={formatTime(details.print_time_secs)}
+                  value={duration(details.print_time_secs)}
                 />
                 <MetaItem
                   icon={Ruler}
                   label={t("file.height")}
-                  value={`${details.height_mm || (details.layer_height_mm * details.layer_count).toFixed(1)} mm`}
+                  value={`${number(details.height_mm || details.layer_height_mm * details.layer_count, 1)}\u00a0mm`}
                 />
               </dl>
             )}
@@ -169,8 +177,10 @@ export function FileDetailDialog({
           <Button
             variant="ghost"
             className="gap-2 text-muted-foreground"
-            disabled={busy !== null}
-            onClick={() => setAskingToDelete(true)}
+            aria-disabled={busy !== null}
+            onClick={() => {
+              if (!busy) setAskingToDelete(true);
+            }}
           >
             {busy === "delete" ? (
               spinner
@@ -182,7 +192,7 @@ export function FileDetailDialog({
           {file.can_be_printed && (
             <Button
               className="gap-2"
-              disabled={busy !== null}
+              aria-disabled={busy !== null}
               onClick={handlePrint}
             >
               {busy === "print" ? (

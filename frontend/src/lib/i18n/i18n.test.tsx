@@ -6,6 +6,9 @@ import {
   translate,
   useI18n,
   languages,
+  formatDuration,
+  formatNumber,
+  formatPercent,
 } from "./index";
 import { en } from "./en";
 import { fr } from "./fr";
@@ -119,5 +122,45 @@ describe("languages", () => {
   it("reads in English where no language was set up", () => {
     render(<Sample />);
     expect(screen.getByText("Files")).toBeInTheDocument();
+  });
+
+  it("writes durations as each language does", () => {
+    expect(formatDuration("en", 5580)).toBe("1h 33m");
+    expect(formatDuration("en", 300)).toBe("5m");
+    expect(formatDuration("en", 0)).toBe("0m");
+    // "m" alone is read as metres by a French voice.
+    expect(formatDuration("fr", 5580)).toBe("1\u00a0h\u00a033\u00a0min");
+    expect(formatDuration("fr", 840)).toBe("14\u00a0min");
+    expect(formatDuration("fr", 0)).toBe("0\u00a0min");
+  });
+
+  it("writes numbers as each language does", () => {
+    expect(formatNumber("en", 5.5, 1)).toBe("5.5");
+    expect(formatNumber("fr", 5.5, 1)).toBe("5,5");
+    expect(formatNumber("fr", 42, 1)).toBe("42,0");
+    expect(formatPercent("en", 39.6, 1)).toBe("39.6%");
+    expect(formatPercent("fr", 39.6, 1)).toBe("39,6\u00a0%");
+    expect(formatPercent("fr", 42, 0)).toBe("42\u00a0%");
+  });
+
+  it("gives the page its language's way of writing figures", () => {
+    function Figures() {
+      const { duration, percent, number, setLang } = useI18n();
+      return (
+        <div>
+          <p>{`${duration(5580)} / ${percent(39.6, 1)} / ${number(5.5, 1)}`}</p>
+          <button onClick={() => setLang("fr")}>fr</button>
+        </div>
+      );
+    }
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(["en"]);
+    render(
+      <LanguageProvider>
+        <Figures />
+      </LanguageProvider>,
+    );
+    expect(screen.getByText("1h 33m / 39.6% / 5.5")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("fr"));
+    expect(screen.getByText("1 h 33 min / 39,6 % / 5,5")).toBeInTheDocument();
   });
 });

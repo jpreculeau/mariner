@@ -33,9 +33,10 @@ export function PrintControls({
   onResume,
   onCancel,
 }: PrintControlsProps) {
-  const { t } = useI18n();
+  const { t, percent } = useI18n();
   // The command under way: one at a time, and each sent once however
-  // often its button is pressed.
+  // often its button is pressed. A button is then said to be unavailable
+  // rather than switched off, which would drop the focus it has.
   const [busy, setBusy] = useState<Command | null>(null);
   const [asking, setAsking] = useState(false);
 
@@ -61,7 +62,7 @@ export function PrintControls({
       {status === "printing" ? (
         <Button
           onClick={() => run("pause", onPause)}
-          disabled={busy !== null}
+          aria-disabled={busy !== null}
           variant="secondary"
           size="lg"
           className="gap-2"
@@ -76,7 +77,7 @@ export function PrintControls({
       ) : (
         <Button
           onClick={() => run("resume", onResume)}
-          disabled={busy !== null}
+          aria-disabled={busy !== null}
           size="lg"
           className="gap-2"
         >
@@ -90,8 +91,10 @@ export function PrintControls({
       )}
 
       <Button
-        onClick={() => setAsking(true)}
-        disabled={busy !== null}
+        onClick={() => {
+          if (!busy) setAsking(true);
+        }}
+        aria-disabled={busy !== null}
         variant="destructive"
         size="lg"
         className="gap-2"
@@ -107,7 +110,7 @@ export function PrintControls({
             <DialogDescription>
               {t("print.cancel.text", {
                 file: fileName,
-                progress: `${progress.toFixed(1)}%`,
+                progress: percent(progress, 1),
               })}
             </DialogDescription>
           </DialogHeader>

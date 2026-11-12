@@ -56,5 +56,6 @@ export function applyFont(fontId: string) {
   style.setProperty("--font-body", font.body);
   style.setProperty("--font-display", font.display);
   style.setProperty("--font-mono", font.mono);
+  document.documentElement.dataset.font = font.id;
   remember(FONT_KEY, font.id);
 }

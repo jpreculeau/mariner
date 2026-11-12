@@ -12,13 +12,13 @@ const Progress = React.forwardRef<
     // Passed on: it is what tells a screen reader how far the bar is.
     value={value}
     className={cn(
-      "relative h-4 w-full overflow-hidden rounded-full bg-secondary",
+      "relative h-4 w-full overflow-hidden rounded-full border border-input bg-secondary",
       className,
     )}
     {...props}
   >
     <ProgressPrimitive.Indicator
-      className="h-full w-full flex-1 bg-primary transition-all rounded-full"
+      className="h-full w-full flex-1 rounded-full bg-primary transition-all forced-colors:bg-[Highlight]"
       style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
     />
   </ProgressPrimitive.Root>
