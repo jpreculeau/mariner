@@ -818,7 +818,7 @@ class MarinerServerTest(TestCase):
             # Nothing is fetched from another site: the page carries its
             # typefaces with it.
             expect("http" in policy).to_equal(False)
-            expect("font-src 'self'" in policy).to_equal(True)
+            expect("font-src 'self';" in policy).to_equal(True)
             for part in (
                 "default-src 'self'",
                 "script-src 'self'",
@@ -842,6 +842,22 @@ class MarinerServerTest(TestCase):
         add_static_headers(headers, "/opt/dist/assets/index.js", "/assets/index.js")
         expect(headers["X-Content-Type-Options"]).to_equal("nosniff")
         expect(headers["Cross-Origin-Resource-Policy"]).to_equal("same-origin")
+        # A file whose name changes with its content is kept by the
+        # browser for good: it is not asked for again at every visit.
+        for kept in (
+            "/assets/index-Q-zpu2Rs.js",
+            "/assets/index-CvogB2Bx.css",
+            "/assets/opendyslexic-latin-400-normal-wYUJcbXi.woff2",
+        ):
+            headers = {"Cache-Control": "max-age=60, public"}
+            add_static_headers(headers, "/opt/dist" + kept, kept)
+            expect(headers["Cache-Control"]).to_equal(
+                "max-age=31536000, public, immutable"
+            )
+        for not_kept in ("/favicon.svg", "/licenses/x-OFL.txt", "/assets/plain.js"):
+            headers = {"Cache-Control": "max-age=60, public"}
+            add_static_headers(headers, "/opt/dist" + not_kept, not_kept)
+            expect(headers["Cache-Control"]).to_equal("max-age=60, public")
         # And that is what serves them, for the page alone.
         served_by = self.client.application.wsgi_app
         expect(served_by.add_headers_function).to_equal(add_static_headers)
@@ -1747,6 +1763,7 @@ class MarinerServerTest(TestCase):
         expect(os.path.exists("/mnt/usb_share/.upload-0123abcd.part")).to_equal(True)
 
     def test_delete_file_that_is_not_file(self) -> None:
+        self.fs.create_dir("/mnt/usb_share/mariner")
         with patch("os.remove") as remove_mock:
             response = self.client.post("/api/delete_file?filename=mariner")
         remove_mock.assert_not_called()
@@ -1763,6 +1780,57 @@ class MarinerServerTest(TestCase):
         expect(os.path.isdir(config.get_files_directory() / "my_project")).to_equal(
             True
         )
+
+    def test_refusals_of_a_file_say_why(self) -> None:
+        # In words the page can show, with a code it can translate: a bare
+        # refusal reads "error 400" to whoever sent the file.
+        import io
+
+        def upload(name: str) -> Any:
+            return self.client.post(
+                "/api/upload_file",
+                data={"file": (io.BytesIO(b"x"), name)},
+                content_type="multipart/form-data",
+            )
+
+        for name, code in (
+            ("bob's model.ctb", "name_not_allowed"),
+            ("what?.ctb", "name_not_allowed"),
+            ("notes.txt", "type_not_supported"),
+            ("model", "type_not_supported"),
+        ):
+            response = upload(name)
+            expect(response.status_code).to_equal(400)
+            body = response.get_json()
+            expect(body["code"]).to_equal(code)
+            expect(len(body["description"]) > 20).to_equal(True)
+        # The kinds that are taken are named.
+        expect(".ctb" in upload("notes.txt").get_json()["description"]).to_equal(True)
+        # The apostrophe, which is what most often gets a name refused.
+        description = upload("bob's model.ctb").get_json()["description"]
+        expect("apostrophe" in description).to_equal(True)
+
+    def test_a_file_that_is_gone_is_said_to_be(self) -> None:
+        # Removed from another tab, or through the slicer, since the list
+        # was shown.
+        response = self.client.post("/api/delete_file?filename=gone.ctb")
+        expect(response.status_code).to_equal(404)
+        expect(response.get_json()["code"]).to_equal("file_gone")
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=gone.ctb"
+        )
+        expect(response.status_code).to_equal(404)
+        expect(response.get_json()["code"]).to_equal("file_gone")
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_a_file_that_cannot_be_printed_is_said_to_be(self) -> None:
+        self.fs.create_file("/mnt/usb_share/notes.txt", contents="x")
+        response = self.client.post(
+            "/api/printer/command/start_print?filename=notes.txt"
+        )
+        expect(response.status_code).to_equal(400)
+        expect(response.get_json()["code"]).to_equal("type_not_supported")
+        self.printer_mock.start_printing.assert_not_called()
 
     def test_create_directory_says_why_it_could_not(self) -> None:
         # In words the page can show, with a code it can translate.
@@ -1783,7 +1851,7 @@ class MarinerServerTest(TestCase):
             expect(len(body["description"]) > 10).to_equal(True)
             if code == "name_not_allowed":
                 # Whichever of its faults the name has is among those said.
-                expect("too long" in body["description"]).to_equal(True)
+                expect("255" in body["description"]).to_equal(True)
         with patch("os.mkdir", side_effect=OSError(36, "File name too long")):
             response = self.client.post("/api/create_directory?path=.&name=new")
         expect(response.status_code).to_equal(400)

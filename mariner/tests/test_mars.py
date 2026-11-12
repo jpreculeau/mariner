@@ -635,6 +635,14 @@ class ChiTuPrinterTest(TestCase):
         self.serial_port_mock.write.assert_called_once_with(b"M33\r\n")
         self.printer.close()
 
+    def test_stop_printing_when_the_printer_says_nothing(self) -> None:
+        # Silence is not a yes: the print may well be going on.
+        self.serial_port_mock.readline.return_value = b""
+        self.printer.open()
+        with self.assertRaises(UnexpectedPrinterResponse):
+            self.printer.stop_printing()
+        self.printer.close()
+
     def test_stop_printing_when_not_printing(self) -> None:
         self.serial_port_mock.readline.return_value = (
             # FIXME: this isn't right, readline would return only the first one

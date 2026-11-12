@@ -28,23 +28,6 @@ import {
   TriangleAlert,
 } from "lucide-react";
 
-/**
- * The kinds of file the printer takes, for the file picker: ".ctb,.fdg".
- * Empty when the page was not told, so that every file is offered.
- */
-function acceptedFiles(): string {
-  const listed =
-    document
-      .querySelector('meta[name="supported-extensions"]')
-      ?.getAttribute("content") || "";
-  return listed
-    .split(",")
-    .map((extension) => extension.trim().replace(/^\./, ""))
-    .filter((extension) => /^[a-z0-9]+$/i.test(extension))
-    .map((extension) => `.${extension}`)
-    .join(",");
-}
-
 function FileIcon({ canBePrinted }: { canBePrinted: boolean }) {
   if (canBePrinted)
     return <Layers className="h-4 w-4 shrink-0 text-primary" aria-hidden />;
@@ -157,7 +140,6 @@ export default function Files() {
           <input
             ref={fileInputRef}
             type="file"
-            accept={acceptedFiles()}
             className="hidden"
             tabIndex={-1}
             aria-hidden
@@ -229,6 +211,17 @@ export default function Files() {
             >
               {t("files.error.retry")}
             </Button>
+            {currentPath !== "." && (
+              // The folder may be gone: a way out other than reloading.
+              <Button
+                variant="ghost"
+                className="mt-2 gap-2"
+                onClick={() => handleDirectoryClick("..")}
+              >
+                <CornerLeftUp className="h-4 w-4" aria-hidden />
+                {t("files.up")}
+              </Button>
+            )}
           </div>
         ) : (
           <ul className="divide-y">

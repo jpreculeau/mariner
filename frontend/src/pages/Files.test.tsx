@@ -414,30 +414,10 @@ describe("Files", () => {
     });
   });
 
-  it("offers only the kinds of file the printer takes", () => {
-    const meta = document.createElement("meta");
-    meta.name = "supported-extensions";
-    meta.content = "ctb,cbddlp,fdg";
-    document.head.appendChild(meta);
-    try {
-      const input = renderFiles();
-      expect(input.accept).toBe(".ctb,.cbddlp,.fdg");
-    } finally {
-      meta.remove();
-    }
-  });
-
-  it("offers every file when it was not told which kinds", () => {
-    // Opened through the dev server: the placeholder is still there.
-    const meta = document.createElement("meta");
-    meta.name = "supported-extensions";
-    meta.content = "{{ supported_extensions }}";
-    document.head.appendChild(meta);
-    try {
-      expect(renderFiles().accept).toBe("");
-    } finally {
-      meta.remove();
-    }
+  it("lets any file be picked: the server says which kinds it takes", () => {
+    // The kinds of file a printer takes are not kinds a phone knows: told
+    // to offer only those, some phones offer none.
+    expect(renderFiles().accept).toBe("");
   });
 
   it("says that the files could not be listed, and lets the reader try again", async () => {
@@ -569,5 +549,49 @@ describe("Files", () => {
     renderFiles();
     await screen.findByText("This folder is empty.");
     expect(screen.getByRole("region", { name: "Folder: /" })).not.toHaveFocus();
+  });
+
+  it("offers the way up when a folder cannot be listed", async () => {
+    // Removed elsewhere, say: without it there is no way out but to
+    // reload the page.
+    vi.mocked(api.listFiles).mockImplementation((path = ".") =>
+      path === "."
+        ? Promise.resolve({ directories: [{ dirname: "batch" }], files: [] })
+        : Promise.reject(new ApiError(404, "API error: 404")),
+    );
+    renderFiles();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open folder batch" }),
+    );
+    await screen.findByRole("alert");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Up to the folder above" }),
+    );
+
+    expect(
+      await screen.findByRole("button", { name: "Open folder batch" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says that the file is being finished once all of it is sent", async () => {
+    // The server still has it to check and store: "100%" for ten seconds
+    // looks like something stuck.
+    let report: (fraction: number) => void = () => {};
+    vi.spyOn(api, "uploadFile").mockImplementation(
+      (_file, _path, _options, onProgress) => {
+        report = onProgress!;
+        return new Promise<void>(() => {});
+      },
+    );
+    const input = renderFiles();
+    pick(input, new File(["x"], "dragon.ctb"));
+    await screen.findByRole("progressbar");
+
+    act(() => report(1));
+
+    expect(screen.getAllByText("Finishing dragon.ctb…").length).toBeGreaterThan(
+      0,
+    );
   });
 });

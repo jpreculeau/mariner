@@ -134,6 +134,15 @@ describe("sending a file", () => {
     expect(refusal.code).toBeUndefined();
   });
 
+  it("ends, and says so, on an answer it cannot make sense of", async () => {
+    // Left waiting, the page would show the upload for ever.
+    for (const status of [205, 0, 99, 600]) {
+      FakeXhr.answers = [{ status, body: "x" }];
+      const outcome = await api.uploadFile(file()).catch((error) => error);
+      expect(outcome, `status ${status}`).toBeInstanceOf(ApiError);
+    }
+  });
+
   it("says that Mariner could not be reached when the connection drops", async () => {
     FakeXhr.answers = [{ status: 0, fails: true }];
 

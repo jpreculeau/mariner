@@ -16,6 +16,15 @@ export function UploadStatus() {
   const done = sending ? Math.round(sending.fraction * 100) : 0;
   // Said a quarter at a time: at every step it would never stop talking.
   const quarter = sending ? Math.floor(sending.fraction * 4) * 25 : 0;
+  // All of it has gone: the server still has it to check and store.
+  const finishing = sending !== null && sending.fraction >= 1;
+  const said = (shown: number) =>
+    finishing
+      ? t("files.finishing", { file: sending.name })
+      : t("files.uploading", {
+          file: sending?.name ?? "",
+          percent: percent(shown),
+        });
 
   return (
     <>
@@ -27,10 +36,7 @@ export function UploadStatus() {
                 className="min-w-0 break-all text-sm leading-relaxed"
                 aria-hidden
               >
-                {t("files.uploading", {
-                  file: sending.name,
-                  percent: percent(done),
-                })}
+                {said(done)}
               </p>
               <Button
                 variant="outline"
@@ -45,14 +51,11 @@ export function UploadStatus() {
             <Progress
               value={done}
               aria-label={t("files.uploadProgress")}
-              aria-valuetext={percent(done)}
+              aria-valuetext={finishing ? said(done) : percent(done)}
               className="h-2 bg-muted"
             />
             <p role="status" className="sr-only">
-              {t("files.uploading", {
-                file: sending.name,
-                percent: percent(quarter),
-              })}
+              {said(quarter)}
             </p>
           </div>
         </div>

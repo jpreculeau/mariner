@@ -335,7 +335,10 @@ class ChiTuPrinter:
 
     def stop_printing(self) -> None:
         response = self._send_and_read(b"M33")
-        if "Error" in response or "Er" in response:
+        # Silence is not a yes: the print may well be going on. What the
+        # printer says when it does stop a print varies with its firmware,
+        # so anything said that is not an error is taken for one.
+        if not response.strip() or "Error" in response or "Er" in response:
             raise UnexpectedPrinterResponse(response)
 
     def stop_motors(self) -> None:

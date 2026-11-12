@@ -87,7 +87,7 @@ describe("the page's own files", () => {
   });
 
   it("carries its typefaces with it", () => {
-    const entry = read("src/main.tsx");
+    const entry = read("src/main.tsx") + read("src/index.css");
     for (const packaged of [
       "@fontsource-variable/atkinson-hyperlegible-next",
       "@fontsource-variable/atkinson-hyperlegible-mono",
@@ -95,6 +95,16 @@ describe("the page's own files", () => {
     ]) {
       expect(entry).toContain(packaged);
     }
+  });
+
+  it("carries each in the one form every browser that runs the page reads", () => {
+    // The older form of the same letters would be a quarter of the page's
+    // weight, for no reader.
+    const css = read("src/index.css");
+    expect(css).toMatch(/opendyslexic-latin-400-normal\.woff2/);
+    expect(css).toMatch(/opendyslexic-latin-700-normal\.woff2/);
+    expect(css + read("src/main.tsx")).not.toMatch(/\.woff["')]/);
+    expect(read("src/main.tsx")).not.toContain("@fontsource/opendyslexic");
   });
 
   it("ships the licence each typeface is given under", () => {

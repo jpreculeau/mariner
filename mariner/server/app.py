@@ -2,6 +2,7 @@ import errno
 import html
 import logging
 import os
+import re
 import stat
 import tempfile
 from pathlib import Path
@@ -34,7 +35,7 @@ def get_frontend_assets_path() -> str:
 # What the page may load and do, said to the browser with every answer. The
 # page's scripts come from Mariner alone, so that text which found its way
 # into the page, a file name say, cannot run as one. Styles are looser: the
-# interface sets some in place, and takes its fonts from Google's servers.
+# interface sets some in place. Its typefaces are its own files.
 CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'self'",
@@ -42,7 +43,7 @@ CONTENT_SECURITY_POLICY = "; ".join(
         # The page carries its styles and typefaces with it: nothing is
         # fetched from another site.
         "style-src 'self' 'unsafe-inline'",
-        "font-src 'self' data:",
+        "font-src 'self'",
         "img-src 'self' data: blob:",
         "connect-src 'self'",
         "object-src 'none'",
@@ -70,6 +71,13 @@ def add_static_headers(headers: Any, path: str, url: str) -> None:
     """The same headers on the files of the page, served aside from Flask."""
     for name, value in PROTECTIVE_HEADERS.items():
         headers[name] = value
+    if _NAMED_AFTER_ITS_CONTENT.match(url):
+        # Changed, it would have another name: no need to ask again.
+        headers["Cache-Control"] = "max-age=31536000, public, immutable"
+
+
+# What the build names its files: "/assets/index-Q-zpu2Rs.js".
+_NAMED_AFTER_ITS_CONTENT = re.compile(r"^/assets/.+-[A-Za-z0-9_-]{8}\.[a-z0-9]+$")
 
 
 frontend_dist_directory: str = get_frontend_assets_path()

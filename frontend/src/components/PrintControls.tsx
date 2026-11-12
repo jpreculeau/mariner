@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -39,15 +39,20 @@ export function PrintControls({
   // rather than switched off, which would drop the focus it has.
   const [busy, setBusy] = useState<Command | null>(null);
   const [asking, setAsking] = useState(false);
+  // Known at once, where `busy` is only once the page is drawn again: two
+  // presses can come before that.
+  const underWay = useRef(false);
 
   const run = async (command: Command, send: () => Promise<void>) => {
-    if (busy) return;
+    if (underWay.current) return;
+    underWay.current = true;
     setBusy(command);
     try {
       await send();
     } catch {
       // Whoever sends the command says what went wrong.
     } finally {
+      underWay.current = false;
       setBusy(null);
     }
   };
@@ -108,10 +113,14 @@ export function PrintControls({
           <DialogHeader>
             <DialogTitle>{t("print.cancel.title")}</DialogTitle>
             <DialogDescription>
-              {t("print.cancel.text", {
-                file: fileName,
-                progress: percent(progress, 1),
-              })}
+              {fileName
+                ? t("print.cancel.text", {
+                    file: fileName,
+                    progress: percent(progress, 1),
+                  })
+                : t("print.cancel.textNoFile", {
+                    progress: percent(progress, 1),
+                  })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter className="gap-2 sm:gap-0">

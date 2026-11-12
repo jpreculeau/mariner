@@ -7,6 +7,7 @@ import { AppNav } from "@/components/AppNav";
 import { UploadProvider } from "@/components/UploadProvider";
 import { UploadStatus } from "@/components/UploadStatus";
 import { LanguageProvider, useI18n } from "@/lib/i18n";
+import { shouldRetry } from "@/lib/api";
 import Index from "./pages/Index";
 import Files from "./pages/Files";
 import NotFound from "./pages/NotFound";
@@ -55,7 +56,12 @@ function Page() {
 const App = () => {
   // One per page shown, not one for the module: what it has fetched
   // belongs to that page.
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: shouldRetry } },
+      }),
+  );
   return (
     <QueryClientProvider client={queryClient}>
       <LanguageProvider>

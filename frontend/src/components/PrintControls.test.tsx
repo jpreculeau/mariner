@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { PrintControls } from "./PrintControls";
 
 function controls(
@@ -133,5 +139,27 @@ describe("PrintControls", () => {
     expect(waiting).toHaveFocus();
     done();
     await waitFor(() => expect(button("Pause")).toHaveFocus());
+  });
+
+  it("sends a command once when its button is pressed twice in one go", async () => {
+    // Before the page has had time to show that the first was taken.
+    const onPause = vi.fn(() => new Promise<void>(() => {}));
+    controls({ onPause });
+    const pause = button("Pause");
+
+    act(() => {
+      pause.click();
+      pause.click();
+    });
+
+    expect(onPause).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks about a print whose file it does not know without naming one", async () => {
+    controls({ fileName: "", progress: 12.3 });
+    fireEvent.click(button("Cancel print"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("This print is 12.3% done.");
   });
 });

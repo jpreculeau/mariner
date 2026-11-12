@@ -56,7 +56,14 @@ const DialogContent = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(
   (
-    { className, children, onOpenAutoFocus, onCloseAutoFocus, ...props },
+    {
+      className,
+      children,
+      onOpenAutoFocus,
+      onCloseAutoFocus,
+      onInteractOutside,
+      ...props
+    },
     ref,
   ) => {
     const { t } = useI18n();
@@ -76,6 +83,15 @@ const DialogContent = React.forwardRef<
             // For a dialog that opens by itself: before focus moves in.
             if (!noted) own.current = document.activeElement;
             onOpenAutoFocus?.(event);
+          }}
+          onInteractOutside={(event) => {
+            // A message shown above the dialog is not the page behind it:
+            // dismissing one leaves the dialog as it is.
+            const on = event.target;
+            if (on instanceof Element && on.closest("[data-sonner-toaster]")) {
+              event.preventDefault();
+            }
+            onInteractOutside?.(event);
           }}
           onCloseAutoFocus={(event) => {
             onCloseAutoFocus?.(event);

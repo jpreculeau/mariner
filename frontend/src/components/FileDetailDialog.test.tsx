@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { FileDetailDialog } from "./FileDetailDialog";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
@@ -401,5 +401,64 @@ describe("FileDetailDialog", () => {
         screen.getByRole("img", { name: "Preview of the print" }),
       ).toBeInTheDocument();
     });
+  });
+
+  describe("when the file is no longer there", () => {
+    const gone = new ApiError(
+      404,
+      "This file is no longer there.",
+      "file_gone",
+    );
+
+    it("says so, closes and has the list fetched again", async () => {
+      vi.spyOn(api, "deleteFile").mockRejectedValue(gone);
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      const onOpenChange = renderDialog();
+
+      await deleteConfirmed();
+
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(toast.error).toHaveBeenCalledWith("This file is no longer there.");
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["files"] });
+    });
+
+    it("does the same when a print of it is asked for", async () => {
+      vi.spyOn(api, "fileDetails").mockRejectedValue(gone);
+      vi.spyOn(api, "printerCommand").mockRejectedValue(gone);
+      const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+      const onOpenChange = vi.fn();
+      render(dialogFor(printable, onOpenChange));
+
+      fireEvent.click(screen.getByRole("button", { name: "Start print" }));
+
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(toast.error).toHaveBeenCalledWith("This file is no longer there.");
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["files"] });
+    });
+  });
+
+  it("goes to the dashboard once a print is started", async () => {
+    vi.spyOn(api, "fileDetails").mockReturnValue(new Promise(() => {}));
+    vi.spyOn(api, "printerCommand").mockResolvedValue();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/files"]}>
+          <FileDetailDialog
+            file={printable}
+            open={true}
+            onOpenChange={vi.fn()}
+          />
+          <Routes>
+            <Route path="/" element={<p>the dashboard</p>} />
+            <Route path="/files" element={<p>the files</p>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText("the files")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start print" }));
+
+    expect(await screen.findByText("the dashboard")).toBeInTheDocument();
   });
 });

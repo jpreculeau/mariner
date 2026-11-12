@@ -66,6 +66,8 @@ export const fr: Record<TextKey, string> = {
   "print.cancel.title": "Annuler cette impression ?",
   "print.cancel.text":
     "{file} est imprimé à {progress}. Une impression annulée ne peut pas être reprise : il faut la relancer depuis la première couche.",
+  "print.cancel.textNoFile":
+    "Cette impression est faite à {progress}. Une impression annulée ne peut pas être reprise\u00a0: il faut la relancer depuis la première couche.",
   "print.cancel.keep": "Ne pas annuler",
   "print.cancel.confirm": "Annuler l'impression",
   "print.paused": "Impression en pause",
@@ -78,6 +80,7 @@ export const fr: Record<TextKey, string> = {
   "files.newFolder": "Nouveau dossier",
   "files.upload": "Envoyer un fichier",
   "files.uploading": "Envoi de {file} : {percent}",
+  "files.finishing": "Fin de l'envoi de {file}…",
   "files.uploadProgress": "Avancement de l'envoi",
   "files.uploaded": "{file} envoyé",
   "files.uploadCancel": "Annuler l'envoi",
@@ -139,7 +142,11 @@ export const fr: Record<TextKey, string> = {
     "Les dossiers ne peuvent pas être imbriqués plus profondément.",
   "error.folder_exists": "Un dossier ou un fichier porte déjà ce nom.",
   "error.name_not_allowed":
-    "Un dossier ne peut pas porter ce nom\u00a0: évitez les barres obliques et les noms faits seulement de points, et choisissez un nom court.",
+    'Ce nom ne peut pas être utilisé. Évitez les apostrophes, les barres obliques et ces caractères\u00a0: \\\u00a0:\u00a0*\u00a0?\u00a0"\u00a0<\u00a0>\u00a0|\u00a0; ne le commencez ni ne le terminez par un point, et restez sous 255\u00a0caractères.',
+  "error.type_not_supported":
+    "Ce n'est pas un fichier que l'imprimante sait imprimer.",
+  "error.file_gone":
+    "Ce fichier n'est plus là\u00a0: il a été supprimé ou renommé depuis l'affichage de la liste.",
   "error.folder_not_created":
     "Le dossier n'a pas pu être créé\u00a0: son nom est peut-être trop long, ou le disque plein.",
   "error.printer_not_answering":

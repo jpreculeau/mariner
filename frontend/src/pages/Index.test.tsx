@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import Index from "./Index";
 import { api, ApiError, type PrintStatusResponse } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
-import { LanguageProvider } from "@/lib/i18n";
+import { LanguageProvider, useI18n } from "@/lib/i18n";
 
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -175,6 +181,46 @@ describe("Index", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByText("Printing")).toBeNull();
+  });
+
+  it("says how a command went in the language of the page as it is then", async () => {
+    // Changed while the printer was answering.
+    function Switch() {
+      const { setLang } = useI18n();
+      return <button onClick={() => setLang("fr")}>switch</button>;
+    }
+    let done: () => void = () => {};
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    vi.spyOn(api, "printerCommand").mockReturnValue(
+      new Promise<void>((resolve) => (done = resolve)),
+    );
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter>
+          <LanguageProvider>
+            <Switch />
+            <Index />
+          </LanguageProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    fireEvent.click(screen.getByRole("button", { name: "switch" }));
+
+    await act(async () => done());
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Impression en pause"),
+    );
+  });
+
+  it("asks the printer again where it is once a command was sent", async () => {
+    const status = vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    vi.spyOn(api, "printerCommand").mockResolvedValue();
+    renderIndex();
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+
+    await waitFor(() => expect(status.mock.calls.length).toBeGreaterThan(1));
   });
 
   it("is read in French by a French reader", async () => {

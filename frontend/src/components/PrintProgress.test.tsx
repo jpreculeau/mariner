@@ -62,4 +62,15 @@ describe("PrintProgress", () => {
     render(<PrintProgress job={mockJob} />);
     expect(screen.getByText("File being printed")).toBeInTheDocument();
   });
+
+  it("keeps its bar within its ends whatever figure it is given", () => {
+    // Out of them, the bar would say nothing at all of how far it is.
+    const { rerender } = render(
+      <PrintProgress job={{ ...mockJob, progress: 100.4 }} />,
+    );
+    const bar = screen.getByRole("progressbar");
+    expect(bar).toHaveAttribute("aria-valuenow", "100");
+    rerender(<PrintProgress job={{ ...mockJob, progress: -0.9 }} />);
+    expect(bar).toHaveAttribute("aria-valuenow", "0");
+  });
 });

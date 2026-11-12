@@ -189,12 +189,20 @@ function sendFile(
     request.onload = () => {
       // An answer without content cannot carry any: 204, 304.
       const empty = request.status === 204 || request.status === 304;
-      resolve(
-        new Response(empty ? null : request.responseText, {
-          status: request.status,
-          statusText: request.statusText,
-        }),
-      );
+      try {
+        resolve(
+          new Response(empty ? null : request.responseText, {
+            status: request.status,
+            statusText: request.statusText,
+          }),
+        );
+      } catch {
+        // An answer no page can be made of: said, rather than left to
+        // show the upload as under way for ever.
+        reject(
+          new ApiError(request.status, `Upload failed: ${request.status}`),
+        );
+      }
     };
     request.onerror = () => reject(unreachable());
     request.send(body);
@@ -312,6 +320,17 @@ export const api = {
     });
   },
 };
+
+/**
+ * Whether to ask again after a failure. Not when the server said no: it
+ * would say so again, and the reader would wait for it three times over.
+ */
+export function shouldRetry(failures: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+    return false;
+  }
+  return failures < 3;
+}
 
 export function mapPrinterState(state: string): PrinterStatus {
   switch (state) {

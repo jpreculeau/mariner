@@ -15,7 +15,7 @@ function serverCodes(): string[] {
   const patterns = [
     /"code":\s*"([a-z_]+)"/g, // in the body of an answer
     /"code":\s*"([a-z_]+)" if [^\n]+ else "([a-z_]+)"/g, // one of two
-    /_refuse_folder\(\s*"([a-z_]+)"/g, // a folder that cannot be made
+    /_refuse\(\s*"([a-z_]+)"/g, // a request the page is told why not
     /Refusal\(\s*"([a-z_]+)"/g, // a request turned away
     /Usage\.\w+: \(\s*"([a-z_]+)"/g, // a file that cannot change now
   ];

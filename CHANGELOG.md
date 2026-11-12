@@ -104,9 +104,14 @@ Web interface
 - Read the page in English or French: the browser's language at first, the reader's choice afterwards (palette button, "Language"). What the server refuses is said in the page's language too
 - Ask before cancelling a print, naming the file and how far it is, and before deleting a file; set the button that cancels apart from the one that pauses
 - Say how every action went: a command the printer did not take, a print that could not be started, a list of files that could not be fetched no longer pass in silence. Tell "Mariner cannot be reached" from "the printer does not answer", and say what to check for each
-- Show how far an upload is, offer only the kinds of file the printer takes, and say when the file is in
+- Show how far an upload is, say that it is being finished once all of it is sent, and say when the file is in. Any file can be picked: some phones offered none when told which kinds the printer takes, and the server says which it does
 - Send a command once however often its button is pressed, and say that it is under way
-- Say why a folder could not be made (`folder_exists`, `name_not_allowed`, `folder_not_created`)
+- Say why a folder could not be made (`folder_exists`, `name_not_allowed`, `folder_not_created`, `folder_too_deep`) and why a file was not taken or cannot be printed (`name_not_allowed`, `type_not_supported`, listing the kinds that are)
+- Say that a file is no longer there when it was removed since the list was shown (`file_gone`), close its dialog and fetch the list again; offer the way up from a folder that cannot be listed
+- Say that the printer did not answer when it sent nothing back to an order to stop, instead of taking the print for cancelled
+- Do not ask again, three times over, what the server has refused
+- Leave a dialog open when a message shown above it is dismissed
+- Let the browser keep the page's scripts, styles and typefaces for good (their names change with their content), and carry OpenDyslexic in one form instead of two
 - Call the two times of a print what they are: estimates
 - Make the page usable without seeing it: name every button and link at every width of screen, announce the state of the printer and what is loading, label the field of a new folder, give the page a main area, a link to skip to it, a title of its own in the browser's tab, and say which page and which choices are the current ones other than by colour
 - Make it readable: text, the red of errors and the Elegoo Mars theme are set apart from their ground (4.5:1), the edge of fields can be seen (3:1), no text is smaller than 12 px, and dialogs and menus are dark like the page they open on

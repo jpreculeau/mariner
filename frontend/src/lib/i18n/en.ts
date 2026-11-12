@@ -69,6 +69,8 @@ export const en = {
   "print.cancel.title": "Cancel this print?",
   "print.cancel.text":
     "{file} is {progress} done. A cancelled print cannot be resumed: it has to be started again from the first layer.",
+  "print.cancel.textNoFile":
+    "This print is {progress} done. A cancelled print cannot be resumed: it has to be started again from the first layer.",
   "print.cancel.keep": "Do not cancel",
   "print.cancel.confirm": "Cancel the print",
   "print.paused": "Print paused",
@@ -82,6 +84,7 @@ export const en = {
   "files.newFolder": "New folder",
   "files.upload": "Upload a file",
   "files.uploading": "Uploading {file}: {percent}",
+  "files.finishing": "Finishing {file}…",
   "files.uploadProgress": "Upload progress",
   "files.uploaded": "{file} uploaded",
   "files.uploadCancel": "Cancel the upload",
@@ -145,7 +148,10 @@ export const en = {
   "error.folder_too_deep": "Folders cannot be nested any deeper than this.",
   "error.folder_exists": "A folder or a file of this name is already there.",
   "error.name_not_allowed":
-    "A folder cannot have this name: leave out slashes and names made of dots only, and keep it short.",
+    'This name cannot be used. Leave out apostrophes, slashes and the characters \\ : * ? " < > |, do not start or end it with a dot, and keep it under 255 characters.',
+  "error.type_not_supported": "This is not a file the printer can print.",
+  "error.file_gone":
+    "This file is no longer there: it was removed or renamed since the list was shown.",
   "error.folder_not_created":
     "The folder could not be made: its name may be too long, or the drive full.",
   "error.printer_not_answering":

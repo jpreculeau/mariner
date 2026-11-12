@@ -4,8 +4,6 @@ import App from "./App.tsx";
 // text is shown in it.
 import "@fontsource-variable/atkinson-hyperlegible-next/wght.css";
 import "@fontsource-variable/atkinson-hyperlegible-mono/wght.css";
-import "@fontsource/opendyslexic/400.css";
-import "@fontsource/opendyslexic/700.css";
 import "./index.css";
 import { applyFont, getStoredFontId } from "@/lib/fonts";
 

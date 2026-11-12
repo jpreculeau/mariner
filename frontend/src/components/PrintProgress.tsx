@@ -17,7 +17,9 @@ interface PrintProgressProps {
 
 export function PrintProgress({ job }: PrintProgressProps) {
   const { t, duration, percent: asPercent } = useI18n();
-  const percent = asPercent(job.progress, 1);
+  // Within the bar's ends, whatever the printer says.
+  const progress = Math.min(100, Math.max(0, job.progress));
+  const percent = asPercent(progress, 1);
 
   return (
     <div className="space-y-6">
@@ -29,7 +31,7 @@ export function PrintProgress({ job }: PrintProgressProps) {
       </div>
 
       <Progress
-        value={job.progress}
+        value={progress}
         aria-label={t("print.progress")}
         aria-valuetext={percent}
         className="h-3 bg-muted"

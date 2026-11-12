@@ -71,4 +71,32 @@ describe("Dialog", () => {
       await screen.findByRole("button", { name: "Close" }),
     ).toBeInTheDocument();
   });
+
+  it("stays open when a message shown above it is dismissed", async () => {
+    // A message says why something was refused: closing it must not also
+    // close what the reader was doing.
+    render(
+      <>
+        <Opened />
+        <ol data-sonner-toaster>
+          <li>
+            <button>dismiss</button>
+          </li>
+        </ol>
+        <button>elsewhere</button>
+      </>,
+    );
+    fireEvent.click(screen.getByText("open"));
+    await screen.findByRole("dialog");
+    // The dialog starts listening a moment after it is shown.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    fireEvent.pointerDown(screen.getByText("dismiss"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("dialog")).toBeInTheDocument();
+
+    // Anywhere else still closes it.
+    fireEvent.pointerDown(screen.getByText("elsewhere"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
 });

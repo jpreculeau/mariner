@@ -40,6 +40,11 @@ export function FileDetailDialog({
   // What is being done to the file: one thing at a time, each asked once
   // however often its button is pressed.
   const [busy, setBusy] = useState<"print" | "delete" | null>(null);
+  // Known at once, where `busy` is only once the page is drawn again.
+  const underWay = useRef(false);
+  // The words of the moment, for an answer that comes seconds later.
+  const words = useRef({ t, lang });
+  words.current = { t, lang };
 
   // The file on screen right now. An answer can come seconds after the
   // request, when the user has closed the dialog or opened another file.
@@ -60,19 +65,34 @@ export function FileDetailDialog({
 
   if (!file) return null;
 
+  // Say why something was refused. True when the file is no longer there:
+  // nothing more can be done with it, and the list that showed it is old.
+  const refused = (failure: unknown, path: string): boolean => {
+    toast.error(errorText(failure, words.current.t, words.current.lang));
+    if (!(failure instanceof ApiError) || failure.code !== "file_gone") {
+      return false;
+    }
+    queryClient.invalidateQueries({ queryKey: ["files"] });
+    if (shownPathNow.current === path) onOpenChange(false);
+    return true;
+  };
+
   const handlePrint = async () => {
-    if (busy) return;
+    if (underWay.current) return;
+    underWay.current = true;
     setBusy("print");
     try {
       await api.printerCommand("start_print", file.path);
     } catch (failure) {
-      // The dialog stays open: the reader can read why and try again.
-      toast.error(errorText(failure, t, lang));
+      // Unless the file is gone the dialog stays open: the reader can
+      // read why and try again.
+      refused(failure, file.path);
       return;
     } finally {
+      underWay.current = false;
       setBusy(null);
     }
-    toast.success(t("print.started"));
+    toast.success(words.current.t("print.started"));
     onOpenChange(false);
     navigate("/");
   };
@@ -82,7 +102,8 @@ export function FileDetailDialog({
     name: string,
     ignoreUnreachablePrinter: boolean,
   ) => {
-    if (busy) return;
+    if (underWay.current) return;
+    underWay.current = true;
     setPrinterOffReason(null);
     setBusy("delete");
     try {
@@ -95,17 +116,21 @@ export function FileDetailDialog({
         shownPathNow.current === path
       ) {
         // The printer sent nothing back: the user decides.
-        setPrinterOffReason(errorText(err, t, lang));
+        setPrinterOffReason(
+          errorText(err, words.current.t, words.current.lang),
+        );
         return;
       }
-      // The server says why, e.g. the file is being printed. The dialog
-      // stays open so the user can read it and try again.
-      toast.error(errorText(err, t, lang));
+      // The server says why, e.g. the file is being printed. Unless the
+      // file is gone the dialog stays open so the user can read it and
+      // try again.
+      refused(err, path);
       return;
     } finally {
+      underWay.current = false;
       setBusy(null);
     }
-    toast.success(t("file.deleted", { file: name }));
+    toast.success(words.current.t("file.deleted", { file: name }));
     queryClient.invalidateQueries({ queryKey: ["files"] });
     if (shownPathNow.current === path) {
       onOpenChange(false);

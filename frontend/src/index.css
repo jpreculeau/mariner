@@ -2,6 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+/* OpenDyslexic, in the one form every browser that runs the page reads:
+   its package also lists an older form of the same letters, which would
+   be carried for no reader. */
+@font-face {
+  font-family: "OpenDyslexic";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("@fontsource/opendyslexic/files/opendyslexic-latin-400-normal.woff2")
+    format("woff2");
+}
+@font-face {
+  font-family: "OpenDyslexic";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("@fontsource/opendyslexic/files/opendyslexic-latin-700-normal.woff2")
+    format("woff2");
+}
+
 @layer base {
   :root {
     --background: 220 16% 96%;

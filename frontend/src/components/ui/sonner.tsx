@@ -8,7 +8,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme="dark"
-      className="toaster group"
+      // Above a dialog, which takes the page out of reach of the pointer:
+      // what a toast says must still be dismissable.
+      className="toaster group pointer-events-auto"
       containerAriaLabel={t("toasts.region")}
       toastOptions={{
         classNames: {

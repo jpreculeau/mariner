@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { api, ApiError, mapPrinterState, formatFileSize } from "./api";
+import {
+  api,
+  ApiError,
+  mapPrinterState,
+  formatFileSize,
+  shouldRetry,
+} from "./api";
 
 describe("mapPrinterState", () => {
   it("maps PRINTING to printing", () => {
@@ -340,5 +346,22 @@ describe("api client", () => {
       "/api/delete_file?filename=model.ctb&ignore_unreachable_printer=1",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+});
+
+describe("asking again after a failure", () => {
+  it("does when nothing answered, a few times", () => {
+    const down = new ApiError(0, "Mariner cannot be reached.", "network");
+    expect(shouldRetry(0, down)).toBe(true);
+    expect(shouldRetry(1, down)).toBe(true);
+    expect(shouldRetry(3, down)).toBe(false);
+    // And on an error of the server's own.
+    expect(shouldRetry(0, new ApiError(500, "x"))).toBe(true);
+  });
+
+  it("does not when the server said no: it would say so again", () => {
+    for (const status of [400, 403, 404, 409]) {
+      expect(shouldRetry(0, new ApiError(status, "x"))).toBe(false);
+    }
   });
 });

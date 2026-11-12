@@ -550,9 +550,9 @@ def upload_file() -> Union[str, Response]:
     # around it.
     filename = safe_filename(none_throws(file.filename))
     if filename is None:
-        abort(400)
+        _refuse_name()
     if get_file_extension(filename) not in get_supported_extensions():
-        abort(400)
+        _refuse_type()
 
     folder = request.args.get("path", ".")
     if not os.path.isdir(_resolve_or_400(folder)):
@@ -598,6 +598,9 @@ def delete_file() -> Union[str, Response]:
     path = resolve_entry_in_files_directory(filename) if filename else None
     if path is None:
         abort(400)
+    if not os.path.lexists(path):
+        # Removed since the list was shown.
+        _refuse_gone()
     if not (os.path.isfile(path) or os.path.islink(path)):
         abort(400)
     try:
@@ -607,33 +610,60 @@ def delete_file() -> Union[str, Response]:
         _abort_file_in_use(error, replacing_it=False)
     except FileNotFoundError:
         # Someone else removed it in the meantime.
-        abort(404)
+        _refuse_gone()
     return jsonify({"success": True})
 
 
-def _refuse_folder(code: str, title: str, description: str) -> NoReturn:
-    """Answer 400 to a folder that cannot be made, saying why."""
+def _refuse(code: str, title: str, description: str, status: int = 400) -> NoReturn:
+    """Refuse a request, saying why in words the page can show.
+
+    With a code by which the page says it in its reader's language.
+    """
     body = {"code": code, "title": title, "description": description}
-    abort(make_response(jsonify(body), 400))
+    abort(make_response(jsonify(body), status))
+
+
+def _refuse_name() -> NoReturn:
+    _refuse(
+        "name_not_allowed",
+        "Name Not Allowed",
+        "This name cannot be used. Leave out apostrophes, slashes and the "
+        'characters \\ : * ? " < > |, do not start or end it with a dot, '
+        "and keep it under 255 characters.",
+    )
+
+
+def _refuse_type() -> NoReturn:
+    kinds = ", ".join(sorted(get_supported_extensions()))
+    _refuse(
+        "type_not_supported",
+        "Kind Of File Not Taken",
+        f"This is not a file the printer can print. Mariner takes: {kinds}.",
+    )
+
+
+def _refuse_gone() -> NoReturn:
+    _refuse(
+        "file_gone",
+        "File No Longer There",
+        "This file is no longer there: it was removed or renamed since the "
+        "list was shown.",
+        404,
+    )
 
 
 @api.route("/create_directory", methods=["POST"])
 def create_directory() -> Union[str, Response]:
     safe_name = safe_filename(request.args.get("name", type=str))
     if safe_name is None:
-        _refuse_folder(
-            "name_not_allowed",
-            "Name Not Allowed",
-            "A folder cannot have this name. Leave out slashes and names "
-            "made of dots only, and do not make it too long.",
-        )
+        _refuse_name()
 
     parent = _resolve_or_400(request.args.get("path", "."))
     if not os.path.isdir(parent):
         abort(400)
     new_path = parent / safe_name
     if folder_depth(new_path) > MAX_FOLDER_DEPTH:
-        _refuse_folder(
+        _refuse(
             "folder_too_deep",
             "Too Many Folders Deep",
             f"Folders can be {MAX_FOLDER_DEPTH} deep at most. Make this one "
@@ -643,7 +673,7 @@ def create_directory() -> Union[str, Response]:
     try:
         os.mkdir(new_path)
     except FileExistsError:
-        _refuse_folder(
+        _refuse(
             "folder_exists",
             "Name Already Taken",
             "A folder or a file of this name is already there. Give the "
@@ -652,7 +682,7 @@ def create_directory() -> Union[str, Response]:
     except OSError as error:
         # A path longer than the system takes, a drive that is full.
         logger.warning("Could not make the folder %r: %s", safe_name, error)
-        _refuse_folder(
+        _refuse(
             "folder_not_created",
             "Folder Not Made",
             "The folder could not be made: its name may be too long, or "
@@ -718,7 +748,11 @@ def printer_command(command: str) -> Union[str, Response]:
         try:
             start_print(filename)
         except NotPrintable as error:
-            abort(404 if error.reason == NotPrintable.MISSING else 400)
+            if error.reason == NotPrintable.MISSING:
+                _refuse_gone()
+            if error.reason == NotPrintable.UNSUPPORTED:
+                _refuse_type()
+            _refuse_name()
         except PrintAlreadyRunning as error:
             just_started = isinstance(error, PrintJustStarted)
             body = {

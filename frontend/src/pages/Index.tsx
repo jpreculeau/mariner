@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PrintProgress } from "@/components/PrintProgress";
 import { PrintControls } from "@/components/PrintControls";
@@ -17,6 +18,9 @@ export default function Index() {
   const queryClient = useQueryClient();
   const { t, lang } = useI18n();
   usePageTitle(t("title.dashboard"));
+  // The words of the moment, for an answer that comes seconds later.
+  const words = useRef({ t, lang });
+  words.current = { t, lang };
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["printStatus"],
@@ -31,9 +35,9 @@ export default function Index() {
   const send = async (command: PrintCommand, done: TextKey) => {
     try {
       await api.printerCommand(command);
-      toast.success(t(done));
+      toast.success(words.current.t(done));
     } catch (failure) {
-      toast.error(errorText(failure, t, lang));
+      toast.error(errorText(failure, words.current.t, words.current.lang));
       throw failure;
     } finally {
       queryClient.invalidateQueries({ queryKey: ["printStatus"] });

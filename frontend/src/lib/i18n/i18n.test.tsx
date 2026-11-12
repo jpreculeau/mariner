@@ -56,6 +56,14 @@ describe("languages", () => {
     expect(detectLanguage()).toBe("en");
     browserSpeaks();
     expect(detectLanguage()).toBe("en");
+    // However the browser writes it.
+    browserSpeaks("FR-fr");
+    expect(detectLanguage()).toBe("fr");
+    // And in one that does not say.
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(
+      undefined as unknown as string[],
+    );
+    expect(detectLanguage()).toBe("en");
   });
 
   it("keeps to the language the reader chose", () => {
