@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from pyexpect import expect
 
-from mariner.server import early
+from mariner.server import early, refusals
 
 
 class EarlyRefusalTest(TestCase):
@@ -214,10 +214,10 @@ class EarlyRefusalTest(TestCase):
     def test_what_the_web_server_refuses_itself_is_left_to_it(self) -> None:
         # Larger than any file may be: not a matter of room.
         usage = shutil.disk_usage("/")
-        early._room_refusals_said.clear()
+        refusals.said.clear()
         with patch.object(
             early.shutil, "disk_usage", return_value=usage._replace(free=0)
-        ), self.assertNoLogs("mariner.server.early", level="WARNING"):
+        ), self.assertNoLogs("mariner.server.refusals", level="WARNING"):
             status, _, _ = self._exchange(
                 "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
                 "Content-Length: 2000000000\n"
@@ -226,10 +226,10 @@ class EarlyRefusalTest(TestCase):
 
     def test_refusals_for_want_of_room_do_not_fill_the_log(self) -> None:
         usage = shutil.disk_usage("/")
-        early._room_refusals_said.clear()
+        refusals.said.clear()
         with patch.object(
             early.shutil, "disk_usage", return_value=usage._replace(free=0)
-        ), self.assertLogs("mariner.server.early", level="WARNING") as logs:
+        ), self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
             for _ in range(20):
                 status, _, _ = self._exchange(
                     "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
@@ -237,6 +237,49 @@ class EarlyRefusalTest(TestCase):
                 )
                 expect(status).to_equal(507)
         expect(len(logs.records)).to_equal(1)
+
+    def test_one_too_large_for_anything_is_not_told_to_go_on_either(self) -> None:
+        # The web server refuses it itself, but only once it has answered
+        # the question.
+        for extra in ("", "Origin: http://evil.example\n"):
+            status, _, _ = self._exchange(
+                "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                f"{extra}Expect: 100-continue\nContent-Length: 2000000000\n"
+            )
+            expect(status).to_equal(413)
+
+    def test_a_refusal_is_written_to_the_log_with_who_was_refused(self) -> None:
+        refusals.said.clear()
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            self._exchange(
+                "POST /api/upload_file HTTP/1.1\nHost: evil.example\n"
+                "Content-Length: 500000000\n"
+            )
+        message = logs.records[0].getMessage()
+        expect("127.0.0.1" in message).to_equal(True)
+        expect("host_not_allowed" in message).to_equal(True)
+
+    def test_a_drive_that_cannot_be_measured_does_not_refuse(self) -> None:
+        with patch.object(early.shutil, "disk_usage", side_effect=OSError("gone")):
+            status, _, _ = self._exchange(
+                "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                "Content-Length: 600000\n",
+                b"x" * 600000,
+                wait_for_body=True,
+            )
+        expect(status).to_equal(200)
+
+    def test_every_address_listened_on_refuses_early(self) -> None:
+        server = early.create_guarded_server(
+            lambda environ, start_response: [], listen="127.0.0.1:0 127.0.0.1:0"
+        )
+        self.addCleanup(server.close)
+        listening = [
+            one for one in server.map.values() if hasattr(one, "channel_class")
+        ]
+        expect(len(listening)).to_equal(2)
+        for one in listening:
+            expect(one.channel_class).to_equal(early._Channel)
 
     def test_a_page_may_be_asked_for_from_another_site(self) -> None:
         status, _, _ = self._exchange(

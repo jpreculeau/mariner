@@ -49,6 +49,15 @@ spool_directory = "/srv/spool"
             ["https://printer.example.org"]
         )
 
+    def test_one_address_of_mariner_s_page_can_be_given_alone(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents='[http]\nallowed_origins = "https://printer.example.org"\n',
+        )
+        expect(config.get_http_allowed_origins()).to_equal(
+            ["https://printer.example.org"]
+        )
+
     def test_slicer_interfaces_can_be_switched_off(self) -> None:
         expect(config.get_uvtools_enabled()).to_equal(True)
         expect(config.get_sdcp_enabled()).to_equal(True)

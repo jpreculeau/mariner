@@ -983,6 +983,7 @@ class MarinerServerTest(TestCase):
         )
         expect(response.status_code).to_equal(403)
         expect(response.mimetype).to_equal("text/html")
+        expect(response.headers["Cache-Control"]).to_equal("no-store")
         page = response.get_data(as_text=True)
         expect("allowed_hosts" in page).to_equal(True)
         expect("pi.tailnet.ts.net" in page).to_equal(True)
@@ -1007,10 +1008,51 @@ class MarinerServerTest(TestCase):
         )
         expect(response.mimetype).to_equal("application/json")
 
-    def test_the_cookie_is_not_sent_along_with_requests_from_other_sites(self) -> None:
+    def _page_with_its_token(self) -> str:
+        """Ask for the page as a browser does; the token it carries."""
+        from flask_wtf.csrf import generate_csrf
+
+        with patch(
+            "mariner.server.render_template",
+            side_effect=lambda *a, **k: generate_csrf(),
+        ):
+            self.page_response = self.client.get("/")
+        return self.page_response.get_data(as_text=True)
+
+    def test_the_cookie_comes_along_when_a_link_to_mariner_is_followed(self) -> None:
+        # Kept from requests another site has the browser send, but not
+        # from a link followed from one: without it the page would be
+        # given a new token, and every tab already open would hold an old
+        # one that is refused.
+        self._page_with_its_token()
+        cookie = self.page_response.headers["Set-Cookie"]
+        expect("SameSite=Lax" in cookie).to_equal(True)
+        expect("HttpOnly" in cookie).to_equal(True)
+
+    def test_a_page_left_open_can_still_stop_a_print_hours_later(self) -> None:
+        import time
+
         application = self.client.application
-        expect(application.config["SESSION_COOKIE_SAMESITE"]).to_equal("Strict")
-        expect(application.config["SESSION_COOKIE_HTTPONLY"]).to_equal(True)
+        with patch.dict(application.config, {"WTF_CSRF_ENABLED": True}):
+            token = self._page_with_its_token()
+            later = time.time() + 30 * 3600
+            with patch("time.time", return_value=later):
+                response = self.client.post(
+                    "/api/printer/command/cancel_print",
+                    headers={"X-CSRFToken": token},
+                )
+            expect(response.status_code != 400).to_equal(True)
+            # Without the token it is refused as before.
+            response = self.client.post("/api/printer/command/cancel_print")
+            expect(response.status_code).to_equal(400)
+
+    def test_a_refusal_is_written_to_the_log(self) -> None:
+        from mariner.server import refusals
+
+        refusals.said.clear()
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            self.client.get("/uvtools/files", headers={"User-Agent": "Mozilla/5.0"})
+        expect("browser_not_served" in logs.records[0].getMessage()).to_equal(True)
 
     def test_the_page_is_not_kept_by_browsers_or_proxies(self) -> None:
         # It carries the token its requests are checked against.

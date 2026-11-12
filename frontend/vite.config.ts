@@ -8,7 +8,9 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: "http://localhost:5050",
-        changeOrigin: true,
+        // The backend is asked under the name the browser used: it
+        // refuses the requests of a page served under another.
+        changeOrigin: false,
       },
     },
   },

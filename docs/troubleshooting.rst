@@ -242,6 +242,10 @@ from a link and do not know the name, leave the setting alone.
 
 .. rubric:: A request is refused as coming from another site (error 403, ``cross_site_request``)
 
+For this refusal and the two around it, Mariner's log says who was refused
+and what the request said of itself (``journalctl -u mariner3d``), once a
+minute at most for the same client and reason.
+
 When a browser says which page a request comes from, Mariner serves only
 its own pages' requests. A bookmark, a typed address and a link to Mariner
 all work. Slicers and scripts say nothing of a page and are served. A
@@ -303,7 +307,7 @@ web server itself, as plain text.
 
 While it arrives, a file is kept in ``/var/tmp``, on the drive of the
 computer Mariner runs on, which must have room for it: twice its size for a
-file sent from the web page, its size for one sent by a slicer, and 64 MB
+file sent from the web page, its size for one sent through UVtools, and 64 MB
 that Mariner leaves free for the system. A file that says how large it is,
 as the web page and slicers do, is refused before Mariner takes any of it
 in when that room is not there. Room is measured when a file starts to

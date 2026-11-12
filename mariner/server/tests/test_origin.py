@@ -93,6 +93,9 @@ class CrossSiteTest(TestCase):
                 "https://printer.lan",
                 "http://evil.example",
                 "http://sub.printer.lan",
+                # The same name and port, the other scheme.
+                "http://printer.lan:8443",
+                "https://printer.lan:80",
             ):
                 refusal = _refusal({"Origin": other}, "127.0.0.1:5050")
                 expect(none_throws(refusal).code).to_equal("cross_site_request")

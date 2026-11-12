@@ -15,7 +15,9 @@ files are sent to take a body larger than the web server keeps in memory.
 A body that does not say how large it is cannot be measured against the
 room: it is taken in until the drive is full, and the connection then
 closed without an answer.
-The application makes them again: this reader belongs to one web server,
+
+The application makes the checks of name and site again, and alone for a
+request without a body: this reader belongs to one web server,
 and the application must not depend on being run by it.
 """
 
@@ -23,7 +25,6 @@ import json
 import logging
 import shutil
 import tempfile
-import time
 from typing import Any, Dict, Optional
 
 from waitress import create_server
@@ -32,23 +33,15 @@ from waitress.parser import HTTPRequestParser
 from waitress.server import BaseWSGIServer
 from waitress.utilities import Error
 
-from mariner.server import origin
+from mariner.server import origin, refusals
 
 logger: logging.Logger = logging.getLogger(__name__)
-
-# Below this the web server keeps a body in memory, not in a file.
-_KEPT_IN_MEMORY_BYTES = 512 * 1024
 
 # Left free where uploads wait: that drive is the system's own, and
 # filled to the last byte more than uploads would stop working.
 KEPT_FREE_BYTES = 64 * 1024 * 1024
 # Where a file is sent: the only requests with a body of any size.
 UPLOAD_PREFIXES = ("/api/upload_file", "/uvtools/upload/")
-
-# When a refusal for want of room was last written to the log, and how
-# many have gone unwritten since.
-_room_refusals_said: Dict[str, float] = {}
-_SECONDS_BETWEEN_REFUSALS_SAID = 60.0
 
 _REASONS = {
     403: "Forbidden",
@@ -80,9 +73,14 @@ def copies_kept(content_type: str) -> int:
     return 2 if kind == "multipart/form-data" else 1
 
 
-def room_refusal(length: int, content_type: str) -> Optional[Dict[str, str]]:
-    """Why a body of *length* bytes cannot wait where uploads do; else None."""
-    if length <= _KEPT_IN_MEMORY_BYTES:
+def room_refusal(
+    length: int, content_type: str, kept_in_memory: int
+) -> Optional[Dict[str, str]]:
+    """Why a body of *length* bytes cannot wait where uploads do; else None.
+
+    Up to *kept_in_memory* bytes the web server does not put it in a file.
+    """
+    if length <= kept_in_memory:
         return None
     try:
         free = shutil.disk_usage(tempfile.gettempdir()).free
@@ -90,23 +88,7 @@ def room_refusal(length: int, content_type: str) -> Optional[Dict[str, str]]:
         return None
     if length * copies_kept(content_type) <= free - KEPT_FREE_BYTES:
         return None
-    return no_room_body(free)
-
-
-def no_room_body(free: Optional[int]) -> Dict[str, str]:
-    """The answer to an upload there is no room for.
-
-    *free* is the room there was before any of it arrived, when that is
-    known: once some of it is stored the figure would mislead.
-    """
-    room = "" if free is None else f": {free // (1024 * 1024)} MB are free there"
-    return {
-        "code": "upload_not_stored",
-        "title": "File Not Stored",
-        "description": "There is not enough room where Mariner keeps a "
-        f"file while it arrives{room}. A file sent from the web page needs "
-        "twice its size there, one sent by a slicer its size.",
-    }
+    return refusals.no_room_body(free)
 
 
 def _too_large_body() -> Dict[str, str]:
@@ -118,24 +100,10 @@ def _too_large_body() -> Dict[str, str]:
     }
 
 
-def _say_no_room(length: int) -> None:
-    """Write a refusal for want of room to the log, but not every one."""
-    now = time.monotonic()
-    last = _room_refusals_said.get("last")
-    unwritten = _room_refusals_said.get("unwritten", 0)
-    if last is not None and now - last < _SECONDS_BETWEEN_REFUSALS_SAID:
-        _room_refusals_said["unwritten"] = unwritten + 1
-        return
-    _room_refusals_said.update(last=now, unwritten=0)
-    logger.warning(
-        "Refused an upload of %d bytes: no room for it to wait in "
-        "(%d more like it not written here since the last)",
-        length,
-        unwritten,
-    )
-
-
 class _Parser(HTTPRequestParser):
+    # Whose request this is, for the log. Set by the channel.
+    peer: Optional[str] = None
+
     def parse_header(self, header_plus: bytes) -> None:
         super().parse_header(header_plus)
         if (
@@ -159,16 +127,21 @@ class _Parser(HTTPRequestParser):
         # at that address would read it.
         refusal = origin.body_refusal(self.path, headers)
         if refusal is not None:
+            refusals.log("Web", self.peer, refusal.code, headers)
             self._refuse(403, refusal.body())
             return
+        # Below this the web server keeps a body in memory, not in a file.
+        kept_in_memory = self.adj.inbuf_overflow
         if not self.path.startswith(UPLOAD_PREFIXES) and (
-            self.chunked or self.content_length > _KEPT_IN_MEMORY_BYTES
+            self.chunked or self.content_length > kept_in_memory
         ):
             self._refuse(413, _too_large_body())
             return
-        no_room = room_refusal(self.content_length, headers.get("Content-Type", ""))
+        no_room = room_refusal(
+            self.content_length, headers.get("Content-Type", ""), kept_in_memory
+        )
         if no_room is not None:
-            _say_no_room(self.content_length)
+            refusals.log_no_room(self.content_length)
             self._refuse(507, no_room)
 
     def _refuse(self, code: int, body: Dict[str, str]) -> None:
@@ -177,16 +150,22 @@ class _Parser(HTTPRequestParser):
 
 
 class _Channel(HTTPChannel):
-    parser_class = _Parser
+    def parser_class(self, adj: Any) -> _Parser:
+        """A reader of headers that knows whose request it reads."""
+        parser = _Parser(adj)
+        address = self.addr
+        parser.peer = str(address[0]) if isinstance(address, tuple) else None
+        return parser
 
     def send_continue(self) -> None:
         """Tell a client that asked first to send its body, if it is wanted.
 
         Told to go on, a client sends all of a body nobody will read, and
-        may never see the refusal that follows.
+        may never see the refusal that follows. Refused here, or by the
+        web server itself as larger than anything may be.
         """
         request = self.request
-        if request is not None and isinstance(request.error, _Refused):
+        if request is not None and request.error is not None:
             return
         super().send_continue()
 

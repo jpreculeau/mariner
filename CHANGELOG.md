@@ -68,6 +68,8 @@ Requests from the web
 - Close a connection that has said nothing for 30 seconds, and name at start the entries of `allowed_hosts` and `allowed_origins` that can match nothing
 - Add `[http] allowed_origins` for a relay in front of Mariner that asks it under another name or port than the browser used. A name in `allowed_hosts` no longer makes pages served under it Mariner's own
 - Keep the page and the cookie that goes with its token out of caches and out of requests other sites have the browser send
+- Write refused requests to the log, with who sent them and what they said, once a minute at most for the same client and reason
+- Keep the page's token good for as long as the page is open: after an hour, a page left open on a long print could no longer pause or stop it until reloaded
 
 Reading files
 

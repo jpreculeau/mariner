@@ -13,7 +13,7 @@ from flask_wtf.csrf import CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
-from mariner.server import early, origin
+from mariner.server import origin, refusals
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -155,14 +155,16 @@ app.config.from_mapping(
 def refuse_other_sites() -> Optional[Tuple[Response, int]]:
     """Turn away what a page from elsewhere has a browser send.
 
-    See ``mariner.server.origin``. The web server Mariner runs under has
-    already made this check as the request came in, before its body (see
-    ``mariner.server.early``); it is made again here so that it holds
-    under any other.
+    See ``mariner.server.origin``. For a request that has a body, the
+    web server Mariner runs under has already made this check before
+    taking the body in (see ``mariner.server.early``); it is made again
+    here so that it holds under any other. For a request without one this
+    is the only check.
     """
     refusal = origin.request_refusal(request.path, request.headers)
     if refusal is None:
         return None
+    refusals.log("Web", request.remote_addr, refusal.code, request.headers)
     if refusal.code == "host_not_allowed" and _wants_a_page():
         return _name_not_allowed_page(), 403
     return jsonify(refusal.body()), 403
@@ -229,7 +231,7 @@ def _no_room(what: str) -> Tuple[Response, int]:
     and nothing is answered.
     """
     logger.warning("No room to keep an upload in while it arrives: %s", what)
-    return jsonify(early.no_room_body(None)), 507
+    return jsonify(refusals.no_room_body(None)), 507
 
 
 @app.after_request
@@ -285,8 +287,15 @@ app.config.from_mapping(
         # caused it.
         "DEBUG": False,
         # The cookie that goes with the token is of no use to a request
-        # another site has the browser send.
-        "SESSION_COOKIE_SAMESITE": "Strict",
+        # another site has the browser send. It must still come along
+        # when a link to Mariner is followed from another site ("Lax", not
+        # "Strict"): the page would otherwise be given a new token, and
+        # the tabs already open would hold one that is refused.
+        "SESSION_COOKIE_SAMESITE": "Lax",
+        # The token lasts as long as the browser keeps the page's cookie.
+        # Left to itself it is refused after an hour: a page left open on
+        # a long print could then not pause or stop it.
+        "WTF_CSRF_TIME_LIMIT": None,
         # Backend class name, not the legacy "filesystem" factory alias. The
         # lowercase aliases are deprecated in flask-caching 2.x and gone in
         # 3.x, where they fail at import with ImportStringError.
