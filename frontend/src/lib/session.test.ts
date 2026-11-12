@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api, ApiError, onSignedOut } from "./api";
+import { api, ApiError, forgetPageKey, onSignedOut } from "./api";
+import { FakeXhr, useFakeXhr } from "@/test/fakeXhr";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), {
@@ -166,5 +167,92 @@ describe("settings", () => {
     });
     expect(calls[2][0]).toBe("/api/restart");
     expect(calls[2][1]?.method).toBe("POST");
+  });
+});
+
+describe("the key of the page", () => {
+  // The cookie of the session is sent by the browser to every program on
+  // the same computer. The key is kept where only this page can read.
+  const realFetch = globalThis.fetch;
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    localStorage.clear();
+  });
+
+  const signedIn = () =>
+    json(200, { success: true, csrf_token: "fresh", page_key: "the-key" });
+  const sent = (call: number) =>
+    vi.mocked(fetch).mock.calls[call][1]?.headers as Record<string, string>;
+
+  it("is sent with every request once signing in has given it", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(signedIn())
+      .mockImplementation(() => Promise.resolve(json(200, {})));
+    await api.signIn("secret words");
+    await api.printStatus();
+    await api.deleteFile("a.ctb");
+    expect(sent(1)["X-Mariner-Key"]).toBe("the-key");
+    expect(sent(2)["X-Mariner-Key"]).toBe("the-key");
+  });
+
+  it("is kept for the next time the page is opened", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(signedIn());
+    await api.signIn("secret words");
+    expect(localStorage.getItem("mariner-page-key")).toBe("the-key");
+  });
+
+  it("is the one that was kept, in a page opened anew", async () => {
+    localStorage.setItem("mariner-page-key", "kept-key");
+    forgetPageKey({ keptToo: false });
+    globalThis.fetch = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(json(200, {})));
+    await api.printStatus();
+    expect(sent(0)["X-Mariner-Key"]).toBe("kept-key");
+  });
+
+  it("is forgotten on signing out", async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(signedIn())
+      .mockImplementation(() =>
+        Promise.resolve(json(200, { success: true, csrf_token: "next" })),
+      );
+    await api.signIn("secret words");
+    await api.signOut();
+    await api.printStatus();
+    expect(localStorage.getItem("mariner-page-key")).toBeNull();
+    expect(sent(2)["X-Mariner-Key"]).toBeUndefined();
+  });
+
+  it("goes with a file that is sent", async () => {
+    useFakeXhr();
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(signedIn())
+      .mockImplementation(() => Promise.resolve(json(200, {})));
+    await api.signIn("secret words");
+    await api.uploadFile(new File(["x"], "a.ctb"));
+    expect(FakeXhr.requests[0].headers["X-Mariner-Key"]).toBe("the-key");
+    vi.unstubAllGlobals();
+  });
+
+  describe("what Mariner says of where the page stands", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = realFetch;
+    });
+
+    it.each([{}, null, [], { signed_in: "yes", password_set: true }, "in"])(
+      "is not taken when it is not what it should be: %j",
+      async (answer) => {
+        // Taken as it comes, it could open the page.
+        globalThis.fetch = vi.fn().mockResolvedValue(json(200, answer));
+        const outcome = await api.authState().catch((error) => error);
+        expect(outcome).toBeInstanceOf(ApiError);
+      },
+    );
   });
 });

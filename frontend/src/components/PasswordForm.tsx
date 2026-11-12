@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { PasswordField } from "@/components/PasswordField";
 import { useAccess } from "@/lib/access";
 import { errorText } from "@/lib/errors";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
 
 /**
@@ -13,16 +13,18 @@ import { usePageTitle } from "@/hooks/use-page-title";
  */
 export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const choosing = mode === "choose";
-  const { choosePassword, signIn } = useAccess();
+  const { choosePassword, signIn, signedOutUnasked } = useAccess();
   const { t, lang } = useI18n();
   usePageTitle(t(choosing ? "title.choosePassword" : "title.signIn"));
 
   const [password, setPassword] = useState("");
   const [repeated, setRepeated] = useState("");
   // Why it was not taken, and which field it is about.
+  // Kept as it came, and worded when drawn: in the language the page is
+  // in by then.
   const [refused, setRefused] = useState<{
     on: "password" | "repeat";
-    why: string;
+    why: TextKey | { failure: unknown };
   } | null>(null);
   const [busy, setBusy] = useState(false);
   // Known at once, where `busy` is only once the page is drawn again.
@@ -30,7 +32,10 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const passwordField = useRef<HTMLInputElement>(null);
   const repeatField = useRef<HTMLInputElement>(null);
 
-  const refuse = (on: "password" | "repeat", why: string) => {
+  const refuse = (
+    on: "password" | "repeat",
+    why: TextKey | { failure: unknown },
+  ) => {
     setRefused({ on, why });
     // Back to the field, to type it again.
     (on === "repeat" ? repeatField : passwordField).current?.focus();
@@ -38,9 +43,14 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (underWay.current || !password) return;
+    if (underWay.current) return;
+    if (!password) {
+      // Said, rather than a button that seems to do nothing.
+      refuse("password", "error.password_missing");
+      return;
+    }
     if (choosing && password !== repeated) {
-      refuse("repeat", t("choose.mismatch"));
+      refuse("repeat", "choose.mismatch");
       return;
     }
     underWay.current = true;
@@ -49,7 +59,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     try {
       await (choosing ? choosePassword(password) : signIn(password));
     } catch (failure) {
-      refuse("password", errorText(failure, t, lang));
+      refuse("password", { failure });
     } finally {
       underWay.current = false;
       setBusy(false);
@@ -57,7 +67,11 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   };
 
   const error = (on: "password" | "repeat") =>
-    refused?.on === on ? refused.why : null;
+    refused?.on !== on
+      ? null
+      : typeof refused.why === "string"
+        ? t(refused.why)
+        : errorText(refused.why.failure, t, lang);
 
   return (
     <form
@@ -72,6 +86,11 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         {choosing && (
           <p className="mt-2 text-base leading-relaxed text-muted-foreground">
             {t("choose.intro")}
+          </p>
+        )}
+        {!choosing && signedOutUnasked && (
+          <p className="mt-2 text-base leading-relaxed text-muted-foreground">
+            {t("signIn.signedOut")}
           </p>
         )}
       </div>
@@ -105,7 +124,14 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         />
       )}
 
-      <Button type="submit" size="lg" className="gap-2" aria-disabled={busy}>
+      {/* Its words wrap: on one line they pushed the page wider than a
+          phone's screen. */}
+      <Button
+        type="submit"
+        size="lg"
+        className="h-auto min-h-11 gap-2 whitespace-normal px-4"
+        aria-disabled={busy}
+      >
         {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
         {choosing
           ? t(busy ? "choose.submitting" : "choose.submit")

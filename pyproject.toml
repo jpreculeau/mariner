@@ -11,7 +11,7 @@ authors = [
 ]
 
 [tool.poetry.scripts]
-mariner = 'mariner.server:main'
+mariner = 'mariner.cli:main'
 
 [tool.poetry.dependencies]
 aiohttp = "^3.9"

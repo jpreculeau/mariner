@@ -24,6 +24,7 @@ const shown: SettingsResponse = {
 const access: AccessState = {
   access: "in",
   retry: vi.fn(),
+  signedOutUnasked: false,
   choosePassword: vi.fn(),
   signIn: vi.fn(),
   signOut: vi.fn().mockResolvedValue(undefined),
@@ -112,7 +113,16 @@ describe("Settings", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(
       "This change takes effect when Mariner is started again.",
     );
-    fireEvent.click(screen.getByRole("button", { name: "Restart Mariner" }));
+    // Said with "Saved" too, where it is sure to be heard and seen: the
+    // notice is at the top of the page, and the switch is one of safety.
+    expect(toast.success).toHaveBeenCalledWith(
+      "Saved. This change takes effect when Mariner is started again.",
+    );
+    const restartButton = screen.getByRole("button", {
+      name: "Restart Mariner",
+    });
+    expect(restartButton).toHaveClass("whitespace-normal");
+    fireEvent.click(restartButton);
     await waitFor(() => expect(restart).toHaveBeenCalledTimes(1));
     expect(toast.success).toHaveBeenCalledWith(
       "Mariner is restarting. This page comes back by itself.",
@@ -256,4 +266,56 @@ describe("Settings", () => {
       await screen.findByLabelText("Name shown for the printer"),
     ).toBeInTheDocument();
   });
+
+  it("says that a password is missing, rather than do nothing", async () => {
+    const change = vi.spyOn(api, "changePassword").mockResolvedValue();
+    renderSettings();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Change the password" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No password was given.",
+    );
+    expect(document.activeElement).toBe(
+      screen.getByLabelText("Current password"),
+    );
+    expect(change).not.toHaveBeenCalled();
+  });
+
+  it("shows where the keyboard is on a box that is ticked", async () => {
+    renderSettings();
+    const box = await screen.findByRole("checkbox", { name: "UVtools" });
+    // A ring against the box's own fill cannot be seen: it stands off.
+    expect(box.className).toContain("focus-visible:ring-offset-2");
+  });
+
+  it("takes the notice away once Mariner is back from its restart", async () => {
+    // Left there, it asked for another restart, and each one cuts a
+    // file that is being sent.
+    const fetched = vi.spyOn(api, "settings").mockResolvedValue({
+      ...shown,
+      restart_needed: true,
+    });
+    vi.spyOn(api, "restart").mockResolvedValue();
+    renderSettings();
+    const button = await screen.findByRole("button", {
+      name: "Restart Mariner",
+    });
+    // Gone for a moment, then back with nothing left to apply.
+    fetched
+      .mockRejectedValueOnce(
+        new ApiError(0, "Mariner cannot be reached.", "network"),
+      )
+      .mockResolvedValue({ ...shown, restart_needed: false });
+
+    fireEvent.click(button);
+
+    expect(
+      await screen.findByRole("button", { name: "Restarting…" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    await waitFor(
+      () => expect(screen.queryByText(/takes effect when Mariner/)).toBeNull(),
+      { timeout: 6000 },
+    );
+  }, 10000);
 });

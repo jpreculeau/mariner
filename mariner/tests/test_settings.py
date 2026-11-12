@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 from pathlib import Path
 from unittest import TestCase
@@ -26,7 +27,7 @@ class _WithState(TestCase):
         no_file = patch("mariner.config._get_config", return_value={})
         no_file.start()
         self.addCleanup(no_file.stop)
-        self.addCleanup(config.overrides.clear)
+        self.addCleanup(lambda: setattr(config, "overrides", {}))
         config.overrides.clear()
 
 
@@ -74,6 +75,27 @@ class SettingsTest(_WithState):
         expect(config.get_uvtools_enabled()).to_equal(False)
         expect(settings.current()["assume_printer_off"]).to_equal(True)
 
+    def test_a_setting_is_never_seen_gone_while_they_are_read(self) -> None:
+        # By another request, served at the same time.
+        import threading
+
+        settings.change({"assume_printer_off": True})
+        seen_off = []
+        stop = threading.Event()
+
+        def watch() -> None:
+            while not stop.is_set():
+                if not config.get_assume_printer_off():
+                    seen_off.append(1)
+
+        watcher = threading.Thread(target=watch)
+        watcher.start()
+        for _ in range(300):
+            settings.current()
+        stop.set()
+        watcher.join()
+        expect(seen_off).to_equal([])
+
     def test_only_what_is_sent_is_changed(self) -> None:
         settings.change({"printer_display_name": "Workshop"})
         settings.change({"sdcp_enabled": False})
@@ -119,6 +141,25 @@ class SettingsTest(_WithState):
                 settings.apply()
             expect(config.get_uvtools_enabled()).to_equal(True)
 
+    def test_slicers_are_off_when_what_was_set_cannot_be_read(self) -> None:
+        # They may have been switched off there: on by default, they
+        # would come back on by a file changing hands.
+        import os
+
+        settings.change({"printer_display_name": "Workshop"})
+        os.chmod(self.root / "s" / "settings.json", 0o644)
+        with self.assertLogs("mariner.server", level="WARNING"):
+            settings.apply()
+        expect(config.get_uvtools_enabled()).to_equal(False)
+        expect(config.get_sdcp_enabled()).to_equal(False)
+
+    def test_slicers_are_off_when_nothing_kept_can_be_reached(self) -> None:
+        with patch.object(state, "is_makeshift", return_value=True):
+            with self.assertLogs("mariner.server.settings", level="WARNING"):
+                settings.apply()
+        expect(config.get_uvtools_enabled()).to_equal(False)
+        expect(config.get_sdcp_enabled()).to_equal(False)
+
     def test_what_it_holds_that_is_good_is_kept_when_some_is_not(self) -> None:
         state.write(
             "settings.json",
@@ -137,7 +178,7 @@ class SettingsApiTest(_WithState):
         patcher = patch.dict(self.application.config, {"WTF_CSRF_ENABLED": False})
         patcher.start()
         self.addCleanup(patcher.stop)
-        signed_in = patch("mariner.server.auth.signed_in_with", return_value=True)
+        signed_in = patch("mariner.server.auth.let_in", return_value=True)
         signed_in.start()
         self.addCleanup(signed_in.stop)
         self.client = self.application.test_client()
@@ -209,10 +250,19 @@ class RestartTest(_WithState):
         patcher = patch.dict(application.app.config, {"WTF_CSRF_ENABLED": False})
         patcher.start()
         self.addCleanup(patcher.stop)
-        signed_in = patch("mariner.server.auth.signed_in_with", return_value=True)
+        signed_in = patch("mariner.server.auth.let_in", return_value=True)
         signed_in.start()
         self.addCleanup(signed_in.stop)
         self.client = application.app.test_client()
+
+    def test_stopping_asks_the_process_to_end(self) -> None:
+        import signal
+
+        with patch("threading.Timer") as timer, patch("os.kill") as kill:
+            settings._stop_soon()
+            timer.call_args[0][1]()
+        timer.return_value.start.assert_called_once_with()
+        kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
 
     def test_under_a_service_it_stops_to_be_started_again(self) -> None:
         with patch.dict("os.environ", {"INVOCATION_ID": "abc"}), patch.object(

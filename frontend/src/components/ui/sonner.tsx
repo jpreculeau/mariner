@@ -139,6 +139,10 @@ function pageLanguage(): Lang {
  * stays, and it cannot be asked for again.
  */
 const toast = {
+  /** Close every message: what they said no longer holds. */
+  dismiss: () => {
+    sonner.dismiss();
+  },
   success: (message: string) => sonner.success(message),
   error: (message: string) =>
     sonner.error(message, {

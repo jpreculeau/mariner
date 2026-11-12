@@ -1,3 +1,5 @@
+import { forget, remember, remembered } from "@/lib/storage";
+
 export type PrinterStatus = "idle" | "printing" | "paused" | "offline";
 
 export interface PrintStatusResponse {
@@ -41,6 +43,8 @@ export interface FileDetailsResponse {
 export interface AuthState {
   password_set: boolean;
   signed_in: boolean;
+  /** Mariner cannot reach what it keeps: its page stays shut. */
+  unavailable?: boolean;
 }
 
 /** The settings that can be changed from the page. */
@@ -57,6 +61,30 @@ export interface SettingsResponse {
   restart_needed: boolean;
   /** Whether Mariner can be restarted from the page. */
   can_restart: boolean;
+}
+
+// The key of the page: given by signing in, sent with every request.
+// The session's cookie is not enough to be let in, because the browser
+// sends it to the page of every program on the same computer; the key
+// is kept where only pages of this very address can read.
+const PAGE_KEY = "mariner-page-key";
+let pageKey: string | null | undefined;
+
+function getPageKey(): string | null {
+  // Looked for once: where nothing is kept, it lasts as long as the page.
+  if (pageKey === undefined) pageKey = remembered(PAGE_KEY);
+  return pageKey;
+}
+
+function setPageKey(key: string) {
+  pageKey = key;
+  remember(PAGE_KEY, key);
+}
+
+/** Forget the key of the page: on signing out. */
+export function forgetPageKey({ keptToo = true } = {}) {
+  pageKey = keptToo ? null : undefined;
+  if (keptToo) forget(PAGE_KEY);
 }
 
 // The token asked for again since the page was loaded, if any.
@@ -113,6 +141,8 @@ async function fetchWithToken(
     };
     const csrf = getCsrfToken();
     if (csrf) headers["X-CSRFToken"] = csrf;
+    const key = getPageKey();
+    if (key) headers["X-Mariner-Key"] = key;
     return fetch(url, { ...options, headers });
   };
   const res = await send();
@@ -234,6 +264,8 @@ function sendFile(
     request.open("POST", url);
     const csrf = getCsrfToken();
     if (csrf) request.setRequestHeader("X-CSRFToken", csrf);
+    const key = getPageKey();
+    if (key) request.setRequestHeader("X-Mariner-Key", key);
     request.upload.onprogress = (event) => {
       if (onProgress && event.lengthComputable && event.total > 0) {
         // Short of all of it, which only `onload` below can tell.
@@ -348,15 +380,29 @@ function post<T>(url: string, body?: unknown): Promise<T> {
  * the one the page held went with the session it had.
  */
 async function signedInBy(url: string, body?: unknown): Promise<void> {
-  const answer = await post<{ csrf_token?: string }>(url, body);
+  const answer = await post<{ csrf_token?: string; page_key?: string }>(
+    url,
+    body,
+  );
   if (typeof answer?.csrf_token === "string") {
     renewedCsrfToken = answer.csrf_token;
   }
+  if (typeof answer?.page_key === "string") setPageKey(answer.page_key);
 }
 
 export const api = {
   async authState(): Promise<AuthState> {
-    return apiFetch<AuthState>("/api/auth/state");
+    const answer = await apiFetch<AuthState>("/api/auth/state");
+    // Only what it should be: taken as it comes, an answer from
+    // something else than Mariner could open the page.
+    if (
+      !answer ||
+      typeof answer.password_set !== "boolean" ||
+      typeof answer.signed_in !== "boolean"
+    ) {
+      throw new ApiError(502, "Mariner's answer could not be read.");
+    }
+    return answer;
   },
 
   /** Choose the password, when there is none yet. Signs in. */
@@ -371,6 +417,7 @@ export const api = {
   async signOut(): Promise<void> {
     // The answer carries a token for what comes next: signing in again.
     await signedInBy("/api/auth/logout", undefined);
+    forgetPageKey();
   },
 
   /** Replace the password. Every other page is signed out. */

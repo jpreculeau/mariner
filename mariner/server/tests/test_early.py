@@ -121,7 +121,8 @@ class EarlyRefusalTest(TestCase):
         expect(self.called).to_equal([])
 
     def _asking_for_the_password(self) -> None:
-        def unless_signed_in(path: str, cookies: str) -> Any:
+        def unless_signed_in(method: str, path: str, headers: Dict[str, str]) -> Any:
+            cookies = headers.get("Cookie", "")
             if path.startswith("/api/") and "signed-in" not in cookies:
                 return {"code": "login_required"}
             return None

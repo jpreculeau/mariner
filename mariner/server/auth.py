@@ -18,53 +18,25 @@ import stat
 import secrets
 import threading
 import time
-from typing import Any, Dict, Mapping, Optional, TextIO, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from flask import Blueprint, Response, jsonify, make_response, request, session
 from flask_wtf.csrf import generate_csrf
 
-from mariner import config
-from mariner.server import state
+from mariner import config, passwords
+from mariner.passwords import PasswordNotAllowed  # noqa: F401
+from mariner.server import sessions, state
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-MIN_LENGTH = 8
-# Hashing is paid for by Mariner, for whoever sends one.
-MAX_LENGTH = 1024
 
-# The cost advised for a password typed by hand: about a tenth of a second
-# and 16 MB on a small board. Kept with each hash, so that it can be
-# raised later without locking out whoever set a password before.
-_SCRYPT_N = 2**14
-_SCRYPT_R = 8
-_SCRYPT_P = 1
-_HASH_BYTES = 32
-
-_KEPT_AS = "password"
-
-
-class PasswordNotAllowed(ValueError):
-    def __init__(self, code: str, description: str) -> None:
-        super().__init__(description)
-        self.code = code
-        self.description = description
-
-
-def _scrypt(password: str, salt: bytes, n: int, r: int, p: int) -> bytes:
-    return hashlib.scrypt(
-        password.encode("utf-8"),
-        salt=salt,
-        n=n,
-        r=r,
-        p=p,
-        dklen=_HASH_BYTES,
-        maxmem=256 * n * r,
-    )
+class PasswordAlreadySet(Exception):
+    pass
 
 
 def _record() -> Optional[Dict[str, Any]]:
     """What is kept of the password; None if nothing usable is."""
-    kept = state.read(_KEPT_AS)
+    kept = state.read(passwords.KEPT_AS)
     if kept is None:
         return None
     try:
@@ -80,7 +52,7 @@ def has_password() -> bool:
     A record that cannot be read still counts: whoever comes first must
     not be offered to choose a new one because a file was damaged.
     """
-    return state.exists(_KEPT_AS)
+    return state.exists(passwords.KEPT_AS)
 
 
 def generation() -> Optional[str]:
@@ -93,62 +65,33 @@ def generation() -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def set_password(password: str) -> None:
-    if len(password) < MIN_LENGTH:
-        raise PasswordNotAllowed(
-            "password_too_short",
-            f"A password has at least {MIN_LENGTH} characters.",
-        )
-    if len(password) > MAX_LENGTH:
-        raise PasswordNotAllowed(
-            "password_too_long",
-            f"A password has at most {MAX_LENGTH} characters.",
-        )
-    salt = secrets.token_bytes(16)
-    record = {
-        "scheme": "scrypt",
-        "n": _SCRYPT_N,
-        "r": _SCRYPT_R,
-        "p": _SCRYPT_P,
-        "salt": salt.hex(),
-        "hash": _scrypt(password, salt, _SCRYPT_N, _SCRYPT_R, _SCRYPT_P).hex(),
-        "generation": secrets.token_hex(8),
-    }
-    state.write(_KEPT_AS, json.dumps(record).encode("ascii"))
+# One at a time: of several set at once, one is kept, and each is told
+# whether it was its own.
+_password_lock = threading.Lock()
+
+
+def set_password(password: str, only_if_none: bool = False) -> str:
+    """Keep *password*, and return what tells it from every other.
+
+    With *only_if_none*, PasswordAlreadySet when there is one already:
+    looked at and written in one go, so that of several chosen at once
+    only one is.
+    """
+    record = passwords.record_for(password)
+    with _password_lock:
+        if only_if_none and has_password():
+            raise PasswordAlreadySet()
+        state.write(passwords.KEPT_AS, json.dumps(record).encode("ascii"))
+    return str(record["generation"])
 
 
 def clear_password() -> None:
     """Leave no password: the next visit is asked to choose one."""
-    state.remove(_KEPT_AS)
-
-
-def _cost(record: Mapping[str, Any]) -> Optional[Tuple[int, int, int]]:
-    n, r, p = record.get("n"), record.get("r"), record.get("p")
-    for value in (n, r, p):
-        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
-            return None
-    # Within what Mariner would ever have written: a record is not
-    # trusted to say how much memory to take.
-    if n & (n - 1) or n > 2**17 or r > 16 or p > 4:  # type: ignore[operator]
-        return None
-    return n, r, p  # type: ignore[return-value]
+    state.remove(passwords.KEPT_AS)
 
 
 def check_password(candidate: str) -> bool:
-    record = _record()
-    if record is None or record.get("scheme") != "scrypt":
-        return False
-    if not candidate or len(candidate) > MAX_LENGTH:
-        return False
-    cost = _cost(record)
-    try:
-        salt = bytes.fromhex(str(record.get("salt", "")))
-        expected = bytes.fromhex(str(record.get("hash", "")))
-    except ValueError:
-        return False
-    if cost is None or not salt or len(expected) != _HASH_BYTES:
-        return False
-    return hmac.compare_digest(_scrypt(candidate, salt, *cost), expected)
+    return passwords.matches(_record(), candidate)
 
 
 # -- a password that is lost ------------------------------------------------
@@ -200,7 +143,12 @@ def clear_if_asked_on_the_boot_drive() -> bool:
                     asked,
                 )
             except OSError:
-                state.write(_SEEN_AS, looks)
+                try:
+                    state.write(_SEEN_AS, looks)
+                except OSError as error:
+                    # It will be obeyed again at the next start; that
+                    # must not keep Mariner from starting now.
+                    logger.warning("Could not note %r as obeyed: %s", asked, error)
                 logger.warning(
                     "The password was cleared, as %r asked. The file could "
                     "not be removed: it is passed over from now on, until "
@@ -211,76 +159,48 @@ def clear_if_asked_on_the_boot_drive() -> bool:
     return False
 
 
-def clear_from_the_command_line(out: TextIO) -> int:
-    """``mariner reset-password``: clear the password of the service.
-
-    In the folder the configuration names, whoever runs the command: an
-    administrator's own folder is not the service's.
-    """
-    kept = os.path.join(config.get_state_directory(), _KEPT_AS)
-    try:
-        os.unlink(kept)
-    except FileNotFoundError:
-        print("No password was set. Open Mariner's page to choose one.", file=out)
-        return 0
-    except OSError as error:
-        print(
-            f"The password could not be cleared ({error}). Run this command "
-            "with sudo.",
-            file=out,
-        )
-        return 1
-    print(
-        "The password was cleared. Open Mariner's page to choose a new one: "
-        "until then, whoever opens it first can.",
-        file=out,
-    )
-    return 0
-
-
 # -- attempts --------------------------------------------------------------
 
 # Counted for all comers together: there is one password, and one person
 # who knows it. Counted by address, someone trying passwords would only
-# have to change address.
+# have to change address. A browser that signed in before has a count of
+# its own, so that the attempts of others do not keep the owner out.
 _FREE_ATTEMPTS = 3
 _LONGEST_WAIT_SECS = 30
 _attempts_lock = threading.Lock()
-_failures = 0
-_last_failure_at = 0.0
+# For each count (others, known): wrong ones so far, and when the last
+# was looked at.
+_attempts: Dict[bool, Tuple[int, float]] = {}
 
 
 def forget_attempts() -> None:
-    global _failures, _last_failure_at
     with _attempts_lock:
-        _failures = 0
-        _last_failure_at = 0.0
+        _attempts.clear()
 
 
-def note_failure(now: Optional[float] = None) -> None:
-    global _failures, _last_failure_at
-    with _attempts_lock:
-        _failures += 1
-        _last_failure_at = time.monotonic() if now is None else now
+def claim_attempt(known: bool, now: Optional[float] = None) -> int:
+    """Seconds to wait before a password is looked at; 0 to look at it now.
 
-
-def note_success() -> None:
-    forget_attempts()
-
-
-def wait_before_next_attempt(now: Optional[float] = None) -> int:
-    """Seconds before another password is looked at; 0 if one is now.
-
-    Nothing after a few wrong ones, then twice as long after each, up to
-    half a minute: never so long that the owner is kept out for good by
-    someone else's attempts.
+    Nothing for a few, then twice as long after each wrong one, up to
+    half a minute. An attempt that is let through is counted as wrong at
+    once, until ``note_success`` says otherwise: of several sent together,
+    one is looked at. One that is turned away is not counted.
     """
+    moment = time.monotonic() if now is None else now
     with _attempts_lock:
-        if _failures < _FREE_ATTEMPTS:
-            return 0
-        wait = min(_LONGEST_WAIT_SECS, 2 ** (_failures - _FREE_ATTEMPTS))
-        left = _last_failure_at + wait - (time.monotonic() if now is None else now)
-        return max(0, math.ceil(left))
+        failures, last = _attempts.get(known, (0, 0.0))
+        if failures >= _FREE_ATTEMPTS:
+            wait = min(_LONGEST_WAIT_SECS, 2 ** (failures - _FREE_ATTEMPTS))
+            left = math.ceil(last + wait - moment)
+            if left > 0:
+                return left
+        _attempts[known] = (failures + 1, moment)
+        return 0
+
+
+def note_success(known: bool) -> None:
+    with _attempts_lock:
+        _attempts.pop(known, None)
 
 
 # -- who is signed in ------------------------------------------------------
@@ -288,22 +208,142 @@ def wait_before_next_attempt(now: Optional[float] = None) -> int:
 _SIGNED_IN_AS = "auth"
 
 
+# Each session that signs in has a number of its own. Signing out keeps
+# it, so that the cookie of that session is of no use from then on:
+# copied beforehand, or put back by an answer that was on its way.
+_SESSION_AS = "id"
+_SIGNED_OUT_AS = "signed-out.json"
+# More than anyone signs out of in the month a session lasts.
+_MOST_SIGNED_OUT = 200
+_signed_out_lock = threading.Lock()
+_signed_out: Optional[Dict[str, float]] = None
+
+
+def forget_signed_out() -> None:
+    """Read again what was kept. For tests."""
+    global _signed_out
+    with _signed_out_lock:
+        _signed_out = None
+
+
+def _signed_out_sessions() -> Dict[str, float]:
+    """The sessions signed out of, each with when it would have ended."""
+    global _signed_out
+    if _signed_out is None:
+        found: Dict[str, float] = {}
+        try:
+            kept = json.loads(state.read(_SIGNED_OUT_AS) or b"{}")
+            if isinstance(kept, dict):
+                found = {
+                    str(number): float(until)
+                    for number, until in kept.items()
+                    if isinstance(until, (int, float))
+                }
+        except ValueError:
+            pass
+        _signed_out = found
+    return _signed_out
+
+
+def _note_signed_out(number: str) -> None:
+    now = time.time()
+    with _signed_out_lock:
+        sessions_out = _signed_out_sessions()
+        sessions_out[number] = now + _SESSION_DAYS * 86400
+        # Those that would have ended by now need no keeping, nor the
+        # oldest beyond what anyone signs out of.
+        lasting = sorted(
+            ((until, one) for one, until in sessions_out.items() if until > now),
+            reverse=True,
+        )[:_MOST_SIGNED_OUT]
+        sessions_out.clear()
+        sessions_out.update({one: until for until, one in lasting})
+        try:
+            state.write(_SIGNED_OUT_AS, json.dumps(sessions_out).encode("ascii"))
+        except OSError as error:
+            # Kept in memory all the same, until Mariner restarts.
+            logger.warning("Could not keep what was signed out of: %s", error)
+
+
+_SESSION_DAYS = 30
+
+
 def signed_in_with(held: Mapping[str, Any]) -> bool:
     """Whether a session holding *held* is signed in under the password
-    in place."""
+    in place, and was not signed out of."""
     current = generation()
-    return current is not None and held.get(_SIGNED_IN_AS) == current
+    if current is None or held.get(_SIGNED_IN_AS) != current:
+        return False
+    number = held.get(_SESSION_AS)
+    if not isinstance(number, str):
+        return False
+    with _signed_out_lock:
+        return number not in _signed_out_sessions()
+
+
+# The session's cookie is not enough. Cookies go by the name of the host
+# and not by its port: the browser sends Mariner's to the page of any
+# other program on the same computer, which could send it back as its
+# own. So signing in also gives the page a key, which it keeps where only
+# pages of this very address can read, and sends with each request; the
+# session holds its hash.
+KEY_HEADER = "X-Mariner-Key"
+_KEY_AS = "key"
+# Asked for by the browser itself, for a picture in the page: it sends no
+# key. Looking only.
+_WITHOUT_KEY = (("GET", "/api/file_preview"),)
+
+
+def _hash_of(key: str) -> str:
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def let_in(held: Mapping[str, Any], key: str) -> bool:
+    """Whether a session holding *held*, sent with *key*, is signed in."""
+    if not signed_in_with(held):
+        return False
+    expected = held.get(_KEY_AS)
+    return isinstance(expected, str) and hmac.compare_digest(_hash_of(key), expected)
 
 
 def is_signed_in() -> bool:
-    return signed_in_with(session)
+    return let_in(session, request.headers.get(KEY_HEADER, ""))
 
 
-def _sign_in() -> None:
+# Kept through signing out: this browser signed in before.
+_KNOWN_AS = "known"
+
+
+def _is_known() -> bool:
+    return session.get(_KNOWN_AS) is True
+
+
+def _sign_in(under: str) -> Response:
+    """Sign this browser in *under* the password of that number.
+
+    The answer carries the key of the page, and a token for the new
+    session: the one the page holds went with the session it had.
+    """
     # A new session: nothing a page held before signing in comes along.
     session.clear()
-    session[_SIGNED_IN_AS] = generation()
+    key = secrets.token_urlsafe(32)
+    session[_SIGNED_IN_AS] = under
+    session[_SESSION_AS] = secrets.token_hex(8)
+    session[_KEY_AS] = _hash_of(key)
+    session[_KNOWN_AS] = True
     session.permanent = True
+    return jsonify({"success": True, "csrf_token": generate_csrf(), "page_key": key})
+
+
+def _unavailable() -> Dict[str, str]:
+    return {
+        "code": "state_unavailable",
+        "title": "Password Out Of Reach",
+        "description": "Mariner cannot use the folder it keeps its password "
+        f"in ({config.get_state_directory()}), so its page stays shut. On the "
+        "computer it runs on, give that folder to the account Mariner runs "
+        "under and make sure it can be written, then restart Mariner.",
+    }
 
 
 # Reached without being signed in: they are what signs in.
@@ -311,8 +351,11 @@ _OPEN_PATHS = ("/api/csrf_token",)
 _OPEN_PREFIXES = ("/api/auth/",)
 
 
-def refusal(path: str, held: Mapping[str, Any]) -> Optional[Dict[str, str]]:
-    """Why a request for *path* is not answered to who holds *held*.
+def refusal(
+    path: str, held: Mapping[str, Any], key: str = "", method: str = "GET"
+) -> Optional[Dict[str, str]]:
+    """Why a request for *path* is not answered to who holds *held* and
+    sent *key*.
 
     None when it is: not one of the page's own addresses, one that signs
     in, or a session that is signed in.
@@ -321,7 +364,11 @@ def refusal(path: str, held: Mapping[str, Any]) -> Optional[Dict[str, str]]:
         return None
     if path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES):
         return None
-    if signed_in_with(held):
+    if state.is_makeshift():
+        return _unavailable()
+    if let_in(held, key):
+        return None
+    if (method, path) in _WITHOUT_KEY and signed_in_with(held):
         return None
     if not has_password():
         return {
@@ -335,6 +382,11 @@ def refusal(path: str, held: Mapping[str, Any]) -> Optional[Dict[str, str]]:
         "title": "Sign In First",
         "description": "Sign in with Mariner's password first.",
     }
+
+
+def status_of(refused: Mapping[str, str]) -> int:
+    """The status a refusal is answered with."""
+    return 503 if refused.get("code") == "state_unavailable" else 401
 
 
 # -- addresses -------------------------------------------------------------
@@ -367,69 +419,98 @@ def _not_a_password() -> Response:
     )
 
 
-def _signed_in_answer() -> Response:
-    # With a token for the new session: the one the page holds went with
-    # the session it had.
-    return jsonify({"success": True, "csrf_token": generate_csrf()})
-
-
 @auth_api.route("/state", methods=["GET"])
 def auth_state() -> Response:
-    return jsonify({"password_set": has_password(), "signed_in": is_signed_in()})
+    if state.is_makeshift():
+        # Shut, and not for want of a password.
+        return jsonify({"password_set": True, "signed_in": False, "unavailable": True})
+    signed_in = is_signed_in()
+    if signed_in:
+        # The month starts again here: when the page is opened, not with
+        # every answer (see SESSION_REFRESH_EACH_REQUEST).
+        session.modified = True
+    return jsonify({"password_set": has_password(), "signed_in": signed_in})
+
+
+def _shut() -> Optional[Response]:
+    """The answer when what is kept is out of reach; None when it is not."""
+    if state.is_makeshift():
+        return make_response(jsonify(_unavailable()), 503)
+    return None
+
+
+def _wait_answer(wait: int) -> Response:
+    answer = _refuse(
+        "too_many_attempts",
+        "Too Many Attempts",
+        f"Too many wrong passwords. Try again in {wait} seconds.",
+        429,
+    )
+    answer.headers["Retry-After"] = str(wait)
+    return answer
 
 
 @auth_api.route("/setup", methods=["POST"])
 def setup() -> Response:
     """Choose the password, when there is none."""
+    shut = _shut()
+    if shut is not None:
+        return shut
+    already = lambda: _refuse(  # noqa: E731
+        "password_already_set",
+        "Password Already Chosen",
+        "A password has already been chosen. Sign in with it; if it is "
+        "lost, Mariner's documentation says how to start over.",
+        409,
+    )
     if has_password():
-        return _refuse(
-            "password_already_set",
-            "Password Already Chosen",
-            "A password has already been chosen. Sign in with it; if it is "
-            "lost, Mariner's documentation says how to start over.",
-            409,
-        )
+        return already()
     given = _given("password")
     if given is None:
         return _not_a_password()
     try:
-        set_password(given[0])
+        chosen = set_password(given[0], only_if_none=True)
     except PasswordNotAllowed as error:
         return _refuse(error.code, "Password Not Taken", error.description, 400)
+    except PasswordAlreadySet:
+        # Chosen by someone else in the meantime.
+        return already()
     logger.warning("A password was chosen from %s", request.remote_addr)
-    _sign_in()
-    return _signed_in_answer()
+    return _sign_in(chosen)
 
 
 @auth_api.route("/login", methods=["POST"])
 def login() -> Response:
-    wait = wait_before_next_attempt()
-    if wait:
-        answer = _refuse(
-            "too_many_attempts",
-            "Too Many Attempts",
-            f"Too many wrong passwords. Try again in {wait} seconds.",
-            429,
-        )
-        answer.headers["Retry-After"] = str(wait)
-        return answer
+    shut = _shut()
+    if shut is not None:
+        return shut
     given = _given("password")
     if given is None:
         return _not_a_password()
-    if not check_password(given[0]):
-        note_failure()
+    known = _is_known()
+    wait = claim_attempt(known)
+    if wait:
+        return _wait_answer(wait)
+    current = generation()
+    if current is None or not check_password(given[0]):
         logger.warning("Wrong password from %s", request.remote_addr)
         return _refuse(
             "wrong_password", "Wrong Password", "This is not the password.", 401
         )
-    note_success()
-    _sign_in()
-    return _signed_in_answer()
+    note_success(known)
+    return _sign_in(current)
 
 
 @auth_api.route("/logout", methods=["POST"])
 def logout() -> Response:
+    known = _is_known()
+    number = session.get(_SESSION_AS)
+    if isinstance(number, str) and signed_in_with(session):
+        _note_signed_out(number)
     session.clear()
+    if known:
+        session[_KNOWN_AS] = True
+        session.permanent = True
     # With a token for what comes next, which is signing in again.
     return jsonify({"success": True, "csrf_token": generate_csrf()})
 
@@ -440,22 +521,14 @@ def change_password() -> Response:
     if not is_signed_in():
         body = refusal("/api/auth-change", session) or {}
         return make_response(jsonify(body), 401)
-    wait = wait_before_next_attempt()
-    if wait:
-        answer = _refuse(
-            "too_many_attempts",
-            "Too Many Attempts",
-            f"Too many wrong passwords. Try again in {wait} seconds.",
-            429,
-        )
-        answer.headers["Retry-After"] = str(wait)
-        return answer
     given = _given("current", "new")
     if given is None:
         return _not_a_password()
     current, new = given
+    wait = claim_attempt(True)
+    if wait:
+        return _wait_answer(wait)
     if not check_password(current):
-        note_failure()
         return _refuse(
             "wrong_password",
             "Wrong Password",
@@ -463,10 +536,16 @@ def change_password() -> Response:
             401,
         )
     try:
-        set_password(new)
+        changed = set_password(new)
     except PasswordNotAllowed as error:
+        # The current one was right: not a wrong attempt.
+        note_success(True)
         return _refuse(error.code, "Password Not Taken", error.description, 400)
-    note_success()
+    note_success(True)
     logger.warning("The password was changed from %s", request.remote_addr)
-    _sign_in()
-    return _signed_in_answer()
+    return _sign_in(changed)
+
+
+# A session that is signed in comes before one that is not, among the
+# cookies a request carries.
+sessions.preferred = signed_in_with

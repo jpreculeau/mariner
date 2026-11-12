@@ -7,20 +7,28 @@ which comes first is not Mariner's to choose. Taking the first, as is
 usual, would let that other program sign everyone out for as long as its
 cookie lasts, and keep the page from acting at all.
 
-So every cookie of that name is tried, and the first that Mariner signed
-is the session. One it did not sign is never taken: making one takes the
-key.
+So every cookie of that name is tried. One Mariner did not sign is never
+taken: making one takes the key. Of those it signed, one that is signed
+in comes first: anyone is given a signed cookie by asking for a token,
+and that one, set by another program, must not come before the reader's
+own.
 """
 
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, Mapping, Optional
 
 from flask import Flask, Request
 from flask.sessions import SecureCookieSession, SecureCookieSessionInterface
 from itsdangerous import BadSignature
 
 COOKIE_NAME = "mariner_session"
-# What is tried of a request's cookies: nobody has this many by chance.
-_MOST_TRIED = 8
+# What is tried of a request's cookies: more than a browser sends under
+# every path and form of the name there is. Each costs a signature.
+_MOST_TRIED = 32
+# Longer than this is not one of Mariner's.
+_LONGEST = 4096
+
+# Whether what a session holds is signed in: set by mariner.server.auth.
+preferred: Optional[Callable[[Mapping[str, Any]], bool]] = None
 
 
 def _values(cookie_header: str, name: str) -> Iterator[str]:
@@ -32,7 +40,9 @@ def _values(cookie_header: str, name: str) -> Iterator[str]:
         found += 1
         if found > _MOST_TRIED:
             return
-        yield value.strip().strip('"')
+        value = value.strip().strip('"')
+        if len(value) <= _LONGEST:
+            yield value
 
 
 def read(application: Flask, cookie_header: str) -> Dict[str, Any]:
@@ -48,14 +58,19 @@ def read(application: Flask, cookie_header: str) -> Dict[str, Any]:
     if serializer is None:
         return {}
     lifetime = int(application.permanent_session_lifetime.total_seconds())
+    first: Optional[Dict[str, Any]] = None
     for value in _values(cookie_header, application.config["SESSION_COOKIE_NAME"]):
         try:
             held = serializer.loads(value, max_age=lifetime)
         except BadSignature:
             continue
-        if isinstance(held, dict):
+        if not isinstance(held, dict):
+            continue
+        if preferred is None or preferred(held):
             return held
-    return {}
+        if first is None:
+            first = held
+    return first or {}
 
 
 class Sessions(SecureCookieSessionInterface):

@@ -1,7 +1,6 @@
 import logging
 import multiprocessing
 import os
-import sys
 import tempfile
 from typing import Dict
 
@@ -151,16 +150,6 @@ def use_spool_directory() -> None:
 
 
 def main() -> None:
-    arguments = sys.argv[1:]
-    if arguments == ["reset-password"]:
-        sys.exit(auth.clear_from_the_command_line(sys.stdout))
-    if arguments:
-        print(
-            "usage: mariner                  start Mariner\n"
-            "       mariner reset-password   clear a password that is lost",
-            file=sys.stderr,
-        )
-        sys.exit(2)
     # Global log level applies to mariner.* and waitress output.
     log_level = getattr(logging, config.get_log_level(), logging.INFO)
     if not logging.getLogger().handlers:
@@ -190,8 +179,11 @@ def main() -> None:
     flask_app.config["SECRET_KEY"] = state.session_key()
 
     # Asked for before a body is taken in, not once it has been stored.
-    early.password_refusal = lambda path, cookies: auth.refusal(
-        path, sessions.read(flask_app, cookies)
+    early.password_refusal = lambda method, path, headers: auth.refusal(
+        path,
+        sessions.read(flask_app, headers.get("Cookie", "")),
+        headers.get(auth.KEY_HEADER, ""),
+        method,
     )
 
     for ignored in config.ignored_settings() + origin.unusable_entries():

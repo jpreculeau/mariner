@@ -111,8 +111,14 @@ Mariner 2 is available as a multi-architecture Docker image:
        --name mariner \
        --device /dev/ttyUSB0 \
        -v /mnt/usb_share:/mnt/usb_share \
+       -v mariner-state:/var/lib/mariner \
        -p 5000:5000 \
        amd989/mariner3d
+
+The ``mariner-state`` volume keeps Mariner's password, the key of its
+sessions and the settings changed from its page: without it they are lost
+each time the container is made again, and whoever opens the page first
+chooses a new password. See :doc:`password-and-settings`.
 
 The image is also available from GitHub Container Registry:
 

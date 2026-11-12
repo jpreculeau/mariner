@@ -18,6 +18,11 @@ export const fr: Record<TextKey, string> = {
   "nav.settings": "Réglages",
 
   "access.checking": "Ouverture de Mariner…",
+  "access.refused.title": "Mariner n'a pas ouvert sa page",
+  "access.shut.title": "Mariner ne peut pas ouvrir sa page",
+  "access.shut.text":
+    "Il ne peut pas utiliser le dossier où il garde son mot de passe\u00a0: plutôt que de laisser entrer n'importe qui, il ne laisse entrer personne. Sur l'ordinateur qui le fait tourner, le journal de Mariner indique le dossier\u00a0: donnez-le au compte de Mariner, vérifiez qu'il est accessible en écriture, puis redémarrez Mariner.",
+  "signIn.signedOut": "Votre session est terminée. Reconnectez-vous.",
   "signIn.heading": "Connexion à Mariner",
   "signIn.password": "Mot de passe",
   "signIn.submit": "Se connecter",
@@ -196,7 +201,11 @@ export const fr: Record<TextKey, string> = {
   "error.unknown": "Une erreur s'est produite (erreur {status}).",
   "error.wrong_password": "Ce n'est pas le mot de passe.",
   "error.too_many_attempts":
-    "Trop de mots de passe erronés. Patientez un instant puis réessayez.",
+    "Trop de mots de passe erronés. Réessayez dans {seconds}\u00a0secondes.",
+  "error.password_too_common":
+    "Ce mot de passe fait partie des premiers que n'importe qui essaierait. Choisissez-en un autre.",
+  "error.state_unavailable":
+    "Mariner ne peut pas utiliser le dossier où il garde son mot de passe\u00a0: sa page reste fermée.",
   "error.password_too_short": "Un mot de passe compte au moins 8 caractères.",
   "error.password_too_long": "Un mot de passe compte au plus 1024 caractères.",
   "error.password_missing": "Aucun mot de passe n'a été donné.",

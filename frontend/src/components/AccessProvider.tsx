@@ -1,10 +1,12 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, onSignedOut, type AuthState } from "@/lib/api";
 import { AccessContext, type Access, type AccessState } from "@/lib/access";
+import { toast } from "@/components/ui/sonner";
 
 const KEY = ["auth"];
+const RETRY_EVERY_MS = 5000;
 
 /**
  * Knows whether this page is signed in, and signs it in and out.
@@ -14,16 +16,30 @@ const KEY = ["auth"];
  */
 export function AccessProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
-  const { data, error, isLoading, refetch } = useQuery({
+  const { data, error, refetch } = useQuery({
     queryKey: KEY,
     queryFn: () => api.authState(),
     // Said at once when Mariner does not answer: the reader has a button
     // to try again.
     retry: false,
-    // Not asked again by itself: a refusal tells.
+    // Not asked again by itself once answered: a refusal tells. While
+    // Mariner cannot be reached it is, every few seconds: who opened the
+    // page as the computer was starting is let in when it has.
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+    refetchInterval: (query) =>
+      query.state.status === "success" ? false : RETRY_EVERY_MS,
   });
+  // Whether the last answer was a failure, and whether the reader asked
+  // for another try: tried by itself, the page goes on saying that
+  // Mariner cannot be reached; asked for, it shows that it is trying.
+  const failed = useRef<unknown>(null);
+  const [asked, setAsked] = useState(false);
+  if (data) failed.current = null;
+  else if (error) failed.current = error;
+  useEffect(() => {
+    if (data || error) setAsked(false);
+  }, [data, error]);
 
   useEffect(
     () =>
@@ -34,19 +50,31 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   );
 
   const access: Access = data
-    ? data.signed_in
-      ? "in"
-      : data.password_set
-        ? "sign-in"
-        : "choose"
-    : isLoading
-      ? "checking"
-      : error
-        ? "unreachable"
-        : "checking";
+    ? data.unavailable
+      ? "shut"
+      : data.signed_in
+        ? "in"
+        : data.password_set
+          ? "sign-in"
+          : "choose"
+    : error || (failed.current && !asked)
+      ? "unreachable"
+      : "checking";
+
+  // Whether the page was in, and whether it left by its own doing.
+  const wasIn = useRef(false);
+  const leftByItself = useRef(false);
+  if (access === "in") {
+    wasIn.current = true;
+    leftByItself.current = false;
+  }
+  const signedOutUnasked =
+    access === "sign-in" && wasIn.current && !leftByItself.current;
 
   const value = useMemo<AccessState>(() => {
     const signedIn = () => {
+      // What was said to who was not signed in no longer holds.
+      toast.dismiss();
       // What was fetched before belongs to no session, or to another.
       queryClient.removeQueries({
         predicate: (query) => query.queryKey[0] !== KEY[0],
@@ -59,8 +87,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     return {
       access,
       retry: () => {
+        setAsked(true);
         refetch();
       },
+      failure: failed.current,
+      signedOutUnasked,
       choosePassword: async (password) => {
         await api.choosePassword(password);
         signedIn();
@@ -71,6 +102,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       },
       signOut: async () => {
         await api.signOut();
+        leftByItself.current = true;
         queryClient.setQueryData<AuthState>(KEY, {
           password_set: true,
           signed_in: false,
@@ -81,7 +113,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         });
       },
     };
-  }, [access, queryClient, refetch]);
+  }, [access, queryClient, refetch, signedOutUnasked]);
 
   return (
     <AccessContext.Provider value={value}>{children}</AccessContext.Provider>

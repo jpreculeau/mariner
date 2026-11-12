@@ -24,12 +24,31 @@ SESSION_KEY_BYTES = 32
 _FALLBACKS: List[str] = [os.path.join("~", ".mariner", "state")]
 
 _directory: Optional[Path] = None
+# Whether the folder in use is not the one that holds what was kept: the
+# one asked for is there and cannot be used, or nothing better than a
+# folder that goes at the next restart was found.
+_makeshift = False
 
 
 def forget() -> None:
     """Look for the folder again at the next use. For tests."""
-    global _directory
+    global _directory, _makeshift
     _directory = None
+    _makeshift = False
+
+
+def is_makeshift() -> bool:
+    """Whether what was kept may be out of reach.
+
+    Then "no password is kept" does not mean that none was ever set, and
+    must not open the door: see ``mariner.server.auth``.
+    """
+    if _directory is not None:
+        return _makeshift
+    # Not yet looked for, and not made for the sake of asking: the one
+    # asked for is there and cannot be used.
+    wanted = os.path.expanduser(config.get_state_directory())
+    return os.path.lexists(wanted) and not _usable(wanted)
 
 
 def _usable(wanted: str) -> bool:
@@ -58,60 +77,82 @@ def directory() -> Path:
     account; failing that one that lasts until the computer restarts, so
     that Mariner starts all the same.
     """
-    global _directory
+    global _directory, _makeshift
     if _directory is not None and os.path.isdir(_directory):
         return _directory
     wanted = config.get_state_directory()
+    # Looked at before anything is made: was something kept there?
+    was_there = os.path.lexists(os.path.expanduser(wanted))
     if _usable(wanted):
         _directory = Path(os.path.expanduser(wanted))
+        _makeshift = False
         return _directory
     for fallback in _FALLBACKS:
         if _usable(fallback):
             _directory = Path(os.path.expanduser(fallback))
+            _makeshift = was_there
             logger.warning(
-                "Not keeping settings in %r; using %r", wanted, str(_directory)
+                "Not keeping settings in %r; using %r%s",
+                wanted,
+                str(_directory),
+                (
+                    ". What was kept there cannot be read: Mariner's page "
+                    "stays shut until that folder belongs to the account "
+                    "Mariner runs under and can be written"
+                    if was_there
+                    else ""
+                ),
             )
             return _directory
     _directory = Path(tempfile.mkdtemp(prefix="mariner-state-"))
+    _makeshift = True
     logger.warning(
         "Not keeping settings in %r; using %r, which does not outlast a "
-        "restart of the computer",
+        "restart of the computer. Mariner's page stays shut until it has "
+        "a folder to keep its password in",
         wanted,
         str(_directory),
     )
     return _directory
 
 
-def _path(name: str) -> Path:
+def _checked(name: str) -> str:
     if not name or name in (".", "..") or "/" in name or "\x00" in name:
         raise ValueError(f"not the name of something kept: {name!r}")
-    return directory() / name
+    return name
+
+
+def _path(name: str) -> Path:
+    return directory() / _checked(name)
+
+
+def _is_there() -> bool:
+    """Whether there is a folder to look in, without making one."""
+    if _directory is not None:
+        return True
+    wanted = [config.get_state_directory()] + _FALLBACKS
+    there = [one for one in wanted if os.path.isdir(os.path.expanduser(one))]
+    # The first that is there is the one that would be used, if it can
+    # be: no other is made for the sake of looking.
+    return bool(there) and _usable(there[0])
 
 
 def exists(name: str) -> bool:
     """Whether anything is kept under *name*, usable or not."""
-    return os.path.lexists(_path(name))
-
-
-def peek(name: str) -> Optional[bytes]:
-    """As ``read``, without making the folder if there is none yet.
-
-    For what is looked at when Mariner is merely loaded: nothing is then
-    made on the drive.
-    """
-    if _directory is None:
-        wanted = [config.get_state_directory()] + _FALLBACKS
-        if not any(os.path.isdir(os.path.expanduser(one)) for one in wanted):
-            return None
-    return read(name)
+    _checked(name)
+    return _is_there() and os.path.lexists(_path(name))
 
 
 def read(name: str) -> Optional[bytes]:
     """What is kept under *name*, or None.
 
     Only a plain file of this account that no other can read or write: one
-    left otherwise is not trusted, and reads as nothing.
+    left otherwise is not trusted, and reads as nothing. Looking makes no
+    folder: only keeping something does.
     """
+    _checked(name)
+    if not _is_there():
+        return None
     path = _path(name)
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)

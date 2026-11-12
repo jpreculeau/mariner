@@ -47,14 +47,17 @@ KEPT_FREE_BYTES = 64 * 1024 * 1024
 # Where a file is sent: the only requests with a body of any size.
 UPLOAD_PREFIXES = ("/api/upload_file", "/uvtools/upload/")
 
-# Why a request for a path, carrying these cookies, is not answered until
+# Why a request (its method, path and headers) is not answered until
 # its sender signs in; None if it is. Set by whoever starts the server:
 # this module knows nothing of passwords.
-password_refusal: Optional[Callable[[str, str], Optional[Dict[str, str]]]] = None
+password_refusal: Optional[
+    Callable[[str, str, Dict[str, str]], Optional[Dict[str, str]]]
+] = None
 
 _REASONS = {
     401: "Unauthorized",
     403: "Forbidden",
+    503: "Service Unavailable",
     413: "Request Entity Too Large",
     507: "Insufficient Storage",
 }
@@ -157,11 +160,12 @@ class _Parser(HTTPRequestParser):
             self._refuse(403, refusal.body())
             return
         if password_refusal is not None:
-            not_signed_in = password_refusal(self.path, headers.get("Cookie", ""))
+            not_signed_in = password_refusal(self.command, self.path, headers)
             if not_signed_in is not None:
                 # Not written to the log: it is what a page left open
                 # past its session sends, and says nothing of an attack.
-                self._refuse(401, not_signed_in)
+                shut = not_signed_in.get("code") == "state_unavailable"
+                self._refuse(503 if shut else 401, not_signed_in)
                 return
         # Below this the web server keeps a body in memory, not in a file.
         kept_in_memory = self.adj.inbuf_overflow

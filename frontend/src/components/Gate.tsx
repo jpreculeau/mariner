@@ -1,10 +1,14 @@
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import { Loader2, Printer, WifiOff } from "lucide-react";
+import { Loader2, Lock, Printer, WifiOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { PasswordForm } from "@/components/PasswordForm";
 import { useAccess } from "@/lib/access";
-import { useI18n } from "@/lib/i18n";
+import { ApiError } from "@/lib/api";
+import { errorText } from "@/lib/errors";
+import { useI18n, type TextKey } from "@/lib/i18n";
+import { usePageTitle } from "@/hooks/use-page-title";
 
 /**
  * Shows the page to who is signed in, and to anyone else what signs in.
@@ -12,10 +16,33 @@ import { useI18n } from "@/lib/i18n";
  * Nothing of the printer is drawn, or asked of Mariner, before that.
  */
 export function Gate({ children }: { children: ReactNode }) {
-  const { access, retry } = useAccess();
-  const { t } = useI18n();
+  const { access, retry, failure } = useAccess();
+  const { t, lang } = useI18n();
+  // Mariner answered, to say that it will not: its reason is what helps
+  // (a name it does not answer to, say), not "check that it is on".
+  const refusedBy =
+    failure instanceof ApiError && failure.status > 0 ? failure : null;
+
+  // When the page opens after a form, put focus in it: the form went
+  // with what had focus, and nothing else says that it worked. Not in a
+  // page that opens signed in: nothing was lost.
+  const shownAForm = useRef(false);
+  useEffect(() => {
+    if (access !== "in") {
+      shownAForm.current = access === "choose" || access === "sign-in";
+    } else if (shownAForm.current) {
+      shownAForm.current = false;
+      document.getElementById("content")?.focus();
+    }
+  }, [access]);
 
   if (access === "in") return <>{children}</>;
+
+  const named: Partial<Record<typeof access, TextKey>> = {
+    checking: "access.checking",
+    unreachable: "dashboard.unreachable.title",
+    shut: "access.shut.title",
+  };
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -34,6 +61,7 @@ export function Gate({ children }: { children: ReactNode }) {
           <ThemeSwitcher />
         </div>
       </header>
+      {named[access] && <Named title={t(named[access]!)} />}
       <main id="content" tabIndex={-1} className="focus:outline-none">
         <div className="container max-w-md py-10">
           {access === "checking" && (
@@ -57,14 +85,35 @@ export function Gate({ children }: { children: ReactNode }) {
             >
               <WifiOff className="h-8 w-8 text-danger" aria-hidden />
               <h1 className="mt-4 text-lg font-semibold">
-                {t("dashboard.unreachable.title")}
+                {t(
+                  refusedBy
+                    ? "access.refused.title"
+                    : "dashboard.unreachable.title",
+                )}
               </h1>
-              <p className="mt-1 text-base leading-relaxed text-muted-foreground">
-                {t("dashboard.unreachable.text")}
+              <p className="mt-1 text-base leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                {refusedBy
+                  ? errorText(refusedBy, t, lang)
+                  : t("dashboard.unreachable.text")}
               </p>
+              {/* Asking again shows "Opening Mariner…" meanwhile. */}
               <Button variant="outline" className="mt-4" onClick={retry}>
                 {t("files.error.retry")}
               </Button>
+            </div>
+          )}
+          {access === "shut" && (
+            <div
+              role="alert"
+              className="flex flex-col items-center rounded-lg border border-danger/30 bg-destructive/5 px-6 py-12 text-center"
+            >
+              <Lock className="h-8 w-8 text-danger" aria-hidden />
+              <h1 className="mt-4 text-lg font-semibold">
+                {t("access.shut.title")}
+              </h1>
+              <p className="mt-1 text-base leading-relaxed text-muted-foreground">
+                {t("access.shut.text")}
+              </p>
             </div>
           )}
           {(access === "choose" || access === "sign-in") && (
@@ -74,4 +123,10 @@ export function Gate({ children }: { children: ReactNode }) {
       </main>
     </div>
   );
+}
+
+/** Names the page in the browser's tab, for a state that has no form. */
+function Named({ title }: { title: string }) {
+  usePageTitle(title);
+  return null;
 }

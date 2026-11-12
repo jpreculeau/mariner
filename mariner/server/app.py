@@ -204,10 +204,15 @@ def ask_for_the_password() -> Optional[Tuple[Response, int]]:
     See ``mariner.server.auth``. As above, the web server Mariner runs
     under has already made this check for a request that has a body.
     """
-    refused = auth.refusal(request.path, session)
+    refused = auth.refusal(
+        request.path,
+        session,
+        request.headers.get(auth.KEY_HEADER, ""),
+        request.method,
+    )
     if refused is None:
         return None
-    return jsonify(refused), 401
+    return jsonify(refused), auth.status_of(refused)
 
 
 # First of all: before the check of the token a form carries, which reads
@@ -356,6 +361,11 @@ app.config.from_mapping(
         "SESSION_COOKIE_NAME": sessions.COOKIE_NAME,
         "SESSION_COOKIE_HTTPONLY": True,
         "PERMANENT_SESSION_LIFETIME": timedelta(days=30),
+        # The cookie is sent again only when the session changes, not
+        # with every answer: an answer that was on its way when the
+        # reader signed out would put the signed-in cookie back. The
+        # month starts again when the page asks where it stands.
+        "SESSION_REFRESH_EACH_REQUEST": False,
         # Left to itself the token is refused after an hour: a page left
         # open on a long print could then not pause or stop it. It still
         # ends when Mariner restarts, or a month after the cookie that

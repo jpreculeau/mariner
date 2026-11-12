@@ -29,6 +29,11 @@ export function errorText(error: unknown, t: Translate, lang: Lang): string {
     if (!key) return error.message;
     if (NOT_WORDED_FOR_READERS.has(error.code)) return t(key);
     if (lang === "en") return error.message;
+    if (error.code === "too_many_attempts") {
+      // How long, which the server's words say.
+      const seconds = /(\d+) seconds/.exec(error.message)?.[1];
+      return seconds ? t(key, { seconds }) : error.message;
+    }
     if (error.code === "type_not_supported") {
       // The kinds that are taken, which the server's words list.
       const kinds = supportedKinds();

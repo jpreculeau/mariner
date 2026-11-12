@@ -28,6 +28,9 @@ _SWITCHES = ("uvtools_enabled", "sdcp_enabled", "assume_printer_off")
 _READ_AT_START = ("uvtools_enabled", "sdcp_enabled")
 
 
+_change_lock = threading.Lock()
+
+
 class NotASetting(ValueError):
     pass
 
@@ -59,8 +62,17 @@ def _checked(given: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _kept() -> Dict[str, Any]:
     """What was changed from the page, as far as it can be read."""
-    raw = state.peek(_KEPT_AS)
+    raw = state.read(_KEPT_AS)
     if raw is None:
+        if state.is_makeshift() or state.exists(_KEPT_AS):
+            # Something was set that cannot be read. The slicers'
+            # interfaces may have been switched off there: on by default,
+            # they would come back on by a folder changing hands.
+            logger.warning(
+                "The settings changed from the page cannot be read: the "
+                "slicers' interfaces stay off"
+            )
+            return {"uvtools_enabled": False, "sdcp_enabled": False}
         return {}
     try:
         held = json.loads(raw)
@@ -82,10 +94,11 @@ def _kept() -> Dict[str, Any]:
 
 def apply() -> None:
     """Have the configuration answer with what was changed from the page."""
-    config.overrides.clear()
-    config.overrides.update(
-        {name: value for name, value in _kept().items() if value is not None}
-    )
+    # Put in place in one go: emptied first, a request served meanwhile
+    # would find a setting gone.
+    config.overrides = {
+        name: value for name, value in _kept().items() if value is not None
+    }
 
 
 def current() -> Dict[str, Any]:
@@ -104,10 +117,12 @@ def change(given: Any) -> Dict[str, Any]:
     if not isinstance(given, dict) or not given:
         raise NotASetting("send the settings to change in a JSON object")
     changes = _checked(given)
-    held = {**_kept(), **changes}
-    held = {name: value for name, value in held.items() if value is not None}
-    state.write(_KEPT_AS, json.dumps(held, sort_keys=True).encode("utf-8"))
-    return current()
+    # One at a time: of two changes made at once, neither is lost.
+    with _change_lock:
+        held = {**_kept(), **changes}
+        held = {name: value for name, value in held.items() if value is not None}
+        state.write(_KEPT_AS, json.dumps(held, sort_keys=True).encode("utf-8"))
+        return current()
 
 
 # What Mariner was started with, of the settings read at start.

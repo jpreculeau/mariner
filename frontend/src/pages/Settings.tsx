@@ -17,6 +17,10 @@ import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
 
 const KEY = ["settings"];
+// How often, and how many times, Mariner is asked whether it is back
+// from a restart: a minute in all.
+const BACK_EVERY_MS = 1500;
+const BACK_WITHIN_TRIES = 40;
 
 type Switch = "uvtools_enabled" | "sdcp_enabled" | "assume_printer_off";
 
@@ -52,6 +56,7 @@ export default function Settings() {
     underWay.current = true;
     setSaving(Object.keys(changes)[0] as keyof Kept);
     try {
+      const before = queryClient.getQueryData<SettingsResponse>(KEY);
       const kept = await api.saveSettings(changes);
       queryClient.setQueryData<SettingsResponse>(KEY, kept);
       if ("printer_display_name" in changes) {
@@ -60,7 +65,13 @@ export default function Settings() {
           .querySelector('meta[name="printer-display-name"]')
           ?.setAttribute("content", kept.settings.printer_display_name ?? "");
       }
-      toast.success(t("settings.saved"));
+      // That it waits for a restart is said here too, where it is sure
+      // to be heard and seen: the notice is at the top of the page.
+      toast.success(
+        kept.restart_needed && !before?.restart_needed
+          ? `${t("settings.saved")}. ${t("settings.restartNeeded")}`
+          : t("settings.saved"),
+      );
     } catch (failure) {
       // Shown as it stands, which is as it was.
       toast.error(errorText(failure, t, lang));
@@ -78,9 +89,22 @@ export default function Settings() {
       toast.success(t("settings.restarted"));
     } catch (failure) {
       toast.error(errorText(failure, t, lang));
-    } finally {
       setRestarting(false);
+      return;
     }
+    // Until Mariner is back, and says what it now runs with: left as
+    // it was, the notice would ask for another restart.
+    for (let tries = 0; tries < BACK_WITHIN_TRIES; tries++) {
+      await new Promise((resolve) => setTimeout(resolve, BACK_EVERY_MS));
+      try {
+        const now = await api.settings();
+        queryClient.setQueryData<SettingsResponse>(KEY, now);
+        break;
+      } catch {
+        // Not back yet.
+      }
+    }
+    setRestarting(false);
   };
 
   const heading = (
@@ -136,7 +160,7 @@ export default function Settings() {
         aria-describedby={`${setting}-hint`}
         aria-disabled={saving !== null}
         onChange={(event) => keep({ [setting]: event.target.checked })}
-        className="mt-1 h-5 w-5 shrink-0 accent-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="mt-1 h-5 w-5 shrink-0 accent-primary ring-offset-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-disabled:opacity-50"
       />
       <div className="min-w-0">
         <label htmlFor={setting} className="font-medium">
@@ -167,7 +191,7 @@ export default function Settings() {
             </p>
             {data.can_restart && (
               <Button
-                className="gap-2"
+                className="h-auto min-h-10 gap-2 whitespace-normal"
                 aria-disabled={restarting}
                 onClick={restart}
               >
@@ -265,9 +289,11 @@ function ChangePassword() {
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [again, setAgain] = useState("");
+  // Kept as it came, and worded when drawn: in the language the page is
+  // in by then.
   const [refused, setRefused] = useState<{
     on: "current" | "new" | "again";
-    why: string;
+    why: TextKey | { failure: unknown };
   } | null>(null);
   const [busy, setBusy] = useState(false);
   const underWay = useRef(false);
@@ -277,16 +303,24 @@ function ChangePassword() {
     again: useRef<HTMLInputElement>(null),
   };
 
-  const refuse = (on: "current" | "new" | "again", why: string) => {
+  const refuse = (
+    on: "current" | "new" | "again",
+    why: TextKey | { failure: unknown },
+  ) => {
     setRefused({ on, why });
     fields[on].current?.focus();
   };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (underWay.current || !current || !next) return;
+    if (underWay.current) return;
+    if (!current || !next) {
+      // Said, rather than a button that seems to do nothing.
+      refuse(current ? "new" : "current", "error.password_missing");
+      return;
+    }
     if (next !== again) {
-      refuse("again", t("choose.mismatch"));
+      refuse("again", "choose.mismatch");
       return;
     }
     underWay.current = true;
@@ -303,7 +337,7 @@ function ChangePassword() {
         failure instanceof ApiError &&
         (failure.code === "password_too_short" ||
           failure.code === "password_too_long");
-      refuse(aboutTheNew ? "new" : "current", errorText(failure, t, lang));
+      refuse(aboutTheNew ? "new" : "current", { failure });
     } finally {
       underWay.current = false;
       setBusy(false);
@@ -311,7 +345,11 @@ function ChangePassword() {
   };
 
   const error = (on: "current" | "new" | "again") =>
-    refused?.on === on ? refused.why : null;
+    refused?.on !== on
+      ? null
+      : typeof refused.why === "string"
+        ? t(refused.why)
+        : errorText(refused.why.failure, t, lang);
   const typed = (set: (value: string) => void) => (value: string) => {
     set(value);
     setRefused(null);
@@ -348,7 +386,11 @@ function ChangePassword() {
         onChange={typed(setAgain)}
       />
       <div>
-        <Button type="submit" className="gap-2" aria-disabled={busy}>
+        <Button
+          type="submit"
+          className="h-auto min-h-10 gap-2 whitespace-normal"
+          aria-disabled={busy}
+        >
           {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
           {t("settings.password.change")}
         </Button>

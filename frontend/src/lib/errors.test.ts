@@ -95,4 +95,15 @@ describe("errorText", () => {
       expect(errorText(refused, t("fr"), "fr")).toBe(refused.message);
     });
   });
+
+  it("says how long to wait, in French too", () => {
+    const wait = new ApiError(
+      429,
+      "Too many wrong passwords. Try again in 16 seconds.",
+      "too_many_attempts",
+    );
+    expect(errorText(wait, t("fr"), "fr")).toBe(
+      "Trop de mots de passe erronés. Réessayez dans 16\u00a0secondes.",
+    );
+  });
 });

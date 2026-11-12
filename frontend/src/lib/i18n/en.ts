@@ -17,6 +17,11 @@ export const en = {
   "nav.settings": "Settings",
 
   "access.checking": "Opening Mariner…",
+  "access.refused.title": "Mariner did not open its page",
+  "access.shut.title": "Mariner cannot open its page",
+  "access.shut.text":
+    "It cannot use the folder it keeps its password in, so it lets nobody in rather than anybody. On the computer it runs on, Mariner's log says which folder: give it to the account Mariner runs under, make sure it can be written, and restart Mariner.",
+  "signIn.signedOut": "Your session is over. Sign in again.",
   "signIn.heading": "Sign in to Mariner",
   "signIn.password": "Password",
   "signIn.submit": "Sign in",
@@ -205,7 +210,11 @@ export const en = {
   "error.unknown": "Something went wrong (error {status}).",
   "error.wrong_password": "This is not the password.",
   "error.too_many_attempts":
-    "Too many wrong passwords. Wait a moment and try again.",
+    "Too many wrong passwords. Try again in {seconds} seconds.",
+  "error.password_too_common":
+    "This password is among the first anyone would try. Choose another.",
+  "error.state_unavailable":
+    "Mariner cannot use the folder it keeps its password in, so its page stays shut.",
   "error.password_too_short": "A password has at least 8 characters.",
   "error.password_too_long": "A password has at most 1024 characters.",
   "error.password_missing": "No password was given.",

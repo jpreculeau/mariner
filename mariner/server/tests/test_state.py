@@ -151,3 +151,73 @@ class KeptSecretTest(TestCase):
         state.remove("note")
         state.remove("note")
         expect(state.read("note")).to_equal(None)
+
+
+class DegradedTest(TestCase):
+    """What is kept says who may drive the printer: when it cannot be
+    reached, that must not read as "nothing was ever set"."""
+
+    def setUp(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        state.forget()
+        self.addCleanup(state.forget)
+
+    def _configured(self, wanted: Path) -> None:
+        patcher = patch("mariner.config.get_state_directory", return_value=str(wanted))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_the_folder_asked_for_is_not_a_makeshift(self) -> None:
+        self._configured(self.root / "state")
+        state.directory()
+        expect(state.is_makeshift()).to_equal(False)
+
+    def test_a_folder_of_the_account_s_home_is_not_one_when_none_was_there(
+        self,
+    ) -> None:
+        # Mariner run by hand, outside its service: nothing was kept
+        # where the service would keep it.
+        blocked = self.root / "a-file"
+        blocked.write_bytes(b"x")
+        self._configured(blocked / "state")
+        with patch("mariner.server.state._FALLBACKS", [str(self.root / "own")]):
+            with self.assertLogs("mariner.server.state", level="WARNING"):
+                state.directory()
+        expect(state.is_makeshift()).to_equal(False)
+
+    def test_another_folder_is_one_when_the_one_asked_for_is_there(self) -> None:
+        # There, but not usable: of another account after a restore, or
+        # on a drive gone read-only. What it holds was not read.
+        wanted = self.root / "state"
+        wanted.mkdir()
+        self._configured(wanted)
+        with patch("mariner.server.state._usable", side_effect=[False, True]):
+            with patch("mariner.server.state._FALLBACKS", [str(self.root / "own")]):
+                with self.assertLogs("mariner.server.state", level="WARNING"):
+                    state.directory()
+        expect(state.is_makeshift()).to_equal(True)
+
+    def test_a_folder_that_does_not_outlast_a_restart_is_one(self) -> None:
+        blocked = self.root / "a-file"
+        blocked.write_bytes(b"x")
+        self._configured(blocked / "state")
+        with patch("mariner.server.state._FALLBACKS", [str(blocked / "own")]):
+            with self.assertLogs("mariner.server.state", level="WARNING"):
+                state.directory()
+        expect(state.is_makeshift()).to_equal(True)
+
+    def test_looking_makes_no_folder(self) -> None:
+        wanted = self.root / "state"
+        wanted.mkdir()
+        self._configured(wanted)
+        made = []
+        with patch("mariner.server.state._usable", return_value=False), patch(
+            "mariner.server.state._FALLBACKS", [str(self.root / "own")]
+        ), patch(
+            "tempfile.mkdtemp", side_effect=lambda **k: made.append(1) or "/nowhere"
+        ):
+            expect(state.read("anything")).to_equal(None)
+        expect(made).to_equal([])
+        expect((self.root / "own").exists()).to_equal(False)

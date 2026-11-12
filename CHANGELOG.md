@@ -8,8 +8,13 @@
 - Add support for SDCP
 - Ask for a password. One password opens Mariner's page and everything the page does (files, print commands, shutting down, settings); it is chosen at the first visit and kept as a hash (scrypt) that does not give it away. Who is signed in stays so for a month from the last visit, through restarts; changing the password signs every other page out. After a few wrong passwords the next attempt waits, up to half a minute. A file sent by who is not signed in is refused before any of it is taken in. The interfaces slicers speak (UVtools, SDCP) know nothing of passwords and are not behind this one: each has a switch
 - A password that is lost is cleared, not read back: `sudo mariner reset-password`, or a file named `reset-password` on the card's boot drive, obeyed at the next start. The next visit chooses a new one
+- `sudo mariner set-password` chooses or replaces the password from a terminal, so that nobody else on the network gets to choose it first; the commands about the password no longer load the server
+- Signing in also gives the page a key of its own, sent with each request: the session's cookie, which a browser sends to every program served from the same computer whatever its port, opens nothing without it (except the picture of a file)
+- Signing out ends the session for good: its cookie is of no use afterwards, and an answer that was on its way no longer signs the browser back in (the cookie is sent again only when the session changes)
+- When the state directory cannot be used (it belongs to another account, the drive is read-only), the page says so and lets nobody in, and the slicers' interfaces stay off, instead of offering whoever comes first to choose a password
+- Of several passwords chosen at the same moment at the first visit, one is kept and only who chose it is signed in; of several attempts sent together after wrong ones, one is looked at; a browser that signed in before does not wait for the wrong passwords of others; the few passwords everybody tries first are refused
 - Settings that can be changed from the page, once signed in (`/api/settings`): the printer's name, the two slicer interfaces, and taking a printer that does not answer for switched off without asking. They are kept in the state directory and come before `config.toml`. Mariner can be restarted from the page where it runs as a service
-- A cookie of the same name set by another program on the same computer (they go by host name, not by port) no longer signs everyone out or keeps the page from acting: every cookie of that name is tried, and only one Mariner signed is taken
+- A cookie of the same name set by another program on the same computer (they go by host name, not by port) no longer signs everyone out or keeps the page from acting: every cookie of that name is tried, only one Mariner signed is taken, and one that is signed in comes before one that is not
 
 ### 🐛 Bug Fixes
 
@@ -146,6 +151,7 @@ Installation and what is kept
 - Keep the cache out of `/tmp` (`/var/cache/mariner` by default), where any account could make its folder before Mariner did; the history of prints shown to slicers moves to the state directory and now outlasts a restart
 - Service: give it its two folders (`StateDirectory`, `CacheDirectory`), start it again when it stops, put a ceiling on what it writes to the log (300 lines per 30 seconds: any device of the network can have lines written), and keep it from what it has no use for (`NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome=read-only`, `PrivateTmp` and others). The serial port, the network and the folder of files are left as they are
 - Docker: `/var/lib/mariner` is a volume
+- The service reads users' homes without writing to them: a `files_directory`, `spool_directory` or state directory under `/home` needs a drop-in with `ReadWritePaths=` (see "Password and Settings")
 - Build and release workflows name every action they run by its commit rather than by a tag that can be moved
 
 ### 🚜 Refactor

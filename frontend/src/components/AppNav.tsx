@@ -20,14 +20,14 @@ export function AppNav() {
       <div className="container flex h-14 items-center justify-between">
         <div className="flex items-center gap-2">
           <div
-            className="flex h-8 w-8 items-center justify-center rounded bg-primary"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary"
             aria-hidden
           >
             <Printer className="h-4 w-4 text-primary-foreground" />
           </div>
           {/* Not on the narrowest screens, where the menu takes the
               whole bar. */}
-          <span className="hidden font-display text-lg font-bold min-[400px]:inline">
+          <span className="hidden whitespace-nowrap font-display text-lg font-bold min-[480px]:inline">
             Mariner 2
           </span>
         </div>
@@ -48,7 +48,7 @@ export function AppNav() {
                       : "text-muted-foreground hover:text-foreground",
                   )}
                 >
-                  <item.icon className="h-4 w-4" aria-hidden />
+                  <item.icon className="h-4 w-4 shrink-0" aria-hidden />
                   {/* On a phone only the icon shows: the word stays for
                       those who cannot see it. */}
                   <span className="sr-only sm:not-sr-only">
