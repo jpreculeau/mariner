@@ -21,9 +21,10 @@ from mariner.exceptions import (
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-# What can go wrong on the serial line while it is being used: the serial
-# library's own error, and what it lets through as it is when the terminal
-# fails while its buffers are flushed, which is not an OSError.
+# What can go wrong on the serial line while it is being used. OSError
+# covers the serial library's SerialException and the raw OSError it lets
+# through. termios.error, raised when the terminal fails while its buffers
+# are flushed or its settings applied, is not an OSError.
 _LINE_FAILURES = (OSError, termios.error)
 
 
@@ -97,8 +98,10 @@ class ChiTuPrinter:
     _is_connected = False
     # Whether the last attempt to open the port found no device there.
     _device_is_missing = False
-    # Whether a single byte has come from the printer since this was last
-    # reset, read or discarded. See get_print_status.
+    # Whether any byte came from the printer during the current
+    # get_print_status call, including bytes found waiting before a
+    # question and bytes arriving after an attempt's deadline. Only
+    # get_print_status resets and reads it.
     _heard = False
 
     def __init__(self) -> None:
@@ -332,7 +335,8 @@ class ChiTuPrinter:
             raise UnexpectedPrinterResponse(response)
 
     def reboot(self, delay_in_ms: int = 0) -> None:
-        # No answer is waited for: the printer restarts.
+        # No answer is waited for: the printer restarts. A write that fails
+        # is reported as not sent; nothing depends on the difference here.
         try:
             self._send((f"M6040 I{delay_in_ms}").encode())
         except _LINE_FAILURES as exception:

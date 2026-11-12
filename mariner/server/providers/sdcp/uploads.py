@@ -30,8 +30,6 @@ from mariner.server.providers.sdcp import constants
 
 logger: logging.Logger = logging.getLogger(__name__)
 
-SCRATCH_DIRNAME: str = SDCP_SCRATCH_DIRNAME
-
 
 @dataclass
 class ChunkResult:
@@ -129,7 +127,7 @@ class UploadManager:
     def _scratch_dir(self) -> Path:
         # Kept inside the files directory so finalize() is a rename rather
         # than a cross-filesystem copy of a potentially huge file.
-        path = config.get_files_directory() / SCRATCH_DIRNAME
+        path = config.get_files_directory() / SDCP_SCRATCH_DIRNAME
         try:
             os.mkdir(path)
         except FileExistsError:
@@ -460,7 +458,7 @@ class UploadManager:
             if self._sessions:
                 return
             try:
-                os.rmdir(config.get_files_directory() / SCRATCH_DIRNAME)
+                os.rmdir(config.get_files_directory() / SDCP_SCRATCH_DIRNAME)
             except OSError:
                 pass
 

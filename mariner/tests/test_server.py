@@ -64,7 +64,7 @@ class MarinerServerTest(TestCase):
         )
 
         self.client = app.test_client()
-        printer_access.forget_status()
+        printer_access.forget_everything()
         app.config["WTF_CSRF_ENABLED"] = False
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
@@ -443,7 +443,7 @@ class MarinerServerTest(TestCase):
         ):
             self.printer_mock.start_printing.reset_mock()
             # Each one as the first print of the day.
-            printer_access.forget_status()
+            printer_access.forget_everything()
             response = self.client.post(
                 f"/api/printer/command/start_print?filename={given}"
             )
@@ -724,7 +724,7 @@ class MarinerServerTest(TestCase):
         expect(self._leftovers()).to_equal([])
 
     def _printer_is_printing(self, selected_file: str) -> None:
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.PRINTING, current_byte=5000, total_bytes=10000
         )
@@ -798,7 +798,7 @@ class MarinerServerTest(TestCase):
         expect(self._leftovers()).to_equal([])
 
     def _printer_is_silent(self) -> None:
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.CLOSED, silent=True
         )
@@ -959,6 +959,18 @@ class MarinerServerTest(TestCase):
         expect(response.status_code).to_equal(200)
         expect(self._stored("trimmed.ctb")).to_equal(self.ctb_file_contents)
 
+    def test_upload_onto_a_link_replaces_the_link_and_not_its_target(self) -> None:
+        self.fs.create_file("/mnt/usb_share/sub/notes.txt", contents=b"notes")
+        self.fs.create_symlink(
+            "/mnt/usb_share/linked.ctb", "/mnt/usb_share/sub/notes.txt"
+        )
+        data = {"file": (io.BytesIO(b"new contents"), "linked.ctb")}
+        response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(200)
+        expect(self._stored("sub/notes.txt")).to_equal(b"notes")
+        expect(os.path.islink("/mnt/usb_share/linked.ctb")).to_equal(False)
+        expect(self._stored("linked.ctb")).to_equal(b"new contents")
+
     def test_an_upload_can_override_a_silent_printer_too(self) -> None:
         self._printer_is_silent()
         data = {"file": (io.BytesIO(b"new contents"), "foobar.ctb")}
@@ -1054,7 +1066,7 @@ class MarinerServerTest(TestCase):
         expect(self._leftovers()).to_equal([])
 
     def _printer_answers_only_ok(self) -> None:
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.IDLE
         )
@@ -1078,7 +1090,7 @@ class MarinerServerTest(TestCase):
     def test_a_serial_port_that_could_not_be_used_cannot_be_overridden(self) -> None:
         # Mariner's own trouble (no permission, too many open files): the
         # printer was never asked, so it cannot be taken to be off.
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.CLOSED
         )

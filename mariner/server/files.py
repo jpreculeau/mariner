@@ -160,6 +160,8 @@ def resolve_entry_in_files_directory(relative: str) -> Optional[Path]:
     as it is. For a symbolic link this gives the link, not what it points
     to, which is what removing an entry must act on: the link goes, its
     target stays, and a link whose target is gone can still be removed.
+    (One exception: a link to a hidden entry beside it is itself refused,
+    being another name for that entry.)
 
     Returns None if the path escapes, or does not name an entry (``""``,
     ``.``, a path ending in ``..``).

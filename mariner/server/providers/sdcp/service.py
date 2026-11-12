@@ -9,9 +9,10 @@ import json
 import logging
 import socket
 import threading
+import warnings
 from typing import Any, Dict, List, Optional, Set, cast
 
-from aiohttp import WSMsgType, web
+from aiohttp import WSMsgType, multipart, web
 from pyre_extensions import none_throws
 
 from mariner import config
@@ -57,6 +58,21 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         payload = self._service.build_discovery_response(peer)
         logger.info("SDCP: discovery request from %s", peer)
         transport.sendto(json.dumps(payload).encode("utf-8"), addr)
+
+
+def silence_upload_parser() -> None:
+    """Keep the HTTP library from warning about a malformed upload.
+
+    Its warning quotes the offending header as it came, and a warning is
+    written straight to the stream the log goes to, where client text
+    could then start a line of its own. Nothing is lost: the upload
+    handler logs every malformed request itself, safely.
+    """
+    for category in (
+        multipart.BadContentDispositionHeader,
+        multipart.BadContentDispositionParam,
+    ):
+        warnings.filterwarnings("ignore", category=category)
 
 
 class SDCPService:
@@ -137,6 +153,7 @@ class SDCPService:
             logger.warning("SDCP: could not read the firmware version", exc_info=True)
 
     async def _start_http(self, port: int) -> Optional[web.AppRunner]:
+        silence_upload_parser()
         app = web.Application(client_max_size=MAX_UPLOAD_BODY)
         app.router.add_get(constants.WEBSOCKET_PATH, self._handle_websocket)
         app.router.add_post(constants.UPLOAD_PATH, self._handle_upload)

@@ -42,7 +42,7 @@ class UVToolsProviderTest(TestCase):
         )
 
         self.client = app.test_client()
-        printer_access.forget_status()
+        printer_access.forget_everything()
         app.config["WTF_CSRF_ENABLED"] = False
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
@@ -126,7 +126,7 @@ class UVToolsProviderTest(TestCase):
         # The file cannot be deleted while it prints; once the print is over
         # it goes by the same name too.
         expect(self.client.get(f"/uvtools/delete/{name}").status_code).to_equal(409)
-        printer_access.forget_status()
+        printer_access.forget_everything()
         expect(self.client.get(f"/uvtools/delete/{name}").status_code).to_equal(200)
         expect(os.path.isfile(config.get_files_directory() / name)).to_equal(False)
 
@@ -168,7 +168,7 @@ class UVToolsProviderTest(TestCase):
         expect(leftovers).to_equal([])
 
     def _printer_is_printing(self, selected_file: str) -> None:
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.PRINTING, current_byte=5000, total_bytes=10000
         )
@@ -398,7 +398,7 @@ class UVToolsProviderTest(TestCase):
         expect(asked.call_count).to_equal(2)
 
     def test_delete_is_refused_when_the_printer_is_silent(self) -> None:
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_mock.get_print_status.return_value = PrintStatus(
             state=PrinterState.CLOSED, silent=True
         )

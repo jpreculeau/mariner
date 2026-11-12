@@ -395,10 +395,11 @@ def list_files() -> Union[str, Response]:
                 sliced_model_file: Optional[SlicedModelFile] = None
                 # A link leading out of the files directory is listed, so
                 # that it can be removed, but what it leads to is not read.
-                # (A link to a transfer in progress is listed too, although
-                # no route will touch it. So is another name for one, where
-                # the filesystem has such names, and that one is opened
-                # here like any file.)
+                # (A link to a transfer in progress is listed too. Deleting
+                # it removes the link at most, never the transfer, and a
+                # link beside the transfer is refused outright. Another
+                # name for a transfer, where the filesystem has such
+                # names, is listed and opened here like any file.)
                 # Only a link can lead elsewhere, and only links are
                 # checked: the check looks through the whole folder.
                 leads_elsewhere = (

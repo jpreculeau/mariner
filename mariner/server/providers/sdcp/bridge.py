@@ -21,6 +21,7 @@ from mariner.server.files import (
     NotPrintable,
     holds_a_transfer_in_progress,
     is_directory,
+    is_regular_file,
     move_aside,
     remove_entry,
     resolve_entry_in_files_directory,
@@ -327,7 +328,7 @@ class PrinterBridge:
         try:
             with os.scandir(files_dir) as entries:
                 for entry in entries:
-                    if not entry.is_file():
+                    if not is_regular_file(entry):
                         continue
                     if get_file_extension(entry.name) not in supported:
                         continue

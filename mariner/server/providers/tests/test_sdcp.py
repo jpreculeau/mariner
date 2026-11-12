@@ -198,7 +198,7 @@ class SDCPBridgeTest(TestCase):
         )
 
         self.printer_mock = Mock(spec=ChiTuPrinter)
-        printer_access.forget_status()
+        printer_access.forget_everything()
         self.printer_patcher = patch("mariner.server.printer_access.ChiTuPrinter")
         constructor = self.printer_patcher.start()
         constructor.return_value = self.printer_mock
@@ -504,6 +504,19 @@ class SDCPBridgeTest(TestCase):
         names = [entry["name"] for entry in self.bridge.list_files("/local/")]
         expect(names).to_equal(["/local/foobar.ctb"])
 
+    def test_the_geometry_survives_an_entry_that_cannot_be_asked_what_it_is(
+        self,
+    ) -> None:
+        with patch(
+            "mariner.server.providers.sdcp.bridge.is_regular_file",
+            side_effect=lambda entry: entry.name != "loop.ctb",
+        ) as asked:
+            self.fs.create_file("/mnt/usb_share/loop.ctb", contents=b"x")
+            expect(self.bridge._printable_files_newest_first(5)).to_equal(
+                ["foobar.ctb"]
+            )
+        expect(asked.call_count).to_equal(2)
+
     def test_list_files_rejects_escape(self) -> None:
         expect(self.bridge.list_files("/local/../../etc")).to_equal([])
 
@@ -721,7 +734,7 @@ class SDCPBridgeTest(TestCase):
         ):
             self.printer_mock.start_printing.reset_mock()
             # Each one as the first print of the day.
-            printer_access.forget_status()
+            printer_access.forget_everything()
             expect(self.bridge.start_print(given)).to_equal(
                 int(constants.PrintCtrlAck.OK)
             )
@@ -989,7 +1002,7 @@ class UploadManagerTest(TestCase):
     def test_by_default_the_manager_asks_the_printer(self) -> None:
         # The wiring used in production: no stand-ins for the in-use checks.
         self.fs.create_file("/mnt/usb_share/model.ctb", contents=b"printing")
-        printer_access.forget_status()
+        printer_access.forget_everything()
         printer_mock = Mock(spec=ChiTuPrinter)
         printer_mock.__enter__ = Mock(return_value=printer_mock)
         printer_mock.__exit__ = Mock(return_value=None)
@@ -1013,7 +1026,7 @@ class UploadManagerTest(TestCase):
                 verify=False,
                 data=b"new!",
             )
-        printer_access.forget_status()
+        printer_access.forget_everything()
 
         expect(result.ok).to_equal(False)
         expect(result.error).to_equal(constants.UploadError.FILE_OPEN_FAILED)
@@ -1612,6 +1625,26 @@ class ServiceUploadLogTest(IsolatedAsyncioTestCase):
             expect(character in message).to_equal(False)
 
 
+class ServiceWarningsTest(TestCase):
+    def test_the_upload_parser_cannot_write_client_text_past_the_log(self) -> None:
+        # On a malformed upload the HTTP library warns with the header as
+        # it came. A warning goes straight to the log stream, bypassing
+        # every precaution taken for log lines.
+        import warnings
+
+        from aiohttp import multipart
+
+        from mariner.server.providers.sdcp.service import silence_upload_parser
+
+        with warnings.catch_warnings(record=True) as shown:
+            warnings.simplefilter("always")
+            silence_upload_parser()
+            warnings.warn(multipart.BadContentDispositionHeader("x\u2028FORGED"))
+            warnings.warn(multipart.BadContentDispositionParam("x\x85FORGED"))
+            warnings.warn("something else", RuntimeWarning)
+        expect([str(warning.message) for warning in shown]).to_equal(["something else"])
+
+
 class ServiceHousekeepingTest(IsolatedAsyncioTestCase):
     def _service(self) -> Any:
         service = SDCPService.__new__(SDCPService)
@@ -1679,6 +1712,21 @@ class ServiceHousekeepingTest(IsolatedAsyncioTestCase):
             with self.assertRaises(asyncio.CancelledError):
                 await service._main()
         service._bridge.firmware_version.assert_called_once_with()
+
+    async def test_the_upload_parser_is_silenced_before_requests_are_served(
+        self,
+    ) -> None:
+        service = self._service()
+        with patch(
+            "mariner.server.providers.sdcp.service.silence_upload_parser"
+        ) as silence:
+            # Port 0: any free port, on this machine only for the test.
+            runner = await service._start_http(0)
+        try:
+            silence.assert_called_once_with()
+        finally:
+            if runner is not None:
+                await runner.cleanup()
 
     async def test_terminate_is_asked_for_the_client_that_sent_it(self) -> None:
         service = self._service()

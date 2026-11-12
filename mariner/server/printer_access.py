@@ -135,7 +135,7 @@ class FileInUse(Exception):
         self.usage = usage
 
 
-def forget_status() -> None:
+def forget_everything() -> None:
     """Drop everything remembered about the printer.
 
     The next check then asks the printer, and a print started a moment ago
