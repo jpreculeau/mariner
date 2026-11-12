@@ -27,6 +27,7 @@ export function Gate({ children }: { children: ReactNode }) {
   // with what had focus, and nothing else says that it worked. Not in a
   // page that opens signed in: nothing was lost.
   const shownAForm = useRef(false);
+  const askedAgain = useRef(false);
   useEffect(() => {
     if (access !== "in") {
       shownAForm.current = access === "choose" || access === "sign-in";
@@ -34,6 +35,16 @@ export function Gate({ children }: { children: ReactNode }) {
       shownAForm.current = false;
       document.getElementById("content")?.focus();
     }
+  }, [access]);
+
+  // From one of its screens to another, focus has a place to go when
+  // what had it went: the button to try again.
+  useEffect(() => {
+    if (access === "in" || !askedAgain.current) return;
+    if (!document.activeElement || document.activeElement === document.body) {
+      document.getElementById("content")?.focus();
+    }
+    if (access !== "checking") askedAgain.current = false;
   }, [access]);
 
   if (access === "in") return <>{children}</>;
@@ -97,7 +108,14 @@ export function Gate({ children }: { children: ReactNode }) {
                   : t("dashboard.unreachable.text")}
               </p>
               {/* Asking again shows "Opening Mariner…" meanwhile. */}
-              <Button variant="outline" className="mt-4" onClick={retry}>
+              <Button
+                variant="outline"
+                className="mt-4"
+                onClick={() => {
+                  askedAgain.current = true;
+                  retry();
+                }}
+              >
                 {t("files.error.retry")}
               </Button>
             </div>

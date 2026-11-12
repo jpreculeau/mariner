@@ -95,7 +95,7 @@ class StartupTest(TestCase):
                     {"Cookie": "a=b", "X-Mariner-Key": "the key"},
                 )
         self.assertEqual(answer, {"code": "x"})
-        read.assert_called_once_with(server.flask_app, "a=b")
+        read.assert_called_once_with(server.flask_app, "a=b", "the key")
         refusal.assert_called_once_with(
             "/api/upload_file", {"held": 1}, "the key", "POST"
         )
@@ -104,6 +104,22 @@ class StartupTest(TestCase):
         with patch.object(server, "use_spool_directory"):
             self._started()
         self.asked_on_the_boot_drive.assert_called_once_with()
+
+    def test_every_session_ends_when_what_was_signed_out_of_cannot_be_read(
+        self,
+    ) -> None:
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.auth, "signed_out_list_is_usable", return_value=False
+        ), patch.object(
+            server.state, "new_session_key", return_value=b"n" * 32
+        ) as renewed, patch.object(
+            server.auth, "start_signed_out_list_again"
+        ) as again:
+            with self.assertLogs("mariner.server", level="WARNING"):
+                self._started()
+        renewed.assert_called_once_with()
+        again.assert_called_once_with()
+        self.assertEqual(server.flask_app.config["SECRET_KEY"], b"n" * 32)
 
     def test_sessions_are_signed_with_the_key_that_is_kept(self) -> None:
         # The same at every start: a page left open goes on working, and

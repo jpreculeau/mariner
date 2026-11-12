@@ -94,17 +94,29 @@ export default function Settings() {
     }
     // Until Mariner is back, and says what it now runs with: left as
     // it was, the notice would ask for another restart.
-    for (let tries = 0; tries < BACK_WITHIN_TRIES; tries++) {
+    let back = false;
+    for (let tries = 0; tries < BACK_WITHIN_TRIES && !back; tries++) {
       await new Promise((resolve) => setTimeout(resolve, BACK_EVERY_MS));
       try {
         const now = await api.settings();
         queryClient.setQueryData<SettingsResponse>(KEY, now);
-        break;
+        back = true;
       } catch {
         // Not back yet.
       }
     }
     setRestarting(false);
+    if (back) {
+      toast.success(t("settings.back"));
+      // The button went with the notice it was in.
+      setTimeout(() => {
+        const nowhere =
+          !document.activeElement || document.activeElement === document.body;
+        if (nowhere) document.getElementById("content")?.focus();
+      });
+    } else {
+      toast.error(t("settings.notBack"));
+    }
   };
 
   const heading = (
@@ -336,7 +348,8 @@ function ChangePassword() {
       const aboutTheNew =
         failure instanceof ApiError &&
         (failure.code === "password_too_short" ||
-          failure.code === "password_too_long");
+          failure.code === "password_too_long" ||
+          failure.code === "password_too_common");
       refuse(aboutTheNew ? "new" : "current", { failure });
     } finally {
       underWay.current = false;

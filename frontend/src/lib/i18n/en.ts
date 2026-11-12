@@ -20,7 +20,7 @@ export const en = {
   "access.refused.title": "Mariner did not open its page",
   "access.shut.title": "Mariner cannot open its page",
   "access.shut.text":
-    "It cannot use the folder it keeps its password in, so it lets nobody in rather than anybody. On the computer it runs on, Mariner's log says which folder: give it to the account Mariner runs under, make sure it can be written, and restart Mariner.",
+    "It cannot use the folder it keeps its password in, so it lets nobody in rather than anybody. On the computer it runs on, Mariner's log says which folder: give it to the account Mariner runs under, make sure it can be written, and restart Mariner. This page then opens by itself.",
   "signIn.signedOut": "Your session is over. Sign in again.",
   "signIn.heading": "Sign in to Mariner",
   "signIn.password": "Password",
@@ -68,11 +68,14 @@ export const en = {
   "settings.restarting": "Restarting…",
   "settings.restarted":
     "Mariner is restarting. This page comes back by itself.",
+  "settings.back": "Mariner is back.",
+  "settings.notBack":
+    "Mariner is not back yet. Check that it is running, then reload this page.",
   "settings.password": "Password",
   "settings.password.current": "Current password",
   "settings.password.repeat": "Repeat the new password",
   "settings.password.change": "Change the password",
-  "settings.password.changed": "Password changed. Other pages were signed out.",
+  "settings.password.changed": "Password changed. Other browsers were signed out.",
   "settings.signOut": "Sign out",
 
   // Appearance menu
@@ -210,7 +213,7 @@ export const en = {
   "error.unknown": "Something went wrong (error {status}).",
   "error.wrong_password": "This is not the password.",
   "error.too_many_attempts":
-    "Too many wrong passwords. Try again in {seconds} seconds.",
+    "Too many wrong passwords. Try again in {seconds} s.",
   "error.password_too_common":
     "This password is among the first anyone would try. Choose another.",
   "error.state_unavailable":

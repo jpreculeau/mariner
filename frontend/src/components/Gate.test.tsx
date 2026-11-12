@@ -527,4 +527,107 @@ describe("Gate", () => {
     await screen.findByRole("heading", { name: "Sign in to Mariner" });
     expect(client.getQueryData(["files", "."])).toBeUndefined();
   });
+
+  it("asks again where it stands when a password was chosen meanwhile", async () => {
+    // From another tab or device: the form to choose one would stay,
+    // with nothing to do but reload.
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: false, signed_in: false });
+    vi.spyOn(api, "choosePassword").mockRejectedValue(
+      new ApiError(
+        409,
+        "A password has already been chosen.",
+        "password_already_set",
+      ),
+    );
+    renderGate();
+    await screen.findByRole("heading", { name: "Choose a password" });
+    state.mockResolvedValue({ password_set: true, signed_in: false });
+    type("New password", "secret words");
+    type("Repeat the password", "secret words");
+    fireEvent.click(screen.getByRole("button", { name: "Set the password" }));
+    expect(
+      await screen.findByRole("heading", { name: "Sign in to Mariner" }),
+    ).toBeInTheDocument();
+  });
+
+  it("ties what it says of the session to the field that takes focus", async () => {
+    const realFetch = globalThis.fetch;
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: true, signed_in: true });
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ code: "login_required", description: "Sign in." }),
+          { status: 401 },
+        ),
+      );
+    try {
+      renderGate();
+      await screen.findByText("the printer's page");
+      state.mockResolvedValue({ password_set: true, signed_in: false });
+      fireEvent.click(screen.getByRole("button", { name: "ask" }));
+      const field = await screen.findByLabelText("Password");
+      expect(field).toHaveAccessibleDescription(
+        "Your session is over. Sign in again.",
+      );
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  it("goes on asking while the page is shut", async () => {
+    // Put right and restarted, Mariner opens it without a reload.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const state = vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        unavailable: true,
+      });
+      renderGate();
+      await screen.findByRole("alert");
+      state.mockResolvedValue({ password_set: true, signed_in: false });
+      await vi.advanceTimersByTimeAsync(5500);
+      expect(
+        await screen.findByRole("heading", { name: "Sign in to Mariner" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the keyboard's place when another try is asked for", async () => {
+    vi.spyOn(api, "authState").mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    renderGate();
+    const again = await screen.findByRole("button", { name: "Try again" });
+    again.focus();
+    fireEvent.click(again);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(document.getElementById("content")),
+    );
+  });
+
+  it("enters when another tab of the browser signs in", async () => {
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: true, signed_in: false });
+    renderGate();
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+    state.mockResolvedValue({ password_set: true, signed_in: true });
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", {
+          key: "mariner-page-key",
+          newValue: "another-tab",
+        }),
+      );
+    });
+    expect(await screen.findByText("the printer's page")).toBeInTheDocument();
+  });
 });

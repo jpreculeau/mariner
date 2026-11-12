@@ -62,7 +62,8 @@ def _checked(given: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _kept() -> Dict[str, Any]:
     """What was changed from the page, as far as it can be read."""
-    raw = state.read(_KEPT_AS)
+    off = {"uvtools_enabled": False, "sdcp_enabled": False}
+    raw = None if state.is_makeshift() else state.read(_KEPT_AS)
     if raw is None:
         if state.is_makeshift() or state.exists(_KEPT_AS):
             # Something was set that cannot be read. The slicers'
@@ -72,15 +73,20 @@ def _kept() -> Dict[str, Any]:
                 "The settings changed from the page cannot be read: the "
                 "slicers' interfaces stay off"
             )
-            return {"uvtools_enabled": False, "sdcp_enabled": False}
+            return dict(off)
         return {}
     try:
         held = json.loads(raw)
         if not isinstance(held, dict):
             raise ValueError("not an object")
     except ValueError as error:
-        logger.warning("The settings changed from the page cannot be read: %s", error)
-        return {}
+        # As above: damaged, it may have held the slicers switched off.
+        logger.warning(
+            "The settings changed from the page cannot be read (%s): the "
+            "slicers' interfaces stay off",
+            error,
+        )
+        return dict(off)
     good: Dict[str, Any] = {}
     for name, value in held.items():
         try:

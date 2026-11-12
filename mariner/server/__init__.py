@@ -176,12 +176,24 @@ def main() -> None:
 
     # The same key at every start: a page left open goes on working, and
     # whoever is signed in stays so.
-    flask_app.config["SECRET_KEY"] = state.session_key()
+    if auth.signed_out_list_is_usable():
+        flask_app.config["SECRET_KEY"] = state.session_key()
+    else:
+        # The sessions signed out of would all work again: every session
+        # ends instead, by a new key.
+        logger.warning(
+            "What was signed out of cannot be read: every browser has to "
+            "sign in again"
+        )
+        flask_app.config["SECRET_KEY"] = state.new_session_key()
+        auth.start_signed_out_list_again()
 
     # Asked for before a body is taken in, not once it has been stored.
     early.password_refusal = lambda method, path, headers: auth.refusal(
         path,
-        sessions.read(flask_app, headers.get("Cookie", "")),
+        sessions.read(
+            flask_app, headers.get("Cookie", ""), headers.get(auth.KEY_HEADER, "")
+        ),
         headers.get(auth.KEY_HEADER, ""),
         method,
     )

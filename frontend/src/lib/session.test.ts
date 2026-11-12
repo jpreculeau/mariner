@@ -213,6 +213,19 @@ describe("the key of the page", () => {
     expect(sent(0)["X-Mariner-Key"]).toBe("kept-key");
   });
 
+  it("is the one another tab was given since", async () => {
+    // The password changed there: this tab goes on with the new key
+    // rather than ask for the password again.
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(signedIn())
+      .mockImplementation(() => Promise.resolve(json(200, {})));
+    await api.signIn("secret words");
+    localStorage.setItem("mariner-page-key", "newer-key");
+    await api.printStatus();
+    expect(sent(1)["X-Mariner-Key"]).toBe("newer-key");
+  });
+
   it("is forgotten on signing out", async () => {
     globalThis.fetch = vi
       .fn()

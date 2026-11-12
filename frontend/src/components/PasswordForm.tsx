@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { PasswordField } from "@/components/PasswordField";
 import { useAccess } from "@/lib/access";
+import { ApiError } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -13,7 +14,7 @@ import { usePageTitle } from "@/hooks/use-page-title";
  */
 export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const choosing = mode === "choose";
-  const { choosePassword, signIn, signedOutUnasked } = useAccess();
+  const { choosePassword, signIn, signedOutUnasked, retry } = useAccess();
   const { t, lang } = useI18n();
   usePageTitle(t(choosing ? "title.choosePassword" : "title.signIn"));
 
@@ -60,6 +61,13 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
       await (choosing ? choosePassword(password) : signIn(password));
     } catch (failure) {
       refuse("password", { failure });
+      if (
+        failure instanceof ApiError &&
+        failure.code === "password_already_set"
+      ) {
+        // Chosen from elsewhere meanwhile: the form to show is another.
+        retry();
+      }
     } finally {
       underWay.current = false;
       setBusy(false);
@@ -89,7 +97,10 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
           </p>
         )}
         {!choosing && signedOutUnasked && (
-          <p className="mt-2 text-base leading-relaxed text-muted-foreground">
+          <p
+            id="session-over"
+            className="mt-2 text-base leading-relaxed text-muted-foreground"
+          >
             {t("signIn.signedOut")}
           </p>
         )}
@@ -100,6 +111,8 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         id="password"
         label={t(choosing ? "choose.new" : "signIn.password")}
         hint={choosing ? t("choose.hint") : undefined}
+        // Focus lands in the field: what happened is read with it.
+        describedBy={!choosing && signedOutUnasked ? "session-over" : undefined}
         autoComplete={choosing ? "new-password" : "current-password"}
         autoFocus
         value={password}

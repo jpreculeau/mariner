@@ -145,7 +145,10 @@ class PasswordTest(_WithState):
 
 class AttemptsTest(_WithState):
     def _claims(self, times: int, now: float, known: bool = False) -> list:
-        return [auth.claim_attempt(known, now=now) for _ in range(times)]
+        return [
+            auth.claim_attempt("known" if known else "others", now=now)
+            for _ in range(times)
+        ]
 
     def test_a_few_wrong_ones_cost_nothing(self) -> None:
         expect(self._claims(3, now=100.0)).to_equal([0, 0, 0])
@@ -155,11 +158,11 @@ class AttemptsTest(_WithState):
         waits = []
         now = 100.0
         for _ in range(8):
-            wait = auth.claim_attempt(False, now=now)
+            wait = auth.claim_attempt("others", now=now)
             waits.append(wait)
             now += wait
             # Once it has waited, it is looked at; and is wrong again.
-            expect(auth.claim_attempt(False, now=now)).to_equal(0)
+            expect(auth.claim_attempt("others", now=now)).to_equal(0)
         expect(waits[:5]).to_equal([1, 2, 4, 8, 16])
         # Never so long that the owner is kept out for good by someone
         # else's attempts.
@@ -169,16 +172,16 @@ class AttemptsTest(_WithState):
         self._claims(5, now=100.0)
         # Three for nothing, a fourth after a second, and so on: here two
         # were turned away, which counts for nothing.
-        expect(auth.claim_attempt(False, now=100.0)).to_equal(1)
-        expect(auth.claim_attempt(False, now=100.5)).to_equal(1)
-        expect(auth.claim_attempt(False, now=101.0)).to_equal(0)
+        expect(auth.claim_attempt("others", now=100.0)).to_equal(1)
+        expect(auth.claim_attempt("others", now=100.5)).to_equal(1)
+        expect(auth.claim_attempt("others", now=101.0)).to_equal(0)
 
     def test_one_that_is_turned_away_is_not_counted(self) -> None:
         self._claims(3, now=100.0)
         for _ in range(50):
-            expect(auth.claim_attempt(False, now=100.0)).to_equal(1)
-        expect(auth.claim_attempt(False, now=101.0)).to_equal(0)
-        expect(auth.claim_attempt(False, now=101.0)).to_equal(2)
+            expect(auth.claim_attempt("others", now=100.0)).to_equal(1)
+        expect(auth.claim_attempt("others", now=101.0)).to_equal(0)
+        expect(auth.claim_attempt("others", now=101.0)).to_equal(2)
 
     def test_only_one_of_several_at_once_is_looked_at(self) -> None:
         # Sent together to get several looked at for one wait.
@@ -188,7 +191,7 @@ class AttemptsTest(_WithState):
         got = []
 
         def claim() -> None:
-            got.append(auth.claim_attempt(False, now=101.0))
+            got.append(auth.claim_attempt("others", now=101.0))
 
         threads = [threading.Thread(target=claim) for _ in range(16)]
         for thread in threads:
@@ -199,17 +202,17 @@ class AttemptsTest(_WithState):
 
     def test_the_right_one_starts_the_count_again(self) -> None:
         self._claims(8, now=100.0)
-        auth.note_success(False)
+        auth.note_success("others")
         expect(self._claims(3, now=100.0)).to_equal([0, 0, 0])
 
     def test_a_browser_that_signed_in_before_does_not_wait_for_others(self) -> None:
         # Else anyone on the network could keep the owner out, a wrong
         # password every half minute.
         self._claims(10, now=100.0)
-        expect(auth.claim_attempt(False, now=100.0) > 0).to_equal(True)
+        expect(auth.claim_attempt("others", now=100.0) > 0).to_equal(True)
         expect(self._claims(3, now=100.0, known=True)).to_equal([0, 0, 0])
         # It has a count of its own all the same.
-        expect(auth.claim_attempt(True, now=100.0)).to_equal(1)
+        expect(auth.claim_attempt("known", now=100.0)).to_equal(1)
 
 
 class _Page(FlaskClient):
@@ -383,6 +386,8 @@ class SignInTest(_WithClient):
         expect(response.status_code).to_equal(429)
         expect(response.get_json()["code"]).to_equal("too_many_attempts")
         expect(int(response.headers["Retry-After"]) >= 1).to_equal(True)
+        # One second is not "1 seconds".
+        expect(" 1 seconds" in response.get_json()["description"]).to_equal(False)
         # Not even looked at: that is the point.
         checked.assert_not_called()
 
@@ -791,3 +796,145 @@ class PageKeyTest(_WithClient):
         expect(new == self.key).to_equal(False)
         response = self.client.get("/api/settings", headers={"X-Mariner-Key": new})
         expect(response.status_code).to_equal(200)
+
+
+class OnlyTheCookieTest(_WithClient):
+    """What a program that is sent the cookie, and not the key, can do to
+    the reader: nothing that lasts."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        auth.set_password(PASSWORD)
+        self.post("/api/auth/login", password=PASSWORD)
+        self.key = self.client.environ_base["HTTP_X_MARINER_KEY"]
+        with self.client.session_transaction() as held:
+            self.held = dict(held)
+
+    def _without_the_key(self) -> Any:
+        other = self.application.test_client()
+        other.environ_base.pop("HTTP_X_MARINER_KEY", None)
+        with other.session_transaction() as held:
+            held.update(self.held)
+        return other
+
+    def test_it_cannot_sign_the_reader_out(self) -> None:
+        thief = self._without_the_key()
+        thief.post("/api/auth/logout")
+        expect(auth.let_in(self.held, self.key)).to_equal(True)
+
+    def test_it_cannot_use_up_the_attempts_of_the_reader(self) -> None:
+        # Its wrong passwords are counted with those of everyone else.
+        thief = self._without_the_key()
+        for _ in range(6):
+            thief.post("/api/auth/login", json={"password": "not the one"})
+        answer = self.client.post(
+            "/api/auth/password", json={"current": PASSWORD, "new": "new password!"}
+        )
+        expect(answer.status_code).to_equal(200)
+
+    def test_the_reader_s_browser_does_not_wait_for_the_wrong_ones_of_others(
+        self,
+    ) -> None:
+        # Through signing out and in again, which is when it matters.
+        self.post("/api/auth/logout")
+        stranger = self.application.test_client()
+        for _ in range(6):
+            stranger.post("/api/auth/login", json={"password": "not the one"})
+        expect(
+            stranger.post("/api/auth/login", json={"password": PASSWORD}).status_code
+        ).to_equal(429)
+        expect(self.post("/api/auth/login", password=PASSWORD).status_code).to_equal(
+            200
+        )
+
+    def test_wrong_current_passwords_are_counted_when_changing_it(self) -> None:
+        for _ in range(3):
+            self.post("/api/auth/password", current="wrong", new="new password!")
+        answer = self.post("/api/auth/password", current=PASSWORD, new="new password!")
+        expect(answer.status_code).to_equal(429)
+
+    def test_a_browser_is_known_only_under_the_password_it_signed_in_with(
+        self,
+    ) -> None:
+        self.post("/api/auth/logout")
+        with self.client.session_transaction() as held:
+            left = dict(held)
+        expect(auth.is_known_with(left)).to_equal(True)
+        auth.set_password("another one!")
+        expect(auth.is_known_with(left)).to_equal(False)
+
+    def test_another_session_of_the_same_reader_does_not_come_before_this_one(
+        self,
+    ) -> None:
+        # Signed in on a phone too: that session's cookie, set here by
+        # another program for a longer path, is sent first, with this
+        # page's key.
+        from mariner.server import sessions
+
+        phone = self.application.test_client()
+        answer = phone.post("/api/auth/login", json={"password": PASSWORD})
+        theirs = answer.headers["Set-Cookie"].split(";")[0]
+        mine = self.client.get("/api/auth/state").headers["Set-Cookie"].split(";")[0]
+        for header in (f"{theirs}; {mine}", f"{mine}; {theirs}"):
+            held = sessions.read(self.application, header, self.key)
+            expect(auth.let_in(held, self.key)).to_equal(True)
+
+    def test_signing_in_again_ends_the_session_that_was_there(self) -> None:
+        self.post("/api/auth/login", password=PASSWORD)
+        expect(auth.let_in(self.held, self.key)).to_equal(False)
+
+    def test_changing_the_password_makes_a_new_key_for_sessions(self) -> None:
+        # What was signed with the old one, or forged from a copy of it,
+        # is of no use.
+        before = self.application.config["SECRET_KEY"]
+        self.addCleanup(self.application.config.__setitem__, "SECRET_KEY", before)
+        answer = self.client.post(
+            "/api/auth/password", json={"current": PASSWORD, "new": "new password!"}
+        )
+        expect(answer.status_code).to_equal(200)
+        expect(self.application.config["SECRET_KEY"] == before).to_equal(False)
+        expect(state.read("session.key")).to_equal(
+            self.application.config["SECRET_KEY"]
+        )
+        expect(self.state_of()["signed_in"]).to_equal(True)
+
+
+class SignedOutListTest(_WithState):
+    def setUp(self) -> None:
+        super().setUp()
+        auth.forget_signed_out()
+        self.addCleanup(auth.forget_signed_out)
+
+    def test_it_is_usable_when_there_is_none(self) -> None:
+        expect(auth.signed_out_list_is_usable()).to_equal(True)
+
+    def test_it_is_usable_when_it_reads(self) -> None:
+        auth._note_signed_out("abc")
+        auth.forget_signed_out()
+        expect(auth.signed_out_list_is_usable()).to_equal(True)
+
+    def test_it_is_not_when_it_is_there_and_cannot_be_read(self) -> None:
+        # Then every session signed out of would work again: the caller
+        # ends them all.
+        import os
+
+        auth._note_signed_out("abc")
+        for spoil in (
+            lambda path: os.chmod(path, 0o644),
+            lambda path: path.write_bytes(b"{"),
+            lambda path: path.write_bytes(b"[]"),
+        ):
+            auth.forget_signed_out()
+            path = self.root / "s" / "signed-out.json"
+            os.chmod(path, 0o600)
+            path.write_bytes(b"{}")
+            spoil(path)
+            expect(auth.signed_out_list_is_usable()).to_equal(False)
+
+    def test_what_is_signed_out_of_is_kept_longer_than_a_session_lasts(self) -> None:
+        # The clock of a small board can be behind when it is noted.
+        import time
+
+        auth._note_signed_out("abc")
+        kept = json.loads(state.read("signed-out.json") or b"{}")
+        expect(kept["abc"] > time.time() + 45 * 86400).to_equal(True)

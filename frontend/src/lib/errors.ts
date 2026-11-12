@@ -31,7 +31,7 @@ export function errorText(error: unknown, t: Translate, lang: Lang): string {
     if (lang === "en") return error.message;
     if (error.code === "too_many_attempts") {
       // How long, which the server's words say.
-      const seconds = /(\d+) seconds/.exec(error.message)?.[1];
+      const seconds = /(\d+) seconds?/.exec(error.message)?.[1];
       return seconds ? t(key, { seconds }) : error.message;
     }
     if (error.code === "type_not_supported") {

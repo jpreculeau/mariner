@@ -8,10 +8,11 @@ usual, would let that other program sign everyone out for as long as its
 cookie lasts, and keep the page from acting at all.
 
 So every cookie of that name is tried. One Mariner did not sign is never
-taken: making one takes the key. Of those it signed, one that is signed
-in comes first: anyone is given a signed cookie by asking for a token,
-and that one, set by another program, must not come before the reader's
-own.
+taken: making one takes the key. Of those it signed, the one that goes
+with the key the page sent comes first, then one that is signed in:
+anyone is given a signed cookie by asking for a token, and neither that
+one nor the session of another of the reader's browsers, set here by
+another program, must come before the reader's own.
 """
 
 from typing import Any, Callable, Dict, Iterator, Mapping, Optional
@@ -27,8 +28,11 @@ _MOST_TRIED = 32
 # Longer than this is not one of Mariner's.
 _LONGEST = 4096
 
-# Whether what a session holds is signed in: set by mariner.server.auth.
-preferred: Optional[Callable[[Mapping[str, Any]], bool]] = None
+# How far what a session holds, sent with a key, is let in: the higher
+# the better. Set by mariner.server.auth.
+rank: Optional[Callable[[Mapping[str, Any], str], int]] = None
+# Sent with the session: see mariner.server.auth.
+KEY_HEADER = "X-Mariner-Key"
 
 
 def _values(cookie_header: str, name: str) -> Iterator[str]:
@@ -45,8 +49,9 @@ def _values(cookie_header: str, name: str) -> Iterator[str]:
             yield value
 
 
-def read(application: Flask, cookie_header: str) -> Dict[str, Any]:
-    """What the session of a request holds, from its ``Cookie`` header.
+def read(application: Flask, cookie_header: str, key: str = "") -> Dict[str, Any]:
+    """What the session of a request holds, from its ``Cookie`` header and
+    the key sent with it.
 
     Empty when it carries none that Mariner signed. Usable before there
     is a request to speak of: by the web server, as headers come in.
@@ -58,7 +63,8 @@ def read(application: Flask, cookie_header: str) -> Dict[str, Any]:
     if serializer is None:
         return {}
     lifetime = int(application.permanent_session_lifetime.total_seconds())
-    first: Optional[Dict[str, Any]] = None
+    best: Optional[Dict[str, Any]] = None
+    best_rank = -1
     for value in _values(cookie_header, application.config["SESSION_COOKIE_NAME"]):
         try:
             held = serializer.loads(value, max_age=lifetime)
@@ -66,11 +72,12 @@ def read(application: Flask, cookie_header: str) -> Dict[str, Any]:
             continue
         if not isinstance(held, dict):
             continue
-        if preferred is None or preferred(held):
-            return held
-        if first is None:
-            first = held
-    return first or {}
+        ranked = rank(held, key) if rank is not None else 0
+        # The first of the best: the one that goes with the key the page
+        # sent, before one that is merely signed in, before the others.
+        if ranked > best_rank:
+            best, best_rank = held, ranked
+    return best or {}
 
 
 class Sessions(SecureCookieSessionInterface):
@@ -79,4 +86,10 @@ class Sessions(SecureCookieSessionInterface):
     ) -> Optional[SecureCookieSession]:
         if self.get_signing_serializer(app) is None:
             return None
-        return self.session_class(read(app, request.headers.get("Cookie", "")))
+        return self.session_class(
+            read(
+                app,
+                request.headers.get("Cookie", ""),
+                request.headers.get(KEY_HEADER, ""),
+            )
+        )

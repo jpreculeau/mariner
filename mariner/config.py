@@ -212,6 +212,10 @@ def get_state_directory() -> str:
     return str(state_config.get("directory", default_directory))
 
 
+# Where things are kept when the state directory cannot be made: in the
+# home of the account Mariner runs under, as when it is run by hand.
+STATE_FALLBACKS: List[str] = ["~/.mariner/state"]
+
 DEFAULT_CACHE_DIRECTORY = "/var/cache/mariner"
 
 

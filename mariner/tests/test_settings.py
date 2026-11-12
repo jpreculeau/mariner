@@ -139,7 +139,7 @@ class SettingsTest(_WithState):
             config.overrides.clear()
             with self.assertLogs("mariner.server.settings", level="WARNING"):
                 settings.apply()
-            expect(config.get_uvtools_enabled()).to_equal(True)
+            expect(config.get_assume_printer_off()).to_equal(False)
 
     def test_slicers_are_off_when_what_was_set_cannot_be_read(self) -> None:
         # They may have been switched off there: on by default, they
@@ -152,6 +152,14 @@ class SettingsTest(_WithState):
             settings.apply()
         expect(config.get_uvtools_enabled()).to_equal(False)
         expect(config.get_sdcp_enabled()).to_equal(False)
+
+    def test_slicers_are_off_when_what_was_set_is_damaged(self) -> None:
+        for broken in (b"{", b"[1]", b""):
+            state.write("settings.json", broken)
+            with self.assertLogs("mariner.server.settings", level="WARNING"):
+                settings.apply()
+            expect(config.get_uvtools_enabled()).to_equal(False)
+            expect(config.get_sdcp_enabled()).to_equal(False)
 
     def test_slicers_are_off_when_nothing_kept_can_be_reached(self) -> None:
         with patch.object(state, "is_makeshift", return_value=True):

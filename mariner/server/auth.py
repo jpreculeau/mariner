@@ -20,7 +20,15 @@ import threading
 import time
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-from flask import Blueprint, Response, jsonify, make_response, request, session
+from flask import (
+    Blueprint,
+    Response,
+    current_app,
+    jsonify,
+    make_response,
+    request,
+    session,
+)
 from flask_wtf.csrf import generate_csrf
 
 from mariner import config, passwords
@@ -168,9 +176,10 @@ def clear_if_asked_on_the_boot_drive() -> bool:
 _FREE_ATTEMPTS = 3
 _LONGEST_WAIT_SECS = 30
 _attempts_lock = threading.Lock()
-# For each count (others, known): wrong ones so far, and when the last
-# was looked at.
-_attempts: Dict[bool, Tuple[int, float]] = {}
+# For each count ("others", "known", "change"): wrong ones so far, and
+# when the last was looked at. Changing the password has a count of its
+# own: wrong ones sent to sign in do not keep the owner from changing it.
+_attempts: Dict[str, Tuple[int, float]] = {}
 
 
 def forget_attempts() -> None:
@@ -178,7 +187,7 @@ def forget_attempts() -> None:
         _attempts.clear()
 
 
-def claim_attempt(known: bool, now: Optional[float] = None) -> int:
+def claim_attempt(count: str, now: Optional[float] = None) -> int:
     """Seconds to wait before a password is looked at; 0 to look at it now.
 
     Nothing for a few, then twice as long after each wrong one, up to
@@ -188,19 +197,19 @@ def claim_attempt(known: bool, now: Optional[float] = None) -> int:
     """
     moment = time.monotonic() if now is None else now
     with _attempts_lock:
-        failures, last = _attempts.get(known, (0, 0.0))
+        failures, last = _attempts.get(count, (0, 0.0))
         if failures >= _FREE_ATTEMPTS:
             wait = min(_LONGEST_WAIT_SECS, 2 ** (failures - _FREE_ATTEMPTS))
             left = math.ceil(last + wait - moment)
             if left > 0:
                 return left
-        _attempts[known] = (failures + 1, moment)
+        _attempts[count] = (failures + 1, moment)
         return 0
 
 
-def note_success(known: bool) -> None:
+def note_success(count: str) -> None:
     with _attempts_lock:
-        _attempts.pop(known, None)
+        _attempts.pop(count, None)
 
 
 # -- who is signed in ------------------------------------------------------
@@ -217,6 +226,32 @@ _SIGNED_OUT_AS = "signed-out.json"
 _MOST_SIGNED_OUT = 200
 _signed_out_lock = threading.Lock()
 _signed_out: Optional[Dict[str, float]] = None
+
+
+def signed_out_list_is_usable() -> bool:
+    """Whether what was signed out of can be read, or there is none.
+
+    When it is there and cannot be read, the sessions signed out of
+    would all work again: whoever starts Mariner then ends every session.
+    """
+    if not state.exists(_SIGNED_OUT_AS):
+        return True
+    try:
+        kept = json.loads(state.read(_SIGNED_OUT_AS) or b"")
+    except ValueError:
+        return False
+    return isinstance(kept, dict)
+
+
+def start_signed_out_list_again() -> None:
+    """Leave an empty list, once every session has been ended."""
+    global _signed_out
+    with _signed_out_lock:
+        _signed_out = {}
+        try:
+            state.write(_SIGNED_OUT_AS, b"{}")
+        except OSError as error:
+            logger.warning("Could not keep what was signed out of: %s", error)
 
 
 def forget_signed_out() -> None:
@@ -249,7 +284,9 @@ def _note_signed_out(number: str) -> None:
     now = time.time()
     with _signed_out_lock:
         sessions_out = _signed_out_sessions()
-        sessions_out[number] = now + _SESSION_DAYS * 86400
+        # Twice as long as a session lasts: the clock of a small board
+        # can be behind when this is noted.
+        sessions_out[number] = now + 2 * _SESSION_DAYS * 86400
         # Those that would have ended by now need no keeping, nor the
         # oldest beyond what anyone signs out of.
         lasting = sorted(
@@ -287,7 +324,7 @@ def signed_in_with(held: Mapping[str, Any]) -> bool:
 # own. So signing in also gives the page a key, which it keeps where only
 # pages of this very address can read, and sends with each request; the
 # session holds its hash.
-KEY_HEADER = "X-Mariner-Key"
+KEY_HEADER = sessions.KEY_HEADER
 _KEY_AS = "key"
 # Asked for by the browser itself, for a picture in the page: it sends no
 # key. Looking only.
@@ -312,10 +349,26 @@ def is_signed_in() -> bool:
 
 # Kept through signing out: this browser signed in before.
 _KNOWN_AS = "known"
+_KNOWN_KEY_AS = "known_key"
+
+
+def is_known_with(held: Mapping[str, Any]) -> bool:
+    """Whether *held* is of a browser that signed in under the password
+    in place, and has the key of the page to show for it."""
+    current = generation()
+    return current is not None and held.get(_KNOWN_AS) == current
 
 
 def _is_known() -> bool:
-    return session.get(_KNOWN_AS) is True
+    # With the key the page was given then: the cookie alone, which
+    # other programs on the same computer are sent, is not enough.
+    expected = session.get(_KNOWN_KEY_AS)
+    key = request.headers.get(KEY_HEADER, "")
+    return (
+        is_known_with(session)
+        and isinstance(expected, str)
+        and hmac.compare_digest(_hash_of(key), expected)
+    )
 
 
 def _sign_in(under: str) -> Response:
@@ -324,13 +377,19 @@ def _sign_in(under: str) -> Response:
     The answer carries the key of the page, and a token for the new
     session: the one the page holds went with the session it had.
     """
+    # The session that was there ends: its cookie, copied or set again
+    # by another program, must not go on working beside the new one.
+    before = session.get(_SESSION_AS)
+    if isinstance(before, str) and signed_in_with(session):
+        _note_signed_out(before)
     # A new session: nothing a page held before signing in comes along.
     session.clear()
     key = secrets.token_urlsafe(32)
     session[_SIGNED_IN_AS] = under
     session[_SESSION_AS] = secrets.token_hex(8)
     session[_KEY_AS] = _hash_of(key)
-    session[_KNOWN_AS] = True
+    session[_KNOWN_AS] = under
+    session[_KNOWN_KEY_AS] = _hash_of(key)
     session.permanent = True
     return jsonify({"success": True, "csrf_token": generate_csrf(), "page_key": key})
 
@@ -443,7 +502,8 @@ def _wait_answer(wait: int) -> Response:
     answer = _refuse(
         "too_many_attempts",
         "Too Many Attempts",
-        f"Too many wrong passwords. Try again in {wait} seconds.",
+        "Too many wrong passwords. Try again in "
+        f"{wait} second{'' if wait == 1 else 's'}.",
         429,
     )
     answer.headers["Retry-After"] = str(wait)
@@ -487,7 +547,7 @@ def login() -> Response:
     given = _given("password")
     if given is None:
         return _not_a_password()
-    known = _is_known()
+    known = "known" if _is_known() else "others"
     wait = claim_attempt(known)
     if wait:
         return _wait_answer(wait)
@@ -503,13 +563,17 @@ def login() -> Response:
 
 @auth_api.route("/logout", methods=["POST"])
 def logout() -> Response:
-    known = _is_known()
+    known = session.get(_KNOWN_AS) if _is_known() else None
+    known_key = session.get(_KNOWN_KEY_AS)
     number = session.get(_SESSION_AS)
-    if isinstance(number, str) and signed_in_with(session):
+    # Only with the key of the page: the cookie alone, which other
+    # programs on the same computer are sent, signs nobody out.
+    if isinstance(number, str) and is_signed_in():
         _note_signed_out(number)
     session.clear()
     if known:
-        session[_KNOWN_AS] = True
+        session[_KNOWN_AS] = known
+        session[_KNOWN_KEY_AS] = known_key
         session.permanent = True
     # With a token for what comes next, which is signing in again.
     return jsonify({"success": True, "csrf_token": generate_csrf()})
@@ -520,12 +584,12 @@ def change_password() -> Response:
     """Replace the password; every other session ends."""
     if not is_signed_in():
         body = refusal("/api/auth-change", session) or {}
-        return make_response(jsonify(body), 401)
+        return make_response(jsonify(body), status_of(body))
     given = _given("current", "new")
     if given is None:
         return _not_a_password()
     current, new = given
-    wait = claim_attempt(True)
+    wait = claim_attempt("change")
     if wait:
         return _wait_answer(wait)
     if not check_password(current):
@@ -539,13 +603,24 @@ def change_password() -> Response:
         changed = set_password(new)
     except PasswordNotAllowed as error:
         # The current one was right: not a wrong attempt.
-        note_success(True)
+        note_success("change")
         return _refuse(error.code, "Password Not Taken", error.description, 400)
-    note_success(True)
+    note_success("change")
+    # A new key for sessions too: what was signed with the old one, or
+    # could be forged from a copy of it, is of no use.
+    current_app.config["SECRET_KEY"] = state.new_session_key()
     logger.warning("The password was changed from %s", request.remote_addr)
     return _sign_in(changed)
 
 
-# A session that is signed in comes before one that is not, among the
-# cookies a request carries.
-sessions.preferred = signed_in_with
+def _rank(held: Mapping[str, Any], key: str) -> int:
+    """How far a session is let in: with the key the page sent, signed
+    in, or neither."""
+    if let_in(held, key):
+        return 2
+    return 1 if signed_in_with(held) else 0
+
+
+# Among the cookies a request carries, the session that goes with the
+# key comes first, then one that is signed in.
+sessions.rank = _rank

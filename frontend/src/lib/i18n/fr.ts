@@ -21,7 +21,7 @@ export const fr: Record<TextKey, string> = {
   "access.refused.title": "Mariner n'a pas ouvert sa page",
   "access.shut.title": "Mariner ne peut pas ouvrir sa page",
   "access.shut.text":
-    "Il ne peut pas utiliser le dossier où il garde son mot de passe\u00a0: plutôt que de laisser entrer n'importe qui, il ne laisse entrer personne. Sur l'ordinateur qui le fait tourner, le journal de Mariner indique le dossier\u00a0: donnez-le au compte de Mariner, vérifiez qu'il est accessible en écriture, puis redémarrez Mariner.",
+    "Il ne peut pas utiliser le dossier où il garde son mot de passe\u00a0: plutôt que de laisser entrer n'importe qui, il ne laisse entrer personne. Sur l'ordinateur qui le fait tourner, le journal de Mariner indique le dossier\u00a0: donnez-le au compte de Mariner, vérifiez qu'il est accessible en écriture, puis redémarrez Mariner. Cette page s'ouvrira alors toute seule.",
   "signIn.signedOut": "Votre session est terminée. Reconnectez-vous.",
   "signIn.heading": "Connexion à Mariner",
   "signIn.password": "Mot de passe",
@@ -68,12 +68,15 @@ export const fr: Record<TextKey, string> = {
   "settings.restart": "Redémarrer Mariner",
   "settings.restarting": "Redémarrage…",
   "settings.restarted": "Mariner redémarre. Cette page revient toute seule.",
+  "settings.back": "Mariner est de retour.",
+  "settings.notBack":
+    "Mariner n'est pas encore de retour. Vérifiez qu'il tourne, puis rechargez cette page.",
   "settings.password": "Mot de passe",
   "settings.password.current": "Mot de passe actuel",
   "settings.password.repeat": "Répéter le nouveau mot de passe",
   "settings.password.change": "Changer le mot de passe",
   "settings.password.changed":
-    "Mot de passe changé. Les autres pages ont été déconnectées.",
+    "Mot de passe changé. Les autres navigateurs ont été déconnectés.",
   "settings.signOut": "Se déconnecter",
 
   "appearance.open": "Apparence",
@@ -201,7 +204,7 @@ export const fr: Record<TextKey, string> = {
   "error.unknown": "Une erreur s'est produite (erreur {status}).",
   "error.wrong_password": "Ce n'est pas le mot de passe.",
   "error.too_many_attempts":
-    "Trop de mots de passe erronés. Réessayez dans {seconds}\u00a0secondes.",
+    "Trop de mots de passe erronés. Réessayez dans {seconds}\u00a0s.",
   "error.password_too_common":
     "Ce mot de passe fait partie des premiers que n'importe qui essaierait. Choisissez-en un autre.",
   "error.state_unavailable":

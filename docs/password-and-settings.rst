@@ -25,7 +25,9 @@ Mariner runs on, before opening the page at all:
    The password was set (in /var/lib/mariner).
 
 The same command replaces a password at any time, and signs every browser
-out.
+out. Where Mariner is not installed as a service but run by hand under your
+own account, run it as that account (``mariner set-password``, without
+``sudo``), so that it works on the folder that account uses.
 
 The password is not kept as it is typed, but as a *hash* from which it cannot
 be read back, not even by Mariner. It can be replaced, never recovered.
@@ -92,8 +94,9 @@ From a terminal on the computer Mariner runs on (over SSH, for instance):
 .. code-block:: console
 
    $ sudo mariner reset-password
-   The password was cleared. Open Mariner's page to choose a new one: until
-   then, whoever opens it first can.
+   The password was cleared (in /var/lib/mariner).
+   Until a new one is chosen, whoever opens Mariner's page first chooses it.
+   To choose it here instead, run: mariner set-password
 
 Until a new one is chosen, whoever opens the page first chooses it. To
 choose it yourself in the same breath, run ``sudo mariner set-password``
@@ -162,6 +165,12 @@ Mariner runs under and no other account can read it. It holds:
 - ``sdcp_history.json``: the prints shown to ChiTuBox as past tasks.
 
 Keep this directory when you move an installation; in Docker it is a volume.
+
+A copy of this directory is a way in: with ``session.key`` a session can be
+made without knowing the password. Keep backups and images of the card where
+you would keep the password. If a copy may have got out, change the password
+(from the page or with ``mariner set-password``): Mariner then makes a new
+key and every session made with the old one is refused.
 
 If Mariner cannot use this directory (it belongs to another account, after
 a copy made as ``root`` or a Docker mount; or the drive has gone read-only),

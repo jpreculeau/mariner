@@ -7,6 +7,7 @@ import { toast } from "@/components/ui/sonner";
 
 const KEY = ["auth"];
 const RETRY_EVERY_MS = 5000;
+const RENEW_EVERY_MS = 12 * 60 * 60 * 1000;
 
 /**
  * Knows whether this page is signed in, and signs it in and out.
@@ -28,7 +29,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     staleTime: Infinity,
     refetchOnWindowFocus: false,
     refetchInterval: (query) =>
-      query.state.status === "success" ? false : RETRY_EVERY_MS,
+      query.state.status === "success" && !query.state.data?.unavailable
+        ? // Twice a day in a page left open: the month a session lasts
+          // starts again each time.
+          RENEW_EVERY_MS
+        : RETRY_EVERY_MS,
   });
   // Whether the last answer was a failure, and whether the reader asked
   // for another try: tried by itself, the page goes on saying that
@@ -71,6 +76,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   const signedOutUnasked =
     access === "sign-in" && wasIn.current && !leftByItself.current;
 
+  const failure = failed.current;
   const value = useMemo<AccessState>(() => {
     const signedIn = () => {
       // What was said to who was not signed in no longer holds.
@@ -90,7 +96,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         setAsked(true);
         refetch();
       },
-      failure: failed.current,
+      failure,
       signedOutUnasked,
       choosePassword: async (password) => {
         await api.choosePassword(password);
@@ -113,7 +119,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         });
       },
     };
-  }, [access, queryClient, refetch, signedOutUnasked]);
+  }, [access, queryClient, refetch, signedOutUnasked, failure]);
 
   return (
     <AccessContext.Provider value={value}>{children}</AccessContext.Provider>

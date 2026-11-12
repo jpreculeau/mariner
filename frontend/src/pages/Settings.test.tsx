@@ -236,7 +236,7 @@ describe("Settings", () => {
       );
       await waitFor(() =>
         expect(toast.success).toHaveBeenCalledWith(
-          "Password changed. Other pages were signed out.",
+          "Password changed. Other browsers were signed out.",
         ),
       );
       expect(screen.getByLabelText("Current password")).toHaveValue("");
@@ -317,5 +317,61 @@ describe("Settings", () => {
       () => expect(screen.queryByText(/takes effect when Mariner/)).toBeNull(),
       { timeout: 6000 },
     );
+  }, 10000);
+
+  it("puts the refusal of a password too common by the new one", async () => {
+    vi.spyOn(api, "changePassword").mockRejectedValue(
+      new ApiError(
+        400,
+        "This password is among the first anyone would try. Choose another.",
+        "password_too_common",
+      ),
+    );
+    renderSettings();
+    await screen.findByLabelText("Current password");
+    type("Current password", "old words");
+    type("New password", "motdepasse");
+    type("Repeat the new password", "motdepasse");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change the password" }),
+    );
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText("New password")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByLabelText("Current password")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+  });
+
+  it("says that Mariner is back, and keeps the keyboard's place", async () => {
+    const content = document.createElement("main");
+    content.id = "content";
+    content.tabIndex = -1;
+    document.body.appendChild(content);
+    try {
+      const fetched = vi.spyOn(api, "settings").mockResolvedValue({
+        ...shown,
+        restart_needed: true,
+      });
+      vi.spyOn(api, "restart").mockResolvedValue();
+      renderSettings();
+      const button = await screen.findByRole("button", {
+        name: "Restart Mariner",
+      });
+      fetched.mockResolvedValue({ ...shown, restart_needed: false });
+      button.focus();
+      fireEvent.click(button);
+      await waitFor(
+        () => expect(toast.success).toHaveBeenCalledWith("Mariner is back."),
+        { timeout: 6000 },
+      );
+      // The button went with the notice it was in.
+      await waitFor(() => expect(document.activeElement).toBe(content));
+    } finally {
+      content.remove();
+    }
   }, 10000);
 });

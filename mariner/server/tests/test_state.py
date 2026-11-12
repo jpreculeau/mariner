@@ -221,3 +221,21 @@ class DegradedTest(TestCase):
             expect(state.read("anything")).to_equal(None)
         expect(made).to_equal([])
         expect((self.root / "own").exists()).to_equal(False)
+
+    def test_looking_makes_no_folder_when_another_is_there(self) -> None:
+        # The one the account's home holds, say, from a run by hand.
+        wanted = self.root / "state"
+        own = self.root / "own"
+        own.mkdir(mode=0o700)
+        self._configured(wanted)
+        with patch("mariner.server.state._FALLBACKS", [str(own)]):
+            expect(state.read("anything")).to_equal(None)
+            expect(state.exists("anything")).to_equal(False)
+        expect(wanted.exists()).to_equal(False)
+
+    def test_a_new_key_replaces_the_one_in_place(self) -> None:
+        self._configured(self.root / "state")
+        first = state.session_key()
+        second = state.new_session_key()
+        expect(second == first).to_equal(False)
+        expect(state.session_key()).to_equal(second)

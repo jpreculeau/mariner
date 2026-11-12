@@ -63,6 +63,10 @@ export interface SettingsResponse {
   can_restart: boolean;
 }
 
+// Who is told when the server says that this page is not signed in, or
+// when where it stands may have changed.
+const signedOutListeners = new Set<() => void>();
+
 // The key of the page: given by signing in, sent with every request.
 // The session's cookie is not enough to be let in, because the browser
 // sends it to the page of every program on the same computer; the key
@@ -71,14 +75,27 @@ const PAGE_KEY = "mariner-page-key";
 let pageKey: string | null | undefined;
 
 function getPageKey(): string | null {
-  // Looked for once: where nothing is kept, it lasts as long as the page.
-  if (pageKey === undefined) pageKey = remembered(PAGE_KEY);
-  return pageKey;
+  // What is kept comes first: another tab may have been given a newer
+  // one. Where nothing is kept, it lasts as long as the page.
+  const kept = remembered(PAGE_KEY);
+  if (kept !== null) pageKey = kept;
+  return pageKey ?? null;
 }
 
 function setPageKey(key: string) {
   pageKey = key;
   remember(PAGE_KEY, key);
+}
+
+// Another tab of the browser was given a key, or forgot its own: this
+// one asks again where it stands. A tab waiting on the form then enters
+// by itself.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === PAGE_KEY) {
+      signedOutListeners.forEach((listener) => listener());
+    }
+  });
 }
 
 /** Forget the key of the page: on signing out. */
@@ -320,9 +337,6 @@ function unreachable(): ApiError {
   // What a browser throws then is in its own words, and its own language.
   return new ApiError(0, "Mariner cannot be reached.", "network");
 }
-
-// Who is told when the server says that this page is not signed in.
-const signedOutListeners = new Set<() => void>();
 
 /**
  * Be told when the server answers that this page is not signed in: its

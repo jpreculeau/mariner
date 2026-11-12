@@ -21,7 +21,7 @@ SESSION_KEY_BYTES = 32
 
 # Where to keep things when the folder asked for cannot be used: in the
 # home of the account, which stays from one start to the next.
-_FALLBACKS: List[str] = [os.path.join("~", ".mariner", "state")]
+_FALLBACKS: List[str] = config.STATE_FALLBACKS
 
 _directory: Optional[Path] = None
 # Whether the folder in use is not the one that holds what was kept: the
@@ -126,21 +126,30 @@ def _path(name: str) -> Path:
     return directory() / _checked(name)
 
 
-def _is_there() -> bool:
-    """Whether there is a folder to look in, without making one."""
+def _existing() -> Optional[Path]:
+    """The folder to look in, if there is one: none is made for looking."""
     if _directory is not None:
-        return True
-    wanted = [config.get_state_directory()] + _FALLBACKS
-    there = [one for one in wanted if os.path.isdir(os.path.expanduser(one))]
-    # The first that is there is the one that would be used, if it can
-    # be: no other is made for the sake of looking.
-    return bool(there) and _usable(there[0])
+        return _directory
+    wanted = os.path.expanduser(config.get_state_directory())
+    if os.path.lexists(wanted):
+        # The one asked for, or nothing: if it cannot be used, what it
+        # holds is out of reach, and no other is looked in for it.
+        return Path(wanted) if _usable(wanted) else None
+    for fallback in _FALLBACKS:
+        fallback = os.path.expanduser(fallback)
+        if os.path.isdir(fallback) and _usable(fallback):
+            return Path(fallback)
+    return None
+
+
+def _is_there() -> bool:
+    return _existing() is not None
 
 
 def exists(name: str) -> bool:
     """Whether anything is kept under *name*, usable or not."""
-    _checked(name)
-    return _is_there() and os.path.lexists(_path(name))
+    folder = _existing()
+    return folder is not None and os.path.lexists(folder / _checked(name))
 
 
 def read(name: str) -> Optional[bytes]:
@@ -150,10 +159,11 @@ def read(name: str) -> Optional[bytes]:
     left otherwise is not trusted, and reads as nothing. Looking makes no
     folder: only keeping something does.
     """
-    _checked(name)
-    if not _is_there():
+    folder = _existing()
+    if folder is None:
+        _checked(name)
         return None
-    path = _path(name)
+    path = folder / _checked(name)
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
     except OSError:
@@ -219,6 +229,11 @@ def session_key() -> bytes:
         return kept
     if kept is not None or os.path.lexists(_path("session.key")):
         logger.warning("The key of sessions could not be used; making a new one")
+    return new_session_key()
+
+
+def new_session_key() -> bytes:
+    """Make and keep a new key: every session signed with the old ends."""
     key = secrets.token_bytes(SESSION_KEY_BYTES)
     try:
         write("session.key", key)
