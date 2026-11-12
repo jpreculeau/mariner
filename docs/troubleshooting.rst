@@ -228,8 +228,8 @@ file again from the slicer.
 
 The other causes are a file damaged on the drive, and a file made by a
 slicer version whose format Mariner does not know yet. The reason is in the
-logs, at the end of a line starting with ``Could not read``, written once
-when the file is first read:
+logs, at the end of a line holding ``Could not read``, written when the
+file is first read:
 
 .. code-block:: shell-session
 
@@ -241,8 +241,9 @@ or the printer's own screen, is started as before.
 If a file that prints correctly from the printer's own screen is listed this
 way, please report it with that line.
 
-Asked for the details or the preview of such a file, the web API answers 422
-with the code ``file_unreadable``.
+Asked for the details of such a file, the web API answers 422 with the code
+``file_unreadable``; so it does for the preview when the picture itself is
+missing or damaged.
 
 Printing
 --------

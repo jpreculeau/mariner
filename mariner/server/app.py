@@ -41,8 +41,16 @@ app.config.from_mapping(
         # lowercase aliases are deprecated in flask-caching 2.x and gone in
         # 3.x, where they fail at import with ImportStringError.
         "CACHE_TYPE": "FileSystemCache",
-        "CACHE_DIR": config.get_cache_directory(),
+        # A folder of its own within the cache directory: it is emptied at
+        # each start, and other things are kept beside it.
+        "CACHE_DIR": os.path.join(config.get_cache_directory(), "files"),
         "CACHE_DEFAULT_TIMEOUT": 300,
+        # No limit to the number of entries. Past one, the cache drops
+        # entries in no useful order, and a file whose entry was dropped is
+        # read again in full at every listing. What is kept is bounded
+        # otherwise: two entries a file (see mariner.server.utils), and
+        # emptied at each start.
+        "CACHE_THRESHOLD": 0,
         "SECRET_KEY": os.urandom(16),
     }
 )

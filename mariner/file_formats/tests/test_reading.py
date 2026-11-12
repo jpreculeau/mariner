@@ -60,6 +60,33 @@ class ReadingTest(TestCase):
     def test_read_text(self) -> None:
         expect(reading.read_text(self.file, 8, 4, "name")).to_equal("name")
 
+    def test_passes_stored(self) -> None:
+        old, new = 0x12FD0019, 0x12FD0086
+        for magic, version, level, passes in (
+            (old, 2, 4, 4),
+            (old, 3, 16, 16),
+            (old, 3, 1, 1),
+            (old, 3, 0, 1),
+            # The first version has no anti-aliasing; the field is not one.
+            (old, 1, 4, 1),
+            # Not a number of passes any slicer offers.
+            (old, 3, 17, 1),
+            # The newer format folds the passes into one image a layer.
+            (new, 3, 4, 1),
+        ):
+            expect(reading.passes_stored(magic, version, level)).to_equal(passes)
+
+    def test_the_layer_ceiling_is_on_layers_not_on_their_passes(self) -> None:
+        most = reading.MAX_LAYER_COUNT
+        reading.check_layer_count(self.file, most, 0, 0, passes=16)
+        with self.assertRaises(MalformedFile) as raised:
+            reading.check_layer_count(self.file, most + 1, 0, 0, passes=16)
+        expect(f"{most + 1} layers" in str(raised.exception)).to_equal(True)
+        # Two layers of eight bytes fit in sixteen; two passes of them do not.
+        reading.check_layer_count(self.file, 2, 0, 8)
+        with self.assertRaises(MalformedFile):
+            reading.check_layer_count(self.file, 2, 0, 8, passes=2)
+
     def test_read_text_of_no_length_reads_nothing(self) -> None:
         # Wherever it is said to be: some writers leave the place unset.
         expect(reading.read_text(self.file, 0x7FFFFFFF, 0, "name")).to_equal("")

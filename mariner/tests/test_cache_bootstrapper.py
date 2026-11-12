@@ -102,6 +102,27 @@ class CacheBootstrapperRobustnessTest(TestCase):
 
     @patch("mariner.server.read_cached_sliced_model_file")
     @patch("mariner.server.read_cached_preview")
+    def test_a_malformed_preview_is_not_reported_twice_either(
+        self, preview: MagicMock, sliced: MagicMock
+    ) -> None:
+        preview.side_effect = MalformedFile("no complete row")
+        with self.assertNoLogs("mariner.server", "WARNING"):
+            read, previewed = self._warmed(sliced, preview)
+        expect(previewed).to_equal(["a.ctb", "b.ctb", "c.ctb"])
+
+    @patch("mariner.server.read_cached_sliced_model_file")
+    @patch("mariner.server.read_cached_preview")
+    def test_what_is_not_a_file_is_left_alone(
+        self, preview: MagicMock, sliced: MagicMock
+    ) -> None:
+        os.mkfifo(self.root / "pipe.ctb")
+        os.mkfifo(self.root / "._pipe.ctb")
+        (self.root / "folder.ctb").mkdir()
+        read, _ = self._warmed(sliced, preview)
+        expect(read).to_equal(["a.ctb", "b.ctb", "c.ctb"])
+
+    @patch("mariner.server.read_cached_sliced_model_file")
+    @patch("mariner.server.read_cached_preview")
     def test_companion_files_from_a_mac_are_left_alone(
         self, preview: MagicMock, sliced: MagicMock
     ) -> None:

@@ -707,6 +707,16 @@ class MarinerServerTest(TestCase):
             expect(response.status_code).to_equal(422)
             expect(response.get_json()["code"]).to_equal("file_unreadable")
 
+    def test_a_malformed_file_being_printed_is_not_reported_again(self) -> None:
+        from mariner.file_formats.reading import MalformedFile
+        from mariner.server.api import _read_selected_file
+
+        with patch(
+            "mariner.server.api.read_cached_sliced_model_file",
+            side_effect=MalformedFile("cut short"),
+        ), self.assertNoLogs("mariner.server.api", level="WARNING"):
+            expect(_read_selected_file("foobar.ctb")).to_equal(None)
+
     def test_details_and_preview_when_the_read_itself_fails(self) -> None:
         # The drive, or the memory: not something sending the file again
         # would cure, so the file is not blamed.

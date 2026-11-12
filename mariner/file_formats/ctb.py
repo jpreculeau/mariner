@@ -148,15 +148,17 @@ class CTBFile(SlicedModelFile):
             layer_def_size = CTBLayerDef.get_size()
             # The passes after the first are not needed to follow a print,
             # but a file that lacks part of them is as incomplete.
-            entry_count = ctb_header.layer_count * passes_stored(
+            passes = passes_stored(
                 ctb_header.magic, ctb_header.version, ctb_header.anti_alias_level
             )
             check_layer_count(
                 file,
-                entry_count,
+                ctb_header.layer_count,
                 ctb_header.layer_defs_offset,
                 layer_def_size,
+                passes,
             )
+            entry_count = ctb_header.layer_count * passes
             end_byte_offset_by_entry = []
             for layer in range(0, entry_count):
                 layer_def = read_struct(

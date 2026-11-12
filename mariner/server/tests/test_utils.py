@@ -1,5 +1,7 @@
 import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -88,6 +90,10 @@ class _CountingFormat:
             raise OSError(5, "Input/output error")
         if contents == b"REPLACED MEANWHILE":
             path.write_bytes(b"the one that replaced it")
+        if contents == b"SLOW":
+            time.sleep(0.05)
+        if contents.startswith(b"CHANGES EVERY TIME"):
+            path.write_bytes(contents + b"!")
         if contents == b"IS THE LOCK HELD":
             cls.lock_was_held = utils._rendering.locked()
 
@@ -228,6 +234,66 @@ class CachedReadsTest(TestCase):
             "the one that replaced it"
         )
         expect(_CountingFormat.reads).to_equal(2)
+
+    def _entries(self) -> int:
+        return len(os.listdir(utils.cache.cache._path))
+
+    def test_a_replaced_file_takes_the_place_of_the_one_before(self) -> None:
+        # What is remembered must not grow with every new slice sent under
+        # the same name: past its limit the cache drops entries, and what
+        # it drops is then read again at every listing.
+        utils.read_cached_sliced_model_file(self.path)
+        utils.read_cached_preview(self.path)
+        entries = self._entries()
+        for round in range(20):
+            self.path.write_bytes(b"x" * (round + 10))
+            utils.read_cached_sliced_model_file(self.path)
+            utils.read_cached_preview(self.path)
+        expect(self._entries()).to_equal(entries)
+
+    def test_a_refusal_takes_the_place_of_the_file_before_and_back(self) -> None:
+        utils.read_cached_sliced_model_file(self.path)
+        entries = self._entries()
+        self.path.write_bytes(b"MALFORMED")
+        with self.assertRaises(MalformedFile):
+            utils.read_cached_sliced_model_file(self.path)
+        self.path.write_bytes(b"whole again")
+        expect(utils.read_cached_sliced_model_file(self.path)).to_equal("whole again")
+        expect(self._entries()).to_equal(entries)
+
+    def test_many_files_stay_remembered(self) -> None:
+        # More than the 500 entries the cache library keeps unless told.
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(300)]
+        for path in paths:
+            path.write_bytes(b"x")
+            utils.read_cached_sliced_model_file(path)
+            utils.read_cached_preview(path)
+        _CountingFormat.reads = 0
+        for path in paths:
+            utils.read_cached_sliced_model_file(path)
+            utils.read_cached_preview(path)
+        expect(_CountingFormat.reads).to_equal(0)
+
+    def test_requests_arriving_together_share_one_read(self) -> None:
+        self.path.write_bytes(b"SLOW")
+        for read in (utils.read_cached_preview, utils.read_cached_sliced_model_file):
+            _CountingFormat.reads = 0
+            threads = [
+                threading.Thread(target=read, args=(self.path,)) for _ in range(4)
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            expect(_CountingFormat.reads).to_equal(1)
+
+    def test_a_file_that_never_stops_changing_is_not_blamed(self) -> None:
+        # It is being written. Not a file to send again: one to wait for.
+        self.path.write_bytes(b"CHANGES EVERY TIME")
+        with self.assertRaises(OSError) as raised:
+            utils.read_cached_sliced_model_file(self.path)
+        expect(isinstance(raised.exception, MalformedFile)).to_equal(False)
+        expect(_CountingFormat.reads).to_equal(3)
 
     def test_previews_are_rendered_one_at_a_time(self) -> None:
         self.path.write_bytes(b"IS THE LOCK HELD")

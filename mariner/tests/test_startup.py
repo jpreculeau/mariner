@@ -24,6 +24,8 @@ class StartupTest(TestCase):
         ), patch.object(server.logging.getLogger(), "handlers", []), patch.object(
             server, "keep_requests_on_one_line", side_effect=record("log filter")
         ), patch.object(
+            server.cache, "clear", side_effect=record("cache emptied")
+        ), patch.object(
             server, "remove_stale_scratch_files", side_effect=record("cleanup")
         ), patch.object(
             server, "CacheBootstrapper", side_effect=record("cache warm-up")
@@ -46,6 +48,9 @@ class StartupTest(TestCase):
                 # about a request.
                 "log filter",
                 "cleanup",
+                # What was remembered of files that are gone since goes
+                # too; the warm-up reads again those that are there.
+                "cache emptied",
                 "cache warm-up",
                 "providers",
                 "serve",

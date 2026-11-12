@@ -14,6 +14,7 @@ from mariner.server.app import app as flask_app, csrf
 from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
 from mariner.server.utils import (
+    cache,
     read_cached_preview,
     read_cached_sliced_model_file,
 )
@@ -134,6 +135,9 @@ def main() -> None:
     # is reported.
     remove_stale_scratch_files()
 
+    # What was remembered of files deleted since is of no use, and nothing
+    # else removes it. The warm-up reads again the files that are there.
+    cache.clear()
     CacheBootstrapper().start()
     start_providers()
 

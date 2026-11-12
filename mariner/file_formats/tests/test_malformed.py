@@ -127,6 +127,36 @@ class MalformedFileTest(TestCase):
                 expected.end_byte_offset_by_layer
             )
 
+    def test_a_slicer_table_of_no_size_is_not_read(self) -> None:
+        whole = bytearray((SAMPLES / "stairs.ctb").read_bytes())
+        struct.pack_into("<I", whole, _offset_of(CTBHeader, "slicer_size"), 0)
+        read = CTBFile.read(self._copy("stairs.ctb", bytes(whole)))
+        expect(read.slicer_version).to_equal("")
+
+    def test_an_encrypted_file_cut_in_a_layer_stored_encrypted_is_refused(
+        self,
+    ) -> None:
+        # Such a layer gives a second pair of numbers, which are not places
+        # in the file. Where the layer ends is said by the first pair.
+        whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())
+        with open(SAMPLES / "bolts.ctb", "rb") as file:
+            header, slicer = ctb_encrypted._read_settings(file)
+        last = (
+            slicer.layer_table_offset
+            + (slicer.layer_count - 1) * ctb_encrypted.CTBLayerPointer.get_size()
+        )
+        layer_offset = struct.unpack_from("<I", whole, last)[0]
+        layer = ctb_encrypted.CTBEncryptedLayerDef
+        struct.pack_into(
+            "<I", whole, layer_offset + _offset_of(layer, "encrypted_data_length"), 1024
+        )
+        CTBEncryptedFile.read(self._copy("bolts.ctb", bytes(whole)))
+        where = layer_offset + _offset_of(layer, "data_length")
+        length = struct.unpack_from("<I", whole, where)[0]
+        struct.pack_into("<I", whole, where, length + 100_000)
+        with self.assertRaises(MalformedFile):
+            CTBEncryptedFile.read(self._copy("bolts.ctb", bytes(whole)))
+
     def test_a_printer_name_of_no_length_is_read_wherever_it_is_said_to_be(
         self,
     ) -> None:

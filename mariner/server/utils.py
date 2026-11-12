@@ -1,3 +1,4 @@
+import errno
 import io
 import logging
 import os
@@ -44,19 +45,28 @@ def read_sliced_model_file(path: Path) -> SlicedModelFile:
     return get_file_format(str(path)).read(path)
 
 
-# Rendering a preview takes memory in proportion to the picture, and several
-# megabytes for the largest allowed. One at a time keeps what a burst of
-# requests can cost to that of a single one.
+def _render_preview(path: Path) -> bytes:
+    image: png.Image = get_file_format(str(path)).read_preview(path)
+    rendered = io.BytesIO()
+    image.write(rendered)
+    return rendered.getvalue()
+
+
+# Rendering a preview takes about ten megabytes for the largest picture
+# allowed, and around a second of processor. One at a time keeps the memory
+# a burst of requests can take to that of a single one. The warm-up at
+# start is a process of its own, and may render one more beside.
 _rendering = threading.Lock()
+# Parsing takes little memory, but seconds for a large file on a small
+# board. One at a time lets requests that arrive together for the same file
+# share one read instead of each doing its own.
+_parsing = threading.Lock()
 
 
 def read_preview(path: Path) -> bytes:
     """Render the preview of the sliced model file at *path* as a PNG."""
     with _rendering:
-        image: png.Image = get_file_format(str(path)).read_preview(path)
-        rendered = io.BytesIO()
-        image.write(rendered)
-        return rendered.getvalue()
+        return _render_preview(path)
 
 
 @dataclass(frozen=True)
@@ -101,41 +111,39 @@ def _read_version(
     return outcome
 
 
-# The cached forms take the version of the file as arguments only so that it
-# is part of what the answer is remembered under. The answers never expire:
-# they are for one version of the file, and are not asked for again once the
-# file has another.
-
-
-@cache.memoize(timeout=0)
-def _cached_sliced_model_file(
-    filename: str, modified_ns: int, size: int
-) -> Union[SlicedModelFile, _Unreadable]:
-    return _read_version(read_sliced_model_file, filename, (modified_ns, size))
-
-
-@cache.memoize(timeout=0)
-def _cached_preview(
-    filename: str, modified_ns: int, size: int
-) -> Union[bytes, _Unreadable]:
-    return _read_version(read_preview, filename, (modified_ns, size))
-
-
 _ATTEMPTS = 3
 
 
 def _current(
-    cached: Callable[[str, int, int], Union[TRead, _Unreadable]], path: Path
+    kind: str, read: Callable[[Path], TRead], lock: threading.Lock, path: Path
 ) -> TRead:
+    """What *read* makes of the file at *path*, done once per version.
+
+    What is remembered is kept under the path, with the version it is for:
+    a new version takes the place of the one before, so that a file holds
+    one entry of each kind however many times it is replaced.
+    """
+    key = f"{kind}:{path}"
     for _ in range(_ATTEMPTS):
-        try:
-            outcome = cached(str(path), *_version_of(path))
-        except _ChangedWhileRead:
-            continue
+        version = _version_of(path)
+        stored = cache.get(key)
+        if stored is None or stored[0] != version:
+            with lock:
+                # A request that waited here finds what the one before it
+                # has just read.
+                stored = cache.get(key)
+                if stored is None or stored[0] != version:
+                    try:
+                        stored = (version, _read_version(read, str(path), version))
+                    except _ChangedWhileRead:
+                        continue
+                    cache.set(key, stored, timeout=0)
+        outcome: Union[TRead, _Unreadable] = stored[1]
         if isinstance(outcome, _Unreadable):
             raise MalformedFile(outcome.reason)
         return outcome
-    raise MalformedFile("the file keeps changing: it is being written")
+    # Not a file to send again: one to wait for.
+    raise OSError(errno.EBUSY, "the file keeps changing: it is being written")
 
 
 def read_cached_sliced_model_file(path: Path) -> SlicedModelFile:
@@ -145,7 +153,7 @@ def read_cached_sliced_model_file(path: Path) -> SlicedModelFile:
     file, MalformedFile if it is not what its format says, which is found
     out once per version too, and whatever else the read raises.
     """
-    return _current(_cached_sliced_model_file, path)
+    return _current("details", read_sliced_model_file, _parsing, path)
 
 
 def read_cached_preview(path: Path) -> bytes:
@@ -153,7 +161,7 @@ def read_cached_preview(path: Path) -> bytes:
 
     Raises as ``read_cached_sliced_model_file`` does.
     """
-    return _current(_cached_preview, path)
+    return _current("preview", _render_preview, _rendering, path)
 
 
 TReturn = TypeVar("TReturn")

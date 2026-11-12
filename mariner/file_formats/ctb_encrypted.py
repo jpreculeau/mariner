@@ -274,6 +274,7 @@ class CTBEncryptedFile(SlicedModelFile):
                 pointer_size,
             )
             end_byte_offset_by_layer = []
+            stored_ends = []
             for layer in range(0, ctb_slicer.layer_count):
                 pointer = read_struct(
                     file,
@@ -284,6 +285,9 @@ class CTBEncryptedFile(SlicedModelFile):
                 layer_def = read_struct(
                     file, CTBEncryptedLayerDef, pointer.layer_offset, "layer"
                 )
+                # Where the layer ends in the file, whether or not part of
+                # it is stored encrypted.
+                stored_ends.append(layer_def.layer_def_offset + layer_def.data_length)
                 enc_end = (
                     layer_def.encrypted_data_offset + layer_def.encrypted_data_length
                 )
@@ -295,6 +299,7 @@ class CTBEncryptedFile(SlicedModelFile):
                     )
 
             check_layers_fit(file, end_byte_offset_by_layer)
+            check_layers_fit(file, stored_ends)
 
             return CTBEncryptedFile(
                 filename=path.name,

@@ -272,6 +272,9 @@ def is_macos_companion(path: Union[str, Path]) -> bool:
     """
     if not os.path.basename(path).startswith("._"):
         return False
+    if not os.path.isfile(path):
+        # Opening what is not a file could wait without end.
+        return False
     try:
         with open(path, "rb") as file:
             return b"Mac OS X" in file.read(32)
@@ -285,7 +288,8 @@ def printable_files() -> Iterator[Path]:
     Hidden entries are left out, with all they hold, and so is whatever a
     symbolic link leads to outside the files directory: a folder reached
     through a link is not entered, and a file is given only if it stays
-    inside. So are the companion files macOS leaves.
+    inside. So are the companion files macOS leaves, and whatever is not a
+    file.
     """
     files_directory = config.get_files_directory().resolve()
     supported = get_supported_extensions()
@@ -297,7 +301,7 @@ def printable_files() -> Iterator[Path]:
             path = Path(folder) / name
             if path.is_symlink() and not stays_in_files_directory(path):
                 continue
-            if is_macos_companion(path):
+            if not path.is_file() or is_macos_companion(path):
                 continue
             yield path
 

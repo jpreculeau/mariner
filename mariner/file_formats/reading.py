@@ -16,8 +16,8 @@ from typing import BinaryIO, List, Type, TypeVar
 import png
 from typedstruct import Struct
 
-# A print of 100 000 layers at the finest layer height in use would be two
-# metres tall.
+# A print of 100 000 layers at the finest layer height in use, a hundredth
+# of a millimetre, would be a metre tall.
 MAX_LAYER_COUNT = 100_000
 # The largest previews slicers embed are a few hundred points a side: 400
 # by 300 is usual. Decoding one costs time and memory in proportion to its
@@ -86,14 +86,22 @@ def read_text(file: BinaryIO, offset: int, length: int, what: str) -> str:
 
 
 def check_layer_count(
-    file: BinaryIO, layer_count: int, table_offset: int, entry_size: int
+    file: BinaryIO,
+    layer_count: int,
+    table_offset: int,
+    entry_size: int,
+    passes: int = 1,
 ) -> None:
-    """Refuse a layer table that is empty, absurdly long, or outside the file."""
+    """Refuse a layer table that is empty, absurdly long, or outside the file.
+
+    The table holds an entry for each layer in each of the *passes* the
+    file stores (see ``passes_stored``).
+    """
     if layer_count == 0:
         raise MalformedFile("the file holds no layer")
     if layer_count > MAX_LAYER_COUNT:
         raise MalformedFile(f"the file claims {layer_count} layers")
-    if table_offset + layer_count * entry_size > size_of(file):
+    if table_offset + layer_count * passes * entry_size > size_of(file):
         raise MalformedFile("the layer table lies outside the file")
 
 
@@ -161,7 +169,7 @@ def decode_preview(width: int, height: int, data: bytes) -> png.Image:
     so a few bytes could otherwise ask for a picture of any size.
 
     The picture is built as bytes, three a point: as lists of numbers it
-    would take eight times the memory.
+    would take several times the memory.
 
     Raises MalformedFile if *data* holds no complete row.
     """
