@@ -1,5 +1,6 @@
 import logging
 import os
+import stat
 import tempfile
 from pathlib import Path
 from typing import Sequence
@@ -39,20 +40,55 @@ app.wsgi_app = WhiteNoise(app.wsgi_app)
 app.wsgi_app.add_files(frontend_dist_directory)
 
 
-def usable_cache_directory(wanted: str) -> str:
-    """*wanted*, made if need be; a folder of this run's own if it cannot be.
-
-    A cache directory left by a run under another account must not keep
-    Mariner from starting: what it keeps there is only a convenience.
-    """
+def _can_hold_the_cache(wanted: str) -> bool:
+    """Whether *wanted* is a folder Mariner may fill and empty as it likes."""
+    real = os.path.realpath(wanted)
+    if real != os.path.abspath(wanted):
+        # Reached through a link: what is there may not be Mariner's.
+        return False
+    models = config.get_files_directory().resolve()
+    if Path(real) == models or models in Path(real).parents:
+        return False
     try:
         os.makedirs(wanted, exist_ok=True)
-        if os.access(wanted, os.W_OK | os.X_OK):
-            return wanted
+        status = os.stat(wanted)
+    except OSError:
+        return False
+    # Entries are loaded as they are found: a folder of another account's
+    # could hold anything.
+    return status.st_uid == os.geteuid() and os.access(wanted, os.W_OK | os.X_OK)
+
+
+def _own_folder() -> str:
+    """A folder for this account alone, the same from one start to the next."""
+    folder = os.path.join(tempfile.gettempdir(), f"mariner-{os.geteuid()}")
+    try:
+        os.mkdir(folder, 0o700)
+    except FileExistsError:
+        pass
+    try:
+        status = os.lstat(folder)
+        if stat.S_ISDIR(status.st_mode) and status.st_uid == os.geteuid():
+            os.chmod(folder, 0o700)
+            return folder
     except OSError:
         pass
-    fallback = tempfile.mkdtemp(prefix="mariner-")
-    logger.warning("Cannot use the cache directory %r; using %r", wanted, fallback)
+    return tempfile.mkdtemp(prefix="mariner-")
+
+
+def usable_cache_directory(wanted: str) -> str:
+    """*wanted*, made if need be, or a folder of this account's own.
+
+    What is kept there is removed at each start and as room is needed, and
+    loaded as it is found. So *wanted* is not used if it is reached through
+    a link, is where the models are, or belongs to another account. Nor if
+    it cannot be made or written: a cache directory left by a run under
+    another account must not keep Mariner from starting.
+    """
+    if _can_hold_the_cache(wanted):
+        return wanted
+    fallback = _own_folder()
+    logger.warning("Not using the cache directory %r; using %r", wanted, fallback)
     return fallback
 
 
@@ -68,6 +104,7 @@ app.config.from_mapping(
         "CACHE_DIR": usable_cache_directory(
             os.path.join(config.get_cache_directory(), "parsed")
         ),
+        # Not relied on: what Mariner keeps there is stored without expiry.
         "CACHE_DEFAULT_TIMEOUT": 300,
         # No limit to the number of entries. Past one, the cache drops
         # entries in no useful order, and a file whose entry was dropped is

@@ -237,6 +237,15 @@ class MalformedFileTest(TestCase):
         expect(len(read.end_byte_offset_by_layer)).to_equal(50)
         expect(max(read.end_byte_offset_by_layer)).to_equal(5862924)
 
+    def test_an_encrypted_layer_described_past_the_end_is_refused(self) -> None:
+        whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())
+        with open(SAMPLES / "bolts.ctb", "rb") as file:
+            _, slicer = ctb_encrypted._read_settings(file)
+        for place in (len(whole) - 4, len(whole), 0x7FFFFFFF):
+            struct.pack_into("<I", whole, slicer.layer_table_offset, place)
+            with self.assertRaises(MalformedFile):
+                CTBEncryptedFile.read(self._copy("bolts.ctb", bytes(whole)))
+
     def test_an_encrypted_layer_reaching_past_the_end_is_refused(self) -> None:
         # The signature only covers the settings, so it still matches.
         whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())

@@ -57,8 +57,9 @@ Reading files
 - List a file whose transfer stopped part of the way as one that cannot be printed, so that the web page does not offer to print it; that covers every anti-aliasing pass of a `.cbddlp` or `.photon` file, and a file that holds no layer
 - Find out once per version of a file that it cannot be read, and log the reason then, instead of at every listing
 - Keep one remembered entry of each kind per file, replaced with the file, with no limit on the number of files; before, past 500 entries, files were read again at every listing
-- Start from an empty cache, keep it under 64 MB by dropping the oldest entries, and keep working when it cannot be written
-- Read the layer table of a file in blocks: the longest one allowed took seconds, during which other requests waited
+- Start from an empty cache, keep it near 64 MB and 4096 entries by dropping the oldest, and keep working when it cannot be written
+- Read the layer table of a file in blocks, and of each layer only what is needed: the longest table allowed took seconds, during which other requests waited
+- Do not use a cache directory that is reached through a link, is where the models are, or belongs to another account; use a folder of the service's own instead
 - Let requests that arrive together for the same file share one read
 - Do not remember what was read of a file that was replaced during the read
 - Compare the signature of an encrypted CTB file in full

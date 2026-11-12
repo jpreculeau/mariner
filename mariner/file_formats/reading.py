@@ -12,7 +12,7 @@ as for the preview, against a ceiling set from what real files hold.
 import dataclasses
 import os
 import struct
-from typing import BinaryIO, List, Type, TypeVar
+from typing import BinaryIO, List, Sequence, Type, TypeVar
 
 import png
 from typedstruct import Struct
@@ -144,12 +144,16 @@ def check_layers_fit(file: BinaryIO, end_byte_offset_by_layer: List[int]) -> Non
 _ENTRIES_PER_READ = 4096
 
 
-def _ends_format(struct_type: Type[Struct]) -> struct.Struct:
-    """Reads, of an entry of the layer table, where its image is and how long."""
+def fields_format(struct_type: Type[Struct], names: Sequence[str]) -> struct.Struct:
+    """Reads only the fields called *names* of a *struct_type*, in its order.
+
+    For tables of thousands of entries, where building the whole structure
+    for each entry is what takes the time.
+    """
     layout = struct_type.FORMAT_PREFIX
     for field in dataclasses.fields(struct_type):
         field_format = field.metadata["format"]
-        if field.name in ("image_offset", "image_length"):
+        if field.name in names:
             layout += field_format
         else:
             layout += f"{struct.calcsize(struct_type.FORMAT_PREFIX + field_format)}x"
@@ -175,7 +179,7 @@ def read_layer_ends(
     numbers needed are taken from each: entry by entry, the longest table
     allowed took seconds to read.
     """
-    entry = _ends_format(struct_type)
+    entry = fields_format(struct_type, ("image_offset", "image_length"))
     check_layer_count(file, layer_count, table_offset, entry.size, passes)
     size = size_of(file)
     total = layer_count * passes

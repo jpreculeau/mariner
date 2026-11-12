@@ -2,6 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 from unittest import TestCase
+from unittest.mock import patch
 
 from pyexpect import expect
 
@@ -66,12 +67,52 @@ class CacheDirectoryTest(TestCase):
         blocked.write_bytes(b"x")
         with self.assertLogs("mariner.server.app", level="WARNING"):
             fallback = usable_cache_directory(str(blocked / "parsed"))
-        self.addCleanup(os.rmdir, fallback)
         expect(os.path.isdir(fallback)).to_equal(True)
         expect(os.access(fallback, os.W_OK)).to_equal(True)
         wanted = str(Path(directory.name) / "fine" / "parsed")
         expect(usable_cache_directory(wanted)).to_equal(wanted)
         expect(os.path.isdir(wanted)).to_equal(True)
+
+    def _refused(self, wanted: Path) -> str:
+        from mariner.server.app import usable_cache_directory
+
+        with self.assertLogs("mariner.server.app", level="WARNING"):
+            used = usable_cache_directory(str(wanted))
+        expect(Path(used).resolve() == wanted.resolve()).to_equal(False)
+        return used
+
+    def test_a_cache_directory_reached_through_a_link_is_not_used(self) -> None:
+        # What it holds is removed at each start and as room is needed.
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        (root / "elsewhere").mkdir()
+        os.symlink(root / "elsewhere", root / "link")
+        self._refused(root / "link")
+        self._refused(root / "link" / "parsed")
+
+    def test_a_cache_directory_among_the_models_is_not_used(self) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        models = Path(directory.name)
+        with patch("mariner.config.get_files_directory", return_value=models):
+            self._refused(models)
+            self._refused(models / "parsed")
+        expect(os.listdir(models)).to_equal([])
+
+    def test_the_folder_used_instead_is_this_account_s_and_the_same_each_time(
+        self,
+    ) -> None:
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        blocked = Path(directory.name) / "a-file"
+        blocked.write_bytes(b"x")
+        first = self._refused(blocked / "parsed")
+        second = self._refused(blocked / "parsed")
+        expect(first).to_equal(second)
+        status = os.stat(first)
+        expect(status.st_uid).to_equal(os.geteuid())
+        expect(status.st_mode & 0o077).to_equal(0)
 
     def test_any_number_of_files_can_be_remembered(self) -> None:
         expect(app.config["CACHE_THRESHOLD"]).to_equal(0)

@@ -14,6 +14,7 @@ from mariner.file_formats.reading import (
     MalformedFile,
     check_layer_count,
     check_layers_fit,
+    fields_format,
     read_bytes,
     read_preview,
     read_struct,
@@ -266,37 +267,51 @@ class CTBEncryptedFile(SlicedModelFile):
                 "printer name",
             )
 
-            pointer_size = CTBLayerPointer.get_size()
+            # The table gives where each layer is described. Only what
+            # tells where the layer ends is read of each description.
+            pointer = fields_format(CTBLayerPointer, ("layer_offset",))
+            described = fields_format(
+                CTBEncryptedLayerDef,
+                (
+                    "layer_def_offset",
+                    "data_length",
+                    "encrypted_data_offset",
+                    "encrypted_data_length",
+                ),
+            )
             check_layer_count(
                 file,
                 ctb_slicer.layer_count,
                 ctb_slicer.layer_table_offset,
-                pointer_size,
+                pointer.size,
             )
+            table = read_bytes(
+                file,
+                ctb_slicer.layer_table_offset,
+                ctb_slicer.layer_count * pointer.size,
+                "layer table",
+            )
+            last_start = size_of(file) - described.size
             end_byte_offset_by_layer = []
             stored_ends = []
-            for layer in range(0, ctb_slicer.layer_count):
-                pointer = read_struct(
-                    file,
-                    CTBLayerPointer,
-                    ctb_slicer.layer_table_offset + layer * pointer_size,
-                    "layer table",
-                )
-                layer_def = read_struct(
-                    file, CTBEncryptedLayerDef, pointer.layer_offset, "layer"
-                )
+            for (layer_offset,) in pointer.iter_unpack(table):
+                if layer_offset > last_start:
+                    raise MalformedFile("layer lies outside the file")
+                file.seek(layer_offset)
+                (
+                    layer_def_offset,
+                    data_length,
+                    encrypted_data_offset,
+                    encrypted_data_length,
+                ) = described.unpack(file.read(described.size))
                 # Where the layer ends in the file, whether or not part of
                 # it is stored encrypted.
-                stored_ends.append(layer_def.layer_def_offset + layer_def.data_length)
-                enc_end = (
-                    layer_def.encrypted_data_offset + layer_def.encrypted_data_length
-                )
+                stored_ends.append(layer_def_offset + data_length)
+                enc_end = encrypted_data_offset + encrypted_data_length
                 if enc_end > 0:
                     end_byte_offset_by_layer.append(enc_end)
                 else:
-                    end_byte_offset_by_layer.append(
-                        layer_def.layer_def_offset + layer_def.data_length
-                    )
+                    end_byte_offset_by_layer.append(layer_def_offset + data_length)
 
             check_layers_fit(file, end_byte_offset_by_layer)
             check_layers_fit(file, stored_ends)

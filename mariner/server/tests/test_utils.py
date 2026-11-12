@@ -128,6 +128,10 @@ class CachedReadsTest(TestCase):
         self.addCleanup(patcher.stop)
         utils.empty_cache()
         self.addCleanup(utils.empty_cache)
+        # Room is made after every write here; in use, every so many.
+        self.every_write = patch.object(utils, "_WRITES_PER_SCAN", 1)
+        self.every_write.start()
+        self.addCleanup(patch.stopall)
 
     def test_a_file_is_parsed_once(self) -> None:
         expect(utils.read_cached_sliced_model_file(self.path)).to_equal("first")
@@ -295,20 +299,53 @@ class CachedReadsTest(TestCase):
         expect(isinstance(raised.exception, MalformedFile)).to_equal(False)
         expect(_CountingFormat.reads).to_equal(3)
 
-    def test_one_file_is_one_entry_however_its_name_is_spelled(self) -> None:
-        # The FAT filesystem answers to any case of a name.
+    def test_each_name_and_each_kind_has_its_own_entry(self) -> None:
         folder = Path(self.directory.name)
-        expect(utils._key("details", folder / "Model.ctb")).to_equal(
-            utils._key("details", folder / "MODEL.CTB")
-        )
-        expect(utils._key("details", self.path)).not_to_equal(
-            utils._key("preview", self.path)
-        )
-        expect(utils._key("details", self.path)).not_to_equal(
-            utils._key("details", folder / "other.ctb")
+        key = utils._key("details", self.path)
+        expect(key).to_equal(utils._key("details", Path(str(self.path))))
+        expect(key).not_to_equal(utils._key("preview", self.path))
+        # Names are not folded together in any way: what one filesystem
+        # holds for the same name, another holds for two files, and one
+        # file answered for with what was read of another is the worse
+        # mistake. A name spelled in another case costs one more read.
+        for other in ("MODEL.CTB", "modeL.ctb", "mode\u017f.ctb", "\u212aodel.ctb"):
+            expect(key).not_to_equal(utils._key("details", folder / other))
+        expect(utils._key("details", folder / "Maße.ctb")).not_to_equal(
+            utils._key("details", folder / "Masse.ctb")
         )
         # A name that is not valid text still has a key.
         utils._key("details", folder / os.fsdecode(b"\xff\xfe.ctb"))
+
+    def test_small_entries_count_for_the_room_they_take(self) -> None:
+        # A few bytes written take a whole block of the drive, or of memory.
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(12)]
+        with patch.object(utils, "MAX_CACHE_BYTES", 3 * 4096):
+            for path in paths:
+                path.write_bytes(b"x")
+                utils.read_cached_sliced_model_file(path)
+                expect(self._count() <= 3).to_equal(True)
+
+    def test_the_number_of_entries_is_limited(self) -> None:
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(12)]
+        with patch.object(utils, "MAX_CACHE_ENTRIES", 5):
+            for path in paths:
+                path.write_bytes(b"x")
+                utils.read_cached_sliced_model_file(path)
+                expect(self._count() <= 5).to_equal(True)
+        expect(utils.MAX_CACHE_ENTRIES <= 4096).to_equal(True)
+
+    def test_the_folder_is_not_gone_through_at_every_write(self) -> None:
+        # With thousands of files that alone took minutes at start.
+        self.every_write.stop()
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(32)]
+        with patch.object(utils, "_entries", wraps=utils._entries) as scans:
+            for path in paths:
+                path.write_bytes(b"x")
+                utils.read_cached_sliced_model_file(path)
+        expect(scans.call_count).to_equal(32 // utils._WRITES_PER_SCAN)
+
+    def _count(self) -> int:
+        return len(os.listdir(utils.cache.cache._path))
 
     def _size(self) -> int:
         folder = utils.cache.cache._path
@@ -317,15 +354,18 @@ class CachedReadsTest(TestCase):
     def test_what_is_remembered_is_limited_in_size(self) -> None:
         # Whatever leaves entries behind: files deleted since, or sent only
         # to fill the place, which by default is in memory.
-        paths = [self.path.with_name(f"{number}.ctb") for number in range(40)]
-        with patch.object(utils, "MAX_CACHE_BYTES", 4000):
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(12)]
+        with patch.object(utils, "MAX_CACHE_BYTES", 4 * 4096):
             for path in paths:
                 path.write_bytes(b"x" * 500)
                 utils.read_cached_sliced_model_file(path)
-                expect(self._size() <= 4000).to_equal(True)
+                expect(self._count() <= 4).to_equal(True)
+                # So that one entry is plainly older than the next.
+                time.sleep(0.002)
             # The latest are those kept.
             _CountingFormat.reads = 0
-            utils.read_cached_sliced_model_file(paths[-1])
+            for path in paths[-3:]:
+                utils.read_cached_sliced_model_file(path)
             expect(_CountingFormat.reads).to_equal(0)
             utils.read_cached_sliced_model_file(paths[0])
             expect(_CountingFormat.reads).to_equal(1)
@@ -346,6 +386,61 @@ class CachedReadsTest(TestCase):
         expect(_CountingFormat.reads).to_equal(2)
         # Said once, not at every request.
         expect(len(logs.records)).to_equal(1)
+
+    def test_an_entry_of_the_version_before_does_not_hide_what_is_kept_here(
+        self,
+    ) -> None:
+        utils.read_cached_sliced_model_file(self.path)
+        with patch.object(utils.cache, "set", return_value=False), self.assertLogs(
+            "mariner.server.utils", level="WARNING"
+        ):
+            self.path.write_bytes(b"second, longer")
+            for _ in range(3):
+                expect(utils.read_cached_sliced_model_file(self.path)).to_equal(
+                    "second, longer"
+                )
+        expect(_CountingFormat.reads).to_equal(2)
+
+    def test_a_cache_that_fails_is_left_alone_for_a_while(self) -> None:
+        # Each failed write logs at length and can leave a file behind.
+        folder = Path(utils.cache.cache._path)
+        (folder / "tmpabc.__wz_cache").write_bytes(b"")
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(3)]
+        for path in paths:
+            path.write_bytes(b"x")
+        with patch.object(utils.cache, "set", return_value=False) as stored, patch(
+            "mariner.server.utils.time.monotonic", return_value=1000.0
+        ) as clock, self.assertLogs("mariner.server.utils", level="WARNING") as logs:
+            for path in paths:
+                utils.read_cached_sliced_model_file(path)
+            # Twice for the first file, and no more.
+            expect(stored.call_count).to_equal(2)
+            expect(os.listdir(folder)).to_equal([])
+            clock.return_value = 1000.0 + utils._CACHE_RETRY_SECS
+            self.path.write_bytes(b"later")
+            utils.read_cached_sliced_model_file(self.path)
+            expect(stored.call_count).to_equal(4)
+        # And it is said once, not each time it is tried again.
+        expect(len(logs.records)).to_equal(1)
+
+    def test_what_is_kept_here_is_little(self) -> None:
+        # A parsed file can weigh megabytes in memory.
+        expect(utils._MAX_KEPT_HERE <= 32).to_equal(True)
+
+    def test_the_entry_just_written_is_not_the_one_dropped(self) -> None:
+        # Should the clock have stepped back since the others were written.
+        utils.read_cached_sliced_model_file(self.path)
+        folder = utils.cache.cache._path
+        ahead = time.time_ns() + 86_400 * 10**9
+        for name in os.listdir(folder):
+            os.utime(os.path.join(folder, name), ns=(ahead, ahead))
+        other = self.path.with_name("other.ctb")
+        other.write_bytes(b"x" * 500)
+        with patch.object(utils, "MAX_CACHE_BYTES", self._size() + 10):
+            utils.read_cached_sliced_model_file(other)
+            _CountingFormat.reads = 0
+            utils.read_cached_sliced_model_file(other)
+            expect(_CountingFormat.reads).to_equal(0)
 
     def test_a_cache_folder_that_went_missing_is_made_again(self) -> None:
         folder = utils.cache.cache._path

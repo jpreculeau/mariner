@@ -8,7 +8,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple, Type, TypeVar, Union, cast
+from typing import Callable, Dict, List, Optional, Tuple, Type, TypeVar, Union, cast
 
 import png
 from flask_caching import Cache
@@ -88,8 +88,8 @@ def _read_version(
     A file that is not what its format says is remembered as such, with
     the reason, which is logged here once: finding out can take as long as
     reading a good file, and the status of a print asks every few seconds.
-    Any other
-    failure, an error of the drive say, is raised and not remembered.
+    Any other failure, an error of the drive say, is raised and not
+    remembered.
 
     Raises _ChangedWhileRead, so that nothing is remembered, if the file was
     replaced during the read: what was read may be the new file, or part of
@@ -109,17 +109,25 @@ def _read_version(
 
 
 # What is remembered is kept in files, by default under /tmp, which on
-# current systems is in memory. Entries of files deleted since stay until
+# some systems is in memory. Entries of files deleted since stay until
 # the next start, and files can be sent only to leave some: the folder is
-# kept under this size by dropping the entries written longest ago.
+# kept near this size, and this number of entries, by dropping those
+# written longest ago.
 MAX_CACHE_BYTES = 64 * 1024 * 1024
+MAX_CACHE_ENTRIES = 4096
+_BLOCK = 4096
+_WRITES_PER_SCAN = 16
+_writes_since_scan = 0
 
 # What could not be written to the cache: the parsed files only, which are
 # asked for at every listing and every status. In this process, and no more
 # of them than this.
-_MAX_KEPT_HERE = 256
+_MAX_KEPT_HERE = 32
 _kept_here: Dict[str, Tuple[Version, object]] = {}
 _said_cache_failed = False
+# After a write to the cache failed, none is tried before this time.
+_CACHE_RETRY_SECS = 60.0
+_cache_down_until = 0.0
 
 
 def _cache_directory() -> str:
@@ -129,10 +137,13 @@ def _cache_directory() -> str:
 def _key(kind: str, path: Path) -> str:
     """What the *kind* of thing remembered of the file at *path* is kept under.
 
-    The same whatever the case of the name, as the FAT filesystem answers
-    to any; and made of plain characters, whatever those of the name.
+    Made of plain characters, whatever those of the name. Names are not
+    folded together: the FAT filesystem answers to a name in any case, but
+    which names are one file is for the filesystem to say, and taking two
+    files for one would answer for one with what was read of the other. A
+    name asked for in another case is read once more and has its own entry.
     """
-    name = os.fsencode(str(path).casefold())
+    name = os.fsencode(str(path))
     return f"{kind}:{hashlib.sha256(name).hexdigest()}"
 
 
@@ -143,9 +154,11 @@ def empty_cache() -> None:
     deleted since. A folder reached through a link is left alone, since
     what it holds may not be Mariner's.
     """
-    global _said_cache_failed
+    global _said_cache_failed, _cache_down_until, _writes_since_scan
     _kept_here.clear()
     _said_cache_failed = False
+    _cache_down_until = 0.0
+    _writes_since_scan = 0
     directory = _cache_directory()
     if os.path.islink(directory):
         logger.warning("Not emptying %r: it is a link", directory)
@@ -167,59 +180,112 @@ def empty_cache() -> None:
             pass
 
 
-def _make_room() -> None:
-    """Drop the entries written longest ago until the folder is small enough."""
+def _entries() -> List[Tuple[int, int, str]]:
+    """When each file of the cache was written, the room it takes, its path."""
+    with os.scandir(_cache_directory()) as entries:
+        return [
+            # A few bytes written take a whole block all the same.
+            (status.st_mtime_ns, max(status.st_blocks * 512, _BLOCK), entry.path)
+            for entry in entries
+            if entry.is_file(follow_symlinks=False)
+            for status in (entry.stat(follow_symlinks=False),)
+        ]
+
+
+def _make_room(keep: str) -> None:
+    """Drop the entries written longest ago until the cache is small enough.
+
+    Never the one at *keep*, which was just written: with a clock that has
+    stepped back, it would look the oldest.
+
+    The folder is gone through once in so many writes only, which with
+    thousands of files is what takes the time; the limits are passed by
+    that many entries at most in between.
+    """
+    global _writes_since_scan
+    _writes_since_scan += 1
+    if _writes_since_scan < _WRITES_PER_SCAN:
+        return
+    _writes_since_scan = 0
     try:
-        with os.scandir(_cache_directory()) as entries:
-            files = [
-                (status.st_mtime_ns, status.st_size, entry.path)
-                for entry in entries
-                if entry.is_file(follow_symlinks=False)
-                for status in (entry.stat(follow_symlinks=False),)
-            ]
+        files = _entries()
     except OSError:
         return
     total = sum(size for _, size, _ in files)
+    count = len(files)
     for _, size, file in sorted(files):
-        if total <= MAX_CACHE_BYTES:
+        if total <= MAX_CACHE_BYTES and count <= MAX_CACHE_ENTRIES:
             break
+        if file == keep:
+            continue
         try:
             os.remove(file)
         except OSError:
             continue
         total -= size
+        count -= 1
+
+
+def _remove_what_failed_writes_left() -> None:
+    try:
+        with os.scandir(_cache_directory()) as entries:
+            leftovers = [
+                entry.path for entry in entries if entry.name.endswith(".__wz_cache")
+            ]
+    except OSError:
+        return
+    for leftover in leftovers:
+        try:
+            os.remove(leftover)
+        except OSError:
+            pass
+
+
+def _write(key: str, stored: Tuple[Version, object]) -> bool:
+    """Write to the cache, unless it failed a moment ago."""
+    global _said_cache_failed, _cache_down_until
+    if time.monotonic() < _cache_down_until:
+        return False
+    if cache.set(key, stored, timeout=0):
+        return True
+    # The folder may have been removed: make it again and try once more.
+    try:
+        os.makedirs(_cache_directory(), exist_ok=True)
+    except OSError:
+        pass
+    if cache.set(key, stored, timeout=0):
+        return True
+    # Each failed write is logged at length by the cache and can leave a
+    # file behind: stop trying for a while.
+    _cache_down_until = time.monotonic() + _CACHE_RETRY_SECS
+    _remove_what_failed_writes_left()
+    if not _said_cache_failed:
+        _said_cache_failed = True
+        logger.warning(
+            "Could not write to the cache in %r; files will be read again "
+            "more often than needed",
+            _cache_directory(),
+        )
+    return False
 
 
 def _remember(kind: str, key: str, stored: Tuple[Version, object]) -> None:
-    global _said_cache_failed
-    if not cache.set(key, stored, timeout=0):
-        # The folder may have been removed: make it again and try once more.
-        try:
-            os.makedirs(_cache_directory(), exist_ok=True)
-        except OSError:
-            pass
-        if not cache.set(key, stored, timeout=0):
-            if not _said_cache_failed:
-                _said_cache_failed = True
-                logger.warning(
-                    "Could not write to the cache in %r; files will be read "
-                    "again more often than needed",
-                    _cache_directory(),
-                )
-            if kind == "details":
-                if len(_kept_here) >= _MAX_KEPT_HERE:
-                    _kept_here.pop(next(iter(_kept_here)))
-                _kept_here[key] = stored
-            return
-    _kept_here.pop(key, None)
-    _make_room()
+    if _write(key, stored):
+        _kept_here.pop(key, None)
+        _make_room(str(cache.cache._get_filename(key)))
+    elif kind == "details":
+        _kept_here.pop(key, None)
+        if len(_kept_here) >= _MAX_KEPT_HERE:
+            _kept_here.pop(next(iter(_kept_here)))
+        _kept_here[key] = stored
 
 
-def _remembered(key: str) -> Optional[Tuple[Version, object]]:
-    stored = cache.get(key)
-    if stored is None:
-        return _kept_here.get(key)
-    return stored  # type: ignore[no-any-return]
+def _remembered(key: str, version: Version) -> Optional[Tuple[Version, object]]:
+    """What is kept for *version* of the file, in the cache or in this process."""
+    for stored in (_kept_here.get(key), cache.get(key)):
+        if stored is not None and stored[0] == version:
+            return stored  # type: ignore[no-any-return]
+    return None
 
 
 _ATTEMPTS = 3
@@ -236,14 +302,15 @@ def _current(
     """
     key = _key(kind, path)
     for _ in range(_ATTEMPTS):
-        version = _version_of(path)
-        stored = _remembered(key)
-        if stored is None or stored[0] != version:
+        stored = _remembered(key, _version_of(path))
+        if stored is None:
             with lock:
                 # A request that waited here finds what the one before it
-                # has just read.
-                stored = _remembered(key)
-                if stored is None or stored[0] != version:
+                # has just read; and the file may have been replaced while
+                # it waited.
+                version = _version_of(path)
+                stored = _remembered(key, version)
+                if stored is None:
                     try:
                         stored = (version, _read_version(read, str(path), version))
                     except _ChangedWhileRead:
