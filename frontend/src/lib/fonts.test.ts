@@ -130,4 +130,12 @@ describe("the page's own files", () => {
       /\[data-sonner-toast\] \[data-button\]:focus-visible \{\s*outline: 2px solid hsl\(var\(--ring\)\);/,
     );
   });
+
+  it("sets messages in the typeface the reader chose", () => {
+    // The library sets them in the system's: the one text a reader who
+    // chose OpenDyslexic would get in another face.
+    expect(read("src/index.css")).toMatch(
+      /\[data-sonner-toaster\] \{\s*font-family: var\(--font-body\);/,
+    );
+  });
 });

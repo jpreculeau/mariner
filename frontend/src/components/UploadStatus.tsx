@@ -45,9 +45,11 @@ export function UploadStatus() {
       {sending && (
         <div className="container pt-4" {...focus.area}>
           <div className="rounded-lg border bg-card p-4">
-            <div className="mb-2 flex items-start justify-between gap-3">
+            {/* On a narrow screen the button goes under the name rather
+                than leave it a column one letter wide. */}
+            <div className="mb-2 flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
               <p
-                className="min-w-0 break-all text-sm leading-relaxed"
+                className="min-w-[min(100%,12rem)] flex-1 break-all text-sm leading-relaxed"
                 aria-hidden
               >
                 {said(done)}

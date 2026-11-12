@@ -26,11 +26,13 @@ export function PowerMenu() {
   }
 
   async function handleAction(action: "shutdown" | "reboot") {
+    // One thing at a time: the other choice is not armed meanwhile for a
+    // press that would do nothing.
+    if (underWay.current) return;
     if (confirming !== action) {
       setConfirming(action);
       return;
     }
-    if (underWay.current) return;
     underWay.current = true;
     setAsking(action);
     try {
@@ -81,11 +83,15 @@ export function PowerMenu() {
             again when it changes, and the second press switches the
             computer off. */}
         <p role="status" className="sr-only">
-          {confirming === "shutdown"
-            ? t("power.shutdownAgain")
-            : confirming === "reboot"
-              ? t("power.rebootAgain")
-              : ""}
+          {asking === "shutdown"
+            ? t("power.shutdownAsking")
+            : asking === "reboot"
+              ? t("power.rebootAsking")
+              : confirming === "shutdown"
+                ? t("power.shutdownAgain")
+                : confirming === "reboot"
+                  ? t("power.rebootAgain")
+                  : ""}
         </p>
         <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">
           {t("power.heading")}
@@ -93,6 +99,7 @@ export function PowerMenu() {
         <div className="space-y-0.5">
           <button
             onClick={() => handleAction("reboot")}
+            aria-disabled={asking !== null}
             className={cn(
               "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
               confirming === "reboot"
@@ -109,6 +116,7 @@ export function PowerMenu() {
           </button>
           <button
             onClick={() => handleAction("shutdown")}
+            aria-disabled={asking !== null}
             className={cn(
               "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
               confirming === "shutdown"

@@ -30,6 +30,8 @@ export default function Index() {
   });
 
   const status: PrinterStatus = data ? mapPrinterState(data.state) : "offline";
+  // Mariner itself did not answer.
+  const unanswered = Boolean(error || !data);
 
   // The buttons of a print go when it is over, and with them the one
   // that may have focus.
@@ -38,7 +40,7 @@ export default function Index() {
     if (focus.lost()) focusContent();
     // `focus` is new at every drawing; what it notes is not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status]);
+  }, [status, isLoading, unanswered]);
 
   // Send a command to the printer and say how it went: a command the
   // printer did not take must not look like one that it did.

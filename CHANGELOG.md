@@ -117,6 +117,8 @@ Web interface
 - Shutting down or restarting: when nothing answers, say that the computer may be going down or may not have been asked, instead of that it is going down; ask once however often the button is pressed, and say that it is being asked
 - Say that a folder is no longer there (`folder_gone`) instead of "error 404", and that a folder has the name a file was sent under (`folder_exists`)
 - Show messages at the top of a phone's screen: at the bottom they sat on the buttons they were about
+- Close the messages with Escape from anywhere in the page, show all of them rather than a stack whose hidden ones took focus unseen, set them in the typeface the reader chose, and move on to the next when one of several is closed
+- Keep the name of a file being sent readable on a narrow screen: the button to give up goes under it
 - Break a long file name in a question rather than let it push the question and its buttons off a phone's screen
 - Close a message shown above a dialog with Escape, before the dialog: the keyboard could not reach it, and it could cover the dialog's buttons. Show where the keyboard is on the button that closes a message
 - Give focus a place to go when what it was on goes away: the upload bar, the buttons of a print that is over, a list that could not be fetched; and put it back on the name of a folder that was refused

@@ -598,6 +598,11 @@ describe("Files", () => {
     pick(input, new File(["x"], "dragon.ctb"));
     await screen.findByRole("progressbar");
 
+    // On a narrow screen the button goes under the name rather than
+    // leave it a column one letter wide.
+    expect(
+      screen.getByRole("button", { name: "Cancel the upload" }).parentElement,
+    ).toHaveClass("flex-wrap");
     act(() => report(1));
 
     expect(screen.getAllByText("Finishing dragon.ctb…").length).toBeGreaterThan(

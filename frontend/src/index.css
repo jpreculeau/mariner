@@ -184,6 +184,12 @@
   }
 }
 
+/* Messages in the typeface the reader chose: the library sets them in
+   the system's. */
+[data-sonner-toaster] {
+  font-family: var(--font-body);
+}
+
 /* The button that closes a message: the library marks focus on it with a
    dark ring, on a dark ground. */
 [data-sonner-toaster] [data-sonner-toast] [data-button]:focus-visible {

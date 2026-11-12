@@ -7,25 +7,30 @@ import type { FocusEvent } from "react";
  * the page as a whole, and reading starts again from the top.
  */
 export function useFocusWithin() {
-  const within = useRef(false);
+  // What last had focus in the area, while focus has not gone elsewhere.
+  const last = useRef<Element | null>(null);
   return {
     /** For the area: `<div {...area}>`. */
     area: {
-      onFocus: () => {
-        within.current = true;
+      onFocus: (event: FocusEvent) => {
+        last.current = event.target;
       },
       onBlur: (event: FocusEvent) => {
-        // Gone elsewhere by the reader's doing. With nowhere to go, what
-        // had it may just have been removed.
-        if (event.relatedTarget) within.current = false;
+        // Gone elsewhere by the reader's doing.
+        if (event.relatedTarget) last.current = null;
       },
     },
-    /** Whether focus was in the area and is now nowhere. */
+    /**
+     * Whether focus was in the area and is now nowhere because what had
+     * it is gone. Not when the reader put it nowhere themselves, by
+     * pressing on the page where nothing takes it.
+     */
     lost: () =>
-      within.current &&
+      last.current !== null &&
+      !last.current.isConnected &&
       (!document.activeElement || document.activeElement === document.body),
     forget: () => {
-      within.current = false;
+      last.current = null;
     },
   };
 }

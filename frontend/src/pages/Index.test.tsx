@@ -276,4 +276,25 @@ describe("Index", () => {
       content.remove();
     }
   });
+
+  it("gives focus a place to go when Mariner stops answering", async () => {
+    const content = withContent();
+    try {
+      const status = vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+      vi.spyOn(api, "printerCommand").mockResolvedValue();
+      renderIndex();
+      const pause = await screen.findByRole("button", { name: "Pause" });
+      pause.focus();
+      status.mockRejectedValue(
+        new ApiError(0, "Mariner cannot be reached.", "network"),
+      );
+
+      fireEvent.click(pause);
+
+      await screen.findByRole("alert");
+      expect(document.activeElement).toBe(content);
+    } finally {
+      content.remove();
+    }
+  });
 });

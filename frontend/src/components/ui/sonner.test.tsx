@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, fireEvent } from "@testing-library/react";
 import { toast as sonner, Toaster as Shown } from "sonner";
 import { toast, Toaster } from "./sonner";
 
@@ -56,5 +56,82 @@ describe("where messages are shown", () => {
     screenIs(false);
     render(<Toaster />);
     expect(vi.mocked(Shown).mock.lastCall?.[0].position).toBe("bottom-right");
+  });
+
+  it("shows every message, so that none takes focus unseen", () => {
+    // Stacked, those behind could be reached by the keyboard but not
+    // seen.
+    render(<Toaster />);
+    const props = vi.mocked(Shown).mock.lastCall?.[0];
+    expect(props?.expand).toBe(true);
+    expect(props?.visibleToasts).toBe(9);
+  });
+
+  describe("on Escape", () => {
+    const shown = document.createElement("ol");
+    shown.innerHTML = "<li data-sonner-toast>refused</li>";
+
+    beforeEach(() => vi.mocked(sonner.dismiss).mockClear());
+
+    it("closes the messages: one can cover what the keyboard is on", () => {
+      document.body.appendChild(shown);
+      try {
+        render(<Toaster />);
+        fireEvent.keyDown(document.body, { key: "Escape" });
+        expect(sonner.dismiss).toHaveBeenCalledTimes(1);
+        fireEvent.keyDown(document.body, { key: "Enter" });
+        expect(sonner.dismiss).toHaveBeenCalledTimes(1);
+      } finally {
+        shown.remove();
+      }
+    });
+
+    it("leaves it to a dialog or a menu that took it", () => {
+      document.body.appendChild(shown);
+      try {
+        render(<Toaster />);
+        const taken = (event: Event) => event.preventDefault();
+        document.body.addEventListener("keydown", taken);
+        fireEvent.keyDown(document.body, { key: "Escape" });
+        document.body.removeEventListener("keydown", taken);
+        expect(sonner.dismiss).not.toHaveBeenCalled();
+      } finally {
+        shown.remove();
+      }
+    });
+
+    it("does nothing when there is no message", () => {
+      render(<Toaster />);
+      fireEvent.keyDown(document.body, { key: "Escape" });
+      expect(sonner.dismiss).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("closing one message of several", () => {
+  it("puts focus on the next rather than nowhere", () => {
+    const list = document.createElement("ol");
+    list.innerHTML =
+      '<li data-sonner-toast tabindex="0">first<button>Close</button></li>' +
+      '<li data-sonner-toast tabindex="0">second</li>';
+    document.body.appendChild(list);
+    try {
+      vi.mocked(sonner.error).mockClear();
+      toast.error("No room.");
+      const [, options] = vi.mocked(sonner.error).mock.calls[0];
+      const close = (
+        options?.cancel as {
+          onClick: (event: { currentTarget: Element }) => void;
+        }
+      ).onClick;
+      const button = list.querySelector("button")!;
+      button.focus();
+
+      close({ currentTarget: button });
+
+      expect(document.activeElement).toBe(list.children[1]);
+    } finally {
+      list.remove();
+    }
   });
 });

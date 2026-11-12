@@ -128,7 +128,16 @@ describe("PowerMenu", () => {
     });
 
     expect(shutdown).toHaveBeenCalledTimes(1);
-    // And says that it is asking.
-    expect(await screen.findByText("Shutting down…")).toBeInTheDocument();
+    // And says that it is asking, to those who do not see it too.
+    const busy = await screen.findByRole("button", { name: "Shutting down…" });
+    expect(busy).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("status")).toHaveTextContent("Shutting down…");
+    // The other choice waits: it is not armed for a press that would
+    // then do nothing.
+    const other = screen.getByRole("button", { name: "Restart" });
+    expect(other).toHaveAttribute("aria-disabled", "true");
+    fireEvent.click(other);
+    expect(screen.getByRole("button", { name: "Restart" })).toBe(other);
+    expect(screen.getByRole("status")).toHaveTextContent("Shutting down…");
   });
 });

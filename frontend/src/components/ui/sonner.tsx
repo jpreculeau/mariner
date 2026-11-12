@@ -24,12 +24,32 @@ function useNarrowScreen(): boolean {
 const Toaster = ({ ...props }: ToasterProps) => {
   const { t } = useI18n();
   const narrow = useNarrowScreen();
+  // Escape closes the messages: one can sit on the very button the
+  // keyboard is on, far from it in the order of the page. A dialog or a
+  // menu that is open takes the key first, and says so.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        document.querySelector("[data-sonner-toast]")
+      ) {
+        sonner.dismiss();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   return (
     <Sonner
       theme="dark"
       // On a phone the bottom is where the buttons are: a message there
       // sat on the very button it was about.
       position={narrow ? "top-center" : "bottom-right"}
+      // All of them in sight: stacked, those behind could be reached by
+      // the keyboard without being seen.
+      expand
+      visibleToasts={9}
       // Above a dialog, which takes the page out of reach of the pointer:
       // what a toast says must still be dismissable.
       className="toaster group pointer-events-auto"
@@ -69,7 +89,13 @@ const toast = {
       duration: Infinity,
       cancel: {
         label: translate(pageLanguage(), "common.close"),
-        onClick: () => {},
+        // On to the next message, if there is one: the button pressed
+        // goes with its own, and focus with it.
+        onClick: (event: { currentTarget: Element }) => {
+          const here = event.currentTarget.closest("[data-sonner-toast]");
+          const next = here?.nextElementSibling ?? here?.previousElementSibling;
+          if (next instanceof HTMLElement) next.focus();
+        },
       },
     }),
 };
