@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -51,9 +49,12 @@
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 175 70% 40%;
 
-    --font-display: "Space Grotesk", system-ui, sans-serif;
-    --font-mono: "JetBrains Mono", ui-monospace, monospace;
-    --font-body: "Space Grotesk", system-ui, sans-serif;
+    /* Served with the page (see main.tsx); the reader may choose another
+       in the page (lib/fonts.ts). */
+    --font-display:
+      "Atkinson Hyperlegible Next Variable", system-ui, sans-serif;
+    --font-mono: "Atkinson Hyperlegible Mono Variable", ui-monospace, monospace;
+    --font-body: "Atkinson Hyperlegible Next Variable", system-ui, sans-serif;
   }
 
   .dark {

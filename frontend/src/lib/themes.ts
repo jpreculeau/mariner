@@ -1,3 +1,5 @@
+import { remember, remembered } from "@/lib/storage";
+
 export interface PrinterTheme {
   id: string;
   name: string;
@@ -75,7 +77,7 @@ export const themes: PrinterTheme[] = [
 const THEME_KEY = "mariner-theme";
 
 export function getStoredThemeId(): string {
-  return localStorage.getItem(THEME_KEY) || "default";
+  return remembered(THEME_KEY) || "default";
 }
 
 export function applyTheme(themeId: string) {
@@ -90,5 +92,5 @@ export function applyTheme(themeId: string) {
       el.style.setProperty(`--${key}`, value);
     });
   });
-  localStorage.setItem(THEME_KEY, theme.id);
+  remember(THEME_KEY, theme.id);
 }

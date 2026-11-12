@@ -815,6 +815,10 @@ class MarinerServerTest(TestCase):
             expect(headers["Referrer-Policy"]).to_equal("same-origin")
             expect(headers["Cross-Origin-Resource-Policy"]).to_equal("same-origin")
             policy = headers["Content-Security-Policy"]
+            # Nothing is fetched from another site: the page carries its
+            # typefaces with it.
+            expect("http" in policy).to_equal(False)
+            expect("font-src 'self'" in policy).to_equal(True)
             for part in (
                 "default-src 'self'",
                 "script-src 'self'",

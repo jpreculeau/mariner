@@ -113,6 +113,13 @@ the Flask backend::
 
    $ npm run dev
 
+The page fetches nothing from another site. Its typefaces come from the
+``@fontsource`` packages, are imported in ``frontend/src/main.tsx`` and
+listed in ``frontend/src/lib/fonts.ts``; the build copies them next to the
+page. To add one, add its package, import the weights used, list it, and
+copy its licence to ``frontend/public/licenses/``: the SIL Open Font
+License asks that it goes with the font.
+
 You can run the frontend tests with the following command::
 
    $ npm test

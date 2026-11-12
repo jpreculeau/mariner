@@ -2,7 +2,12 @@ import type { Config } from "tailwindcss";
 
 export default {
   darkMode: ["class"],
-  content: ["./pages/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}", "./app/**/*.{ts,tsx}", "./src/**/*.{ts,tsx}"],
+  content: [
+    "./pages/**/*.{ts,tsx}",
+    "./components/**/*.{ts,tsx}",
+    "./app/**/*.{ts,tsx}",
+    "./src/**/*.{ts,tsx}",
+  ],
   prefix: "",
   theme: {
     container: {
@@ -14,9 +19,11 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ["'Space Grotesk'", "system-ui", "sans-serif"],
-        body: ["'Space Grotesk'", "system-ui", "sans-serif"],
-        mono: ["'JetBrains Mono'", "ui-monospace", "monospace"],
+        // The typefaces themselves are named in index.css and
+        // lib/fonts.ts, where the reader's choice is applied.
+        display: ["var(--font-display)"],
+        body: ["var(--font-body)"],
+        mono: ["var(--font-mono)"],
       },
       colors: {
         border: "hsl(var(--border))",

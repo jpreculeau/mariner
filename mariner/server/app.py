@@ -39,8 +39,10 @@ CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'self'",
         "script-src 'self'",
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-        "font-src 'self' data: https://fonts.gstatic.com",
+        # The page carries its styles and typefaces with it: nothing is
+        # fetched from another site.
+        "style-src 'self' 'unsafe-inline'",
+        "font-src 'self' data:",
         "img-src 'self' data: blob:",
         "connect-src 'self'",
         "object-src 'none'",

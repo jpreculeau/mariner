@@ -98,6 +98,9 @@ Web interface
 - Show why an upload or a deletion was refused
 - Ask before deleting or replacing a file while the printer does not answer; withdraw the question when another file is shown
 - Take one upload at a time
+- Serve the page's typefaces with the page instead of fetching them from Google Fonts: nothing is asked of another site any more, which told it who opened the printer's page and left the page without its typeface where there is no way out to the internet
+- Set the page in Atkinson Hyperlegible, drawn so that letters and digits that look alike are told apart, and let the reader choose OpenDyslexic instead (palette button, "Typeface"); both are free (SIL Open Font License), and their licences are shipped under `/licenses/`
+- Keep the page working in a browser set to keep nothing: it showed a blank page
 
 ### 🚜 Refactor
 
