@@ -223,8 +223,8 @@ Mariner answers to its IP address and to names of the kind used on a local
 network: a single word such as ``mariner``, the name of the computer it
 runs on, or a name ending in ``.local``, ``.lan``, ``.home``,
 ``.home.arpa``, ``.internal`` or ``.localdomain``. (This is custom, not
-law: no web site can own a single word or a name with one of these endings
-today.) If you reach it under
+law: no ordinary web site can own a single word or a name with one of these
+endings today.) If you reach it under
 another name, one your router gives (``mariner.fritz.box``), one of a VPN
 (Tailscale's ``.ts.net``) or of your own domain, add that name, without a
 port, under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
@@ -245,6 +245,11 @@ from a link and do not know the name, leave the setting alone.
 For this refusal and the two around it, Mariner's log says who was refused
 and what the request said of itself (``journalctl -u mariner3d``), once a
 minute at most for the same client and reason.
+
+.. rubric:: An action answers "Page Out Of Date" (error 400, ``token_refused``)
+
+The page was open when Mariner restarted, or the browser ended its
+session. Reload the page: actions work again.
 
 When a browser says which page a request comes from, Mariner serves only
 its own pages' requests. A bookmark, a typed address and a link to Mariner
@@ -292,7 +297,7 @@ switch these addresses off (``[uvtools] enabled = false``).
 .. rubric:: A request is refused as too large (error 413, ``request_too_large``)
 
 Only the addresses files are sent to (``/api/upload_file`` and
-``/uvtools/upload/``) take more than 512 KB, or data of no size said
+``/uvtools/upload/``) take 512 KB or more, or data of no size said
 beforehand. Nothing Mariner's page or a slicer sends elsewhere comes near
 that.
 
@@ -308,7 +313,9 @@ web server itself, as plain text.
 While it arrives, a file is kept in ``/var/tmp``, on the drive of the
 computer Mariner runs on, which must have room for it: twice its size for a
 file sent from the web page, its size for one sent through UVtools, and 64 MB
-that Mariner leaves free for the system. A file that says how large it is,
+that Mariner leaves free for the system. Where files are kept on that same
+drive, which is not how Mariner is installed, the file itself counts once
+more. A file that says how large it is,
 as the web page and slicers do, is refused before Mariner takes any of it
 in when that room is not there. Room is measured when a file starts to
 arrive: of several sent at once, or of one that does not say how large it

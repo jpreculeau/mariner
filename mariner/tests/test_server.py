@@ -1042,9 +1042,13 @@ class MarinerServerTest(TestCase):
                     headers={"X-CSRFToken": token},
                 )
             expect(response.status_code != 400).to_equal(True)
-            # Without the token it is refused as before.
+            # Without the token it is refused as before, in words the
+            # page can show: a token goes stale when Mariner restarts.
             response = self.client.post("/api/printer/command/cancel_print")
             expect(response.status_code).to_equal(400)
+            body = response.get_json()
+            expect(body["code"]).to_equal("token_refused")
+            expect("Reload" in body["description"]).to_equal(True)
 
     def test_a_refusal_is_written_to_the_log(self) -> None:
         from mariner.server import refusals

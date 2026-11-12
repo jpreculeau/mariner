@@ -4,6 +4,7 @@ Shared by the web server, the application and the SDCP service, and tied
 to none of them.
 """
 
+import json
 import logging
 import time
 from typing import Dict, Hashable, Mapping, Optional, Tuple
@@ -32,8 +33,9 @@ class Sparingly:
             self._kinds[kind] = (known[0], known[1] + 1)
             return None
         if known is None and len(self._kinds) >= self._remembered:
-            # A client can give itself any number of addresses.
-            self._kinds.clear()
+            # A client can give itself any number of addresses. The
+            # oldest known makes room.
+            del self._kinds[next(iter(self._kinds))]
         self._kinds[kind] = (now, 0)
         return known[1] if known is not None else 0
 
@@ -53,25 +55,38 @@ def log(
     """Write a refused request to the log: who, why, and what it said.
 
     Enough to tell a slicer or a script turned away from a page that was.
-    What the client wrote is quoted, and cut: it is its text.
+    One line a minute for the same client and reason. That holds a page
+    knocking through a browser, not a device of the network set on
+    filling the log: it can come as any number of clients.
     """
     unwritten = said.unwritten((interface, peer, code))
     if unwritten is None:
         return
     logger.warning(
-        "%s: refused a request from %s: %s (Host %.100r, Origin %.100r, "
-        "Referer %.100r, Sec-Fetch-Site %.40r, User-Agent %.100r; %d more "
-        "like it not written here since the last)",
+        "%s: refused a request from %s: %s (Host %s, Origin %s, Referer %s, "
+        "Sec-Fetch-Site %s, User-Agent %s; %d more like it not written here "
+        "since the last)",
         interface,
         peer,
         code,
-        headers.get("Host"),
-        headers.get("Origin"),
-        headers.get("Referer"),
-        headers.get("Sec-Fetch-Site"),
-        headers.get("User-Agent"),
+        _quoted(headers.get("Host")),
+        _quoted(headers.get("Origin")),
+        _quoted(headers.get("Referer")),
+        _quoted(headers.get("Sec-Fetch-Site")),
+        _quoted(headers.get("User-Agent")),
         unwritten,
     )
+
+
+def _quoted(value: Optional[str]) -> str:
+    """What a client wrote, for the log: cut, then quoted.
+
+    In that order, so that the mark that ends it is always there; and in
+    one way whatever it holds, so that marks inside it are told from it.
+    """
+    if value is None:
+        return "none"
+    return json.dumps(value[:100])
 
 
 def log_no_room(length: int) -> None:

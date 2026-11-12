@@ -35,9 +35,14 @@ class SparinglyTest(TestCase):
 
     def test_only_so_many_kinds_are_remembered(self) -> None:
         # A client can give itself any number of addresses.
-        for number in range(50):
+        for number in range(49):
             self.said.unwritten((str(number), "a"))
-        expect(len(self.said) <= 4).to_equal(True)
+        expect(len(self.said)).to_equal(4)
+        # The oldest make room: the latest are still known, with their count.
+        for latest in ("45", "46", "47", "48"):
+            expect(self.said.unwritten((latest, "a"))).to_equal(None)
+        self.now += 60
+        expect(self.said.unwritten(("48", "a"))).to_equal(1)
 
 
 class LogTest(TestCase):
@@ -74,6 +79,16 @@ class LogTest(TestCase):
             with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
                 refusals.log("Web", "192.168.1.99", "x", {name: "y" * 5000})
             expect(len(logs.records[0].getMessage()) < 700).to_equal(True)
+
+    def test_what_was_cut_still_reads_as_one_quoted_value(self) -> None:
+        # Its end mark is not cut away with it, and marks inside it cannot
+        # pass for the end: what follows would read as other fields.
+        agent = "x', Origin 'http://192.168.1.20" + "y" * 500
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log("Web", "192.168.1.99", "x", {"User-Agent": agent})
+        message = logs.records[0].getMessage()
+        expect("User-Agent \"x', Origin 'http://192.168.1.20" in message).to_equal(True)
+        expect('y";' in message).to_equal(True)
 
     def test_the_same_refusal_is_written_once_a_minute(self) -> None:
         with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:

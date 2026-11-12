@@ -238,6 +238,48 @@ class EarlyRefusalTest(TestCase):
                 expect(status).to_equal(507)
         expect(len(logs.records)).to_equal(1)
 
+    def test_one_with_nothing_to_send_is_answered_not_told_to_go_on(self) -> None:
+        # Told to go on, the web server then waits for a body that is not
+        # coming.
+        for head in (
+            "POST /api/delete_file HTTP/1.1\nHost: 127.0.0.1\n"
+            "Expect: 100-continue\nContent-Length: 0\n",
+            "GET /api/list_files HTTP/1.1\nHost: 127.0.0.1\nExpect: 100-continue\n",
+        ):
+            status, _, body = self._exchange(head)
+            expect((status, body)).to_equal((200, b"served"))
+
+    def test_a_file_kept_on_the_drive_uploads_wait_on_counts_once_more(self) -> None:
+        usage = shutil.disk_usage("/")
+        free = early.KEPT_FREE_BYTES + 2_000_000
+        with patch.object(
+            early.shutil, "disk_usage", return_value=usage._replace(free=free)
+        ):
+            for shared, status in ((False, 200), (True, 507)):
+                with patch.object(early, "files_share_the_drive", return_value=shared):
+                    answered, _, _ = self._exchange(
+                        "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                        "Content-Length: 1100000\n",
+                        b"x" * 1100000 if status == 200 else b"",
+                        wait_for_body=status == 200,
+                    )
+                    expect(answered).to_equal(status)
+
+    def test_whether_files_are_kept_on_the_drive_uploads_wait_on(self) -> None:
+        import pathlib
+        import tempfile
+
+        here = pathlib.Path(tempfile.gettempdir())
+        with patch.object(early.config, "get_files_directory", return_value=here):
+            expect(early.files_share_the_drive()).to_equal(True)
+        for elsewhere in ("/proc", "/no/such/place"):
+            with patch.object(
+                early.config,
+                "get_files_directory",
+                return_value=pathlib.Path(elsewhere),
+            ):
+                expect(early.files_share_the_drive()).to_equal(False)
+
     def test_one_too_large_for_anything_is_not_told_to_go_on_either(self) -> None:
         # The web server refuses it itself, but only once it has answered
         # the question.

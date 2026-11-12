@@ -10,8 +10,9 @@ had arrived.
 Here the same checks are made by the web server's own reader of headers,
 for a request that has a body, so that what is refused is answered at once
 and its body never taken in. Wherever the request is sent: a body sent to
-an address that does nothing is stored like any other. Only the addresses
-files are sent to take a body larger than the web server keeps in memory.
+an address that does nothing is stored like any other. Only addresses
+that begin as those files are sent to take a body larger than the web
+server keeps in memory.
 A body that does not say how large it is cannot be measured against the
 room: it is taken in until the drive is full, and the connection then
 closed without an answer.
@@ -23,6 +24,7 @@ and the application must not depend on being run by it.
 
 import json
 import logging
+import os
 import shutil
 import tempfile
 from typing import Any, Dict, Optional
@@ -33,6 +35,7 @@ from waitress.parser import HTTPRequestParser
 from waitress.server import BaseWSGIServer
 from waitress.utilities import Error
 
+from mariner import config
 from mariner.server import origin, refusals
 
 logger: logging.Logger = logging.getLogger(__name__)
@@ -64,13 +67,28 @@ class _Refused(Error):
         return f"{self.code} {self.reason}", headers, self.body.encode("utf-8")
 
 
+def files_share_the_drive() -> bool:
+    """Whether files are kept on the drive uploads wait on.
+
+    Not as Mariner is installed: files go to a drive of their own.
+    """
+    try:
+        waiting = os.stat(tempfile.gettempdir()).st_dev
+        kept = os.stat(config.get_files_directory()).st_dev
+    except OSError:
+        return False
+    return waiting == kept
+
+
 def copies_kept(content_type: str) -> int:
-    """How many times an upload is kept where uploads wait.
+    """How many times an upload is on the drive uploads wait on, at most.
 
     Once by the web server. A form is kept once more as it is taken apart.
+    The file itself is one more where files are kept on that same drive.
     """
     kind = content_type.split(";")[0].strip().lower()
-    return 2 if kind == "multipart/form-data" else 1
+    copies = 2 if kind == "multipart/form-data" else 1
+    return copies + 1 if files_share_the_drive() else copies
 
 
 def room_refusal(
@@ -78,9 +96,9 @@ def room_refusal(
 ) -> Optional[Dict[str, str]]:
     """Why a body of *length* bytes cannot wait where uploads do; else None.
 
-    Up to *kept_in_memory* bytes the web server does not put it in a file.
+    Below *kept_in_memory* bytes the web server does not put it in a file.
     """
-    if length <= kept_in_memory:
+    if length < kept_in_memory:
         return None
     try:
         free = shutil.disk_usage(tempfile.gettempdir()).free
@@ -133,7 +151,7 @@ class _Parser(HTTPRequestParser):
         # Below this the web server keeps a body in memory, not in a file.
         kept_in_memory = self.adj.inbuf_overflow
         if not self.path.startswith(UPLOAD_PREFIXES) and (
-            self.chunked or self.content_length > kept_in_memory
+            self.chunked or self.content_length >= kept_in_memory
         ):
             self._refuse(413, _too_large_body())
             return
@@ -165,7 +183,10 @@ class _Channel(HTTPChannel):
         web server itself as larger than anything may be.
         """
         request = self.request
-        if request is not None and request.error is not None:
+        if request is not None and request.completed:
+            # Nothing more is wanted: refused, here or by the web server
+            # itself; or no body announced, in which case the web server
+            # would wait for one all the same.
             return
         super().send_continue()
 

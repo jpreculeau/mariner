@@ -9,7 +9,7 @@ from typing import Any, Optional, Sequence, Tuple, Union, cast
 
 from flask import Flask, Response, jsonify, make_response, request
 from werkzeug.exceptions import HTTPException
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFError, CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
@@ -270,6 +270,22 @@ def unexpected_error(error: Exception) -> Union[Response, Tuple[Response, int]]:
     return jsonify(body), 500
 
 
+@app.errorhandler(CSRFError)
+def token_refused(error: CSRFError) -> Tuple[Response, int]:
+    """Say what to do when the page's token is not taken.
+
+    Most often the page was open when Mariner restarted: the token it
+    holds was made by the Mariner that is gone.
+    """
+    body = {
+        "code": "token_refused",
+        "title": "Page Out Of Date",
+        "description": "This page was opened before Mariner last restarted, "
+        "or its session ended. Reload the page and try again.",
+    }
+    return jsonify(body), 400
+
+
 @app.errorhandler(413)
 def file_too_large(error: Exception) -> Tuple[Response, int]:
     megabytes = config.get_max_upload_bytes() // (1024 * 1024)
@@ -286,8 +302,8 @@ app.config.from_mapping(
         # Never the debug mode: it hands the inside of an error to whoever
         # caused it.
         "DEBUG": False,
-        # The cookie that goes with the token is of no use to a request
-        # another site has the browser send. It must still come along
+        # The cookie that goes with the token is kept from what another
+        # site has the browser post or load. It must still come along
         # when a link to Mariner is followed from another site ("Lax", not
         # "Strict"): the page would otherwise be given a new token, and
         # the tabs already open would hold one that is refused.
