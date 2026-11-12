@@ -219,10 +219,11 @@ are protected: the file is then refused.
 
 .. rubric:: Mariner answers "Name Not Allowed" (error 403, ``host_not_allowed``)
 
-Mariner answers to its IP address and to names that only exist on a local
+Mariner answers to its IP address and to names of the kind used on a local
 network: a single word such as ``mariner``, the name of the computer it
 runs on, or a name ending in ``.local``, ``.lan``, ``.home``,
-``.home.arpa``, ``.internal`` or ``.localdomain``. If you reach it under
+``.home.arpa``, ``.internal`` or ``.localdomain``. (These endings are
+custom, not law: no web site can own a name ending in them today.) If you reach it under
 another name, one your router gives (``mariner.fritz.box``), one of a VPN
 (Tailscale's ``.ts.net``) or of your own domain, add that name, without a
 port, under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
@@ -234,27 +235,52 @@ port, under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
 
 The check is there because nothing in Mariner asks who is using it. Without
 it, a web site could point a name of its own at the address of your printer
-and have your browser read and drive it.
+and have your browser read and drive it. So add a name only if it is one
+you, your router or your VPN gave the printer; if you landed on this error
+from a link and do not know the name, leave the setting alone.
 
 .. rubric:: A request is refused as coming from another site (error 403, ``cross_site_request``)
 
 When a browser says which page a request comes from, Mariner serves only
 its own pages' requests. A bookmark, a typed address and a link to Mariner
-all work. Slicers and scripts are not affected: they are not browsers and
-say nothing of a page. A script that sends an ``Origin`` or ``Referer``
-header must send Mariner's own address in it, or none.
+all work. Slicers and scripts say nothing of a page and are served. A
+script that sends an ``Origin`` or ``Referer`` header must send Mariner's
+own address in it, or none.
 
-The addresses under ``/uvtools`` are for slicers. Opened in a browser they
-answer with this error, whatever page they are opened from: they act on a
-plain request, which any page can have a browser send.
+Behind a relay such as nginx, every request of the page is refused, so that
+it shows no files and no printer, when the relay asks Mariner under another
+name or port than the browser used. Have the relay pass the name on as it
+came (``proxy_set_header Host $http_host;``), or give the address the
+browser shows, whole, under ``[http]`` in ``/etc/mariner/config.toml``:
 
-Behind a relay such as nginx, the page is refused its own requests when the
-relay asks Mariner under another name or port than the browser used. Have
-the relay pass the name on as it came (``proxy_set_header Host
-$http_host;``), or list the name the browser uses in ``allowed_hosts``.
+.. code-block:: toml
+
+   [http]
+   allowed_origins = ["https://printer.example.org"]
+
+A name in ``allowed_hosts`` is one Mariner may be asked for. It does not
+make a page served under that name one of Mariner's: on the same computer,
+another port is another program.
 
 Mariner can no longer be shown inside another page, a dashboard for
 instance: a page able to do that could lay its own buttons over Mariner's.
+
+.. rubric:: A slicer address is refused to a browser or a script (error 403, ``browser_not_served``)
+
+The addresses under ``/uvtools`` are for slicers. They act on a plain
+request, which any page can have a browser send by a link or a picture, so
+they are not served to a browser, whatever page it comes from, nor to a
+program that sends what browsers and media players send.
+
+A script is refused there when it calls itself a browser or sends
+``Accept-Language`` or ``Range``. PowerShell does the first: give
+``Invoke-WebRequest`` and ``Invoke-RestMethod`` a name of your own with
+``-UserAgent "my-script"``. curl, wget and Python's libraries are served as
+they are.
+
+This keeps out the programs known to follow a page's links. It is not a
+lock: if the printer's network holds devices or people you do not trust,
+switch these addresses off (``[uvtools] enabled = false``).
 
 .. rubric:: A file is refused as too large (error 413)
 
@@ -266,9 +292,12 @@ web server itself, as plain text.
 .. rubric:: A file is refused for want of room (error 507, ``upload_not_stored``)
 
 While it arrives, a file is kept in ``/var/tmp``, on the drive of the
-computer Mariner runs on, which must have room for it: twice over for a
-file sent from the web page. Mariner refuses beforehand a file larger than
-the room there is. Free some, or set another place on a drive as
+computer Mariner runs on, which must have room for it: twice its size for a
+file sent from the web page, its size for one sent by a slicer. A file that
+says how large it is, as the web page and slicers do, is refused before any
+of it is sent when that room is not there. One that does not say is taken
+in until the drive is full; the connection is then closed without an
+answer. Free some room, or set another place on a drive as
 ``spool_directory`` under ``[http]``. If that place cannot be used, Mariner
 says so in the logs at start and falls back on ``/tmp``; where ``/tmp`` is
 held in memory there is little room in it.

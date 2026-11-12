@@ -82,6 +82,11 @@ class StartupTest(TestCase):
             serve.call_args.kwargs["max_request_body_size"], 3 * 1024**3 + 1024**2
         )
 
+    def test_the_web_server_is_the_one_that_refuses_early(self) -> None:
+        from mariner.server import early
+
+        self.assertIs(server.serve, early.serve)
+
     def test_settings_passed_over_are_said_at_start(self) -> None:
         with patch.object(
             server.config, "ignored_settings", return_value=["one thing"]

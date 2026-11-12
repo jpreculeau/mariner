@@ -103,6 +103,24 @@ def get_http_allowed_hosts() -> List[str]:
     return [str(host) for host in hosts]
 
 
+def get_http_allowed_origins() -> List[str]:
+    """Addresses at which Mariner's page is served, besides its own.
+
+    ``allowed_origins`` under ``[http]``: whole addresses such as
+    ``"https://printer.example.org"``, for a relay in front of Mariner
+    that asks it under another name, port or scheme than the browser used.
+    """
+    http_config = _get_config().get("http")
+    if not isinstance(http_config, dict):
+        return []
+    origins = http_config.get("allowed_origins", [])
+    if isinstance(origins, str):
+        return [origins]
+    if not isinstance(origins, list):
+        return []
+    return [str(one) for one in origins]
+
+
 DEFAULT_MAX_UPLOAD_SIZE_MB = 2048
 
 

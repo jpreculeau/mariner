@@ -42,6 +42,10 @@ port = 5000
 # it under another name, given here without a port; "*" allows any name,
 # which lets a web site that points its own name at the printer drive it.
 #allowed_hosts = ["printer.example.org"]
+# Addresses at which Mariner's page is served, when a relay (nginx, Caddy)
+# stands in front of it and asks Mariner under another name, port or scheme
+# than the browser used. Each as the browser shows it, scheme included.
+#allowed_origins = ["https://printer.example.org"]
 # Largest file accepted, in megabytes, from the web page and from slicers.
 # Default is 2048.
 max_upload_size_mb = 2048

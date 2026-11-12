@@ -9,8 +9,9 @@ import json
 import logging
 import socket
 import threading
+import time
 import warnings
-from typing import Any, Dict, List, Optional, Set, cast
+from typing import Any, Dict, List, Optional, Set, Tuple, cast
 
 from aiohttp import WSMsgType, multipart, web
 from pyre_extensions import none_throws
@@ -61,10 +62,47 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         transport.sendto(json.dumps(payload).encode("utf-8"), addr)
 
 
-_ANSWER_HEADERS = {
-    "Cross-Origin-Resource-Policy": "same-origin",
-    "X-Content-Type-Options": "nosniff",
-}
+# When a refusal was last written to the log, and how many have gone
+# unwritten since, for each client and reason: a page can have a browser
+# knock without end.
+_refusals_logged: Dict[Tuple[Optional[str], str], Tuple[float, int]] = {}
+_SECONDS_BETWEEN_REFUSALS_LOGGED = 60.0
+_CLIENTS_REMEMBERED = 256
+
+
+def _log_refusal(request: web.Request, refusal: origin.Refusal) -> None:
+    """Tell enough to see a slicer turned away from a page that was."""
+    key = (request.remote, refusal.code)
+    now = time.monotonic()
+    last, unwritten = _refusals_logged.get(key, (None, 0))
+    if last is not None and now - last < _SECONDS_BETWEEN_REFUSALS_LOGGED:
+        _refusals_logged[key] = (last, unwritten + 1)
+        return
+    if len(_refusals_logged) >= _CLIENTS_REMEMBERED:
+        _refusals_logged.clear()
+    _refusals_logged[key] = (now, 0)
+    said = request.headers.get
+    # What the client wrote is quoted, and cut: it is its text.
+    logger.warning(
+        "SDCP: refused a request from %s: %s (Host %.120r, Origin %.120r, "
+        "Referer %.120r, Sec-Fetch-Site %.40r; %d more like it not written "
+        "here since the last)",
+        request.remote,
+        refusal.code,
+        said("Host"),
+        said("Origin"),
+        said("Referer"),
+        said("Sec-Fetch-Site"),
+        unwritten,
+    )
+
+
+def _not_for_other_sites(response: Any) -> None:
+    # A browser asks for a picture without a word of the site. It is then
+    # served, and these keep the page that asked from showing it.
+    for name, value in origin.ANSWER_HEADERS.items():
+        if name not in response.headers:
+            response.headers[name] = value
 
 
 @web.middleware
@@ -77,22 +115,16 @@ async def refuse_other_sites(request: web.Request, handler: Any) -> Any:
     """
     refusal = origin.refusal_for(request.headers)
     if refusal is not None:
-        # Enough to tell a slicer turned away from a page that was.
-        logger.warning(
-            "SDCP: refused a request from %s: %s (Host %r, Origin %r)",
-            request.remote,
-            refusal.code,
-            request.headers.get("Host"),
-            request.headers.get("Origin"),
-        )
+        _log_refusal(request, refusal)
         response = web.json_response(refusal.body(), status=403)
     else:
-        response = await handler(request)
-    # A browser asks for a picture without a word of the site. It is then
-    # served, and these keep the page that asked from showing it.
-    for name, value in _ANSWER_HEADERS.items():
-        if name not in response.headers:
-            response.headers[name] = value
+        try:
+            response = await handler(request)
+        except web.HTTPException as error:
+            # An answer all the same: not found, and the like.
+            _not_for_other_sites(error)
+            raise
+    _not_for_other_sites(response)
     return response
 
 

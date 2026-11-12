@@ -2,7 +2,6 @@ import errno
 import html
 import logging
 import os
-import shutil
 import stat
 import tempfile
 from pathlib import Path
@@ -14,7 +13,7 @@ from flask_wtf.csrf import CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
-from mariner.server import origin
+from mariner.server import early, origin
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -152,25 +151,16 @@ app.config.from_mapping(
 )
 
 
-# What acts on the printer or the files, or tells about them.
-_GUARDED_PREFIXES = ("/api/", "/uvtools/")
-# What is made for slicers, and acts on a GET.
-_SLICER_PREFIXES = ("/uvtools/",)
-
-
 @app.before_request
 def refuse_other_sites() -> Optional[Tuple[Response, int]]:
     """Turn away what a page from elsewhere has a browser send.
 
-    See ``mariner.server.origin``. A foreign name is refused everywhere; a
-    request from another site only where it would act or tell, so that a
-    link to Mariner on another page still opens it.
+    See ``mariner.server.origin``. The web server Mariner runs under has
+    already made this check as the request came in, before its body (see
+    ``mariner.server.early``); it is made again here so that it holds
+    under any other.
     """
-    refusal = origin.host_refusal(request.headers)
-    if refusal is None and request.path.startswith(_GUARDED_PREFIXES):
-        refusal = origin.site_refusal(request.headers)
-    if refusal is None and request.path.startswith(_SLICER_PREFIXES):
-        refusal = origin.browser_refusal(request.headers)
+    refusal = origin.request_refusal(request.path, request.headers)
     if refusal is None:
         return None
     if refusal.code == "host_not_allowed" and _wants_a_page():
@@ -186,15 +176,26 @@ app.before_request_funcs[None].insert(0, refuse_other_sites)
 
 def _wants_a_page() -> bool:
     return (
-        not request.path.startswith(_GUARDED_PREFIXES)
+        not request.path.startswith(origin.GUARDED_PREFIXES)
         and request.accept_mimetypes.best_match(["application/json", "text/html"])
         == "text/html"
     )
 
 
+def _name_asked_for() -> str:
+    """The name of the request as the client wrote it, without the port.
+
+    From the header itself: what the framework makes of it is empty for a
+    name it does not take for one.
+    """
+    host = request.headers.get("Host", "")
+    parts = origin.name_and_port(host)
+    return parts[0] if parts is not None else host
+
+
 def _name_not_allowed_page() -> Response:
     """What to do about it, for someone who opened Mariner in a browser."""
-    name = html.escape(request.host.rsplit(":", 1)[0])
+    name = html.escape(_name_asked_for())
     page = f"""<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>Mariner: name not allowed</title></head>
@@ -203,11 +204,12 @@ def _name_not_allowed_page() -> Response:
 <p>You reached Mariner as <code>{name}</code>. It answers to its IP address
 and to names of a local network, so that a web site cannot point a name of
 its own at your printer and drive it through your browser.</p>
-<p>To use this name, add it to <code>/etc/mariner/config.toml</code> and
-restart Mariner:</p>
+<p>If this is a name you gave the printer yourself, add it to
+<code>/etc/mariner/config.toml</code> and restart Mariner:</p>
 <pre>[http]
 allowed_hosts = ["{name}"]</pre>
-<p>Or open Mariner by its IP address.</p>
+<p>If it is not, or you do not know it, do not: open Mariner by its IP
+address.</p>
 </body>
 </html>
 """
@@ -217,44 +219,26 @@ allowed_hosts = ["{name}"]</pre>
 
 
 def _no_room(what: str) -> Tuple[Response, int]:
-    megabytes = shutil.disk_usage(tempfile.gettempdir()).free // (1024 * 1024)
-    logger.warning("No room to keep an upload in while it arrives: %s", what)
-    body = {
-        "code": "upload_not_stored",
-        "title": "File Not Stored",
-        "description": "There is not enough room on Mariner's own drive to "
-        f"take this file in: {megabytes} MB are free where uploads wait. A "
-        "file sent from the web page needs twice its size there.",
-    }
-    return jsonify(body), 507
+    """Say that an upload ran out of room while it was taken in.
 
-
-@app.before_request
-def refuse_what_cannot_wait() -> Optional[Tuple[Response, int]]:
-    """Turn away an upload larger than the room it would wait in.
-
-    Before a byte of it is read. A form is kept twice while it arrives:
-    once by the web server, once more as it is taken apart.
+    The web server refuses beforehand an upload that announces a size
+    larger than the room there is (``mariner.server.early``). This is for
+    what it could not foresee: no size announced, or several uploads at
+    once.
     """
-    length = request.content_length or 0
-    if length == 0:
-        return None
-    copies = 2 if request.mimetype == "multipart/form-data" else 1
-    try:
-        free = shutil.disk_usage(tempfile.gettempdir()).free
-    except OSError:
-        return None
-    if length * copies > free:
-        return _no_room(f"{length} bytes announced, {free} free")
-    return None
+    logger.warning("No room to keep an upload in while it arrives: %s", what)
+    return jsonify(early.no_room_body(None)), 507
 
 
 @app.after_request
 def add_protective_headers(response: Response) -> Response:
     for name, value in PROTECTIVE_HEADERS.items():
         response.headers.setdefault(name, value)
-    if request.path.startswith(_GUARDED_PREFIXES):
+    if request.path.startswith(origin.GUARDED_PREFIXES):
         # The state of the printer and of the files changes by the second.
+        response.headers.setdefault("Cache-Control", "no-store")
+    elif response.mimetype == "text/html":
+        # The page carries the token its requests are checked against.
         response.headers.setdefault("Cache-Control", "no-store")
     return response
 
@@ -298,6 +282,9 @@ app.config.from_mapping(
         # Never the debug mode: it hands the inside of an error to whoever
         # caused it.
         "DEBUG": False,
+        # The cookie that goes with the token is of no use to a request
+        # another site has the browser send.
+        "SESSION_COOKIE_SAMESITE": "Strict",
         # Backend class name, not the legacy "filesystem" factory alias. The
         # lowercase aliases are deprecated in flask-caching 2.x and gone in
         # 3.x, where they fail at import with ImportStringError.

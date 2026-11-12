@@ -136,7 +136,7 @@ class UVToolsProviderTest(TestCase):
         ):
             response = self.client.get(url, headers=browser)
             expect(response.status_code).to_equal(403)
-            expect(response.get_json()["code"]).to_equal("cross_site_request")
+            expect(response.get_json()["code"]).to_equal("browser_not_served")
         expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
             True
         )

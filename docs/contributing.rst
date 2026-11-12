@@ -113,6 +113,12 @@ the Flask backend::
 
    $ npm run dev
 
+Open it as ``http://localhost:3000``. Opened from another computer by the
+address of yours, the page's requests are refused as coming from another
+site: the dev server asks the backend under another name than the one the
+browser used. List that address in ``allowed_origins`` (see
+:doc:`troubleshooting`) to work that way.
+
 You can run the frontend tests with the following command::
 
    $ npm test

@@ -75,20 +75,33 @@ class CrossSiteTest(TestCase):
         for own in ("app://slicer", "file://", "chrome-extension://abcdef"):
             expect(_refusal({"Origin": own})).to_equal(None)
 
-    def test_a_page_served_under_an_allowed_name_is_let_through(self) -> None:
+    def test_a_page_at_an_address_listed_as_mariner_s_is_let_through(self) -> None:
         # Behind a relay that asks Mariner under another name or port than
-        # the browser used.
+        # the browser used. The whole address is listed: under the same
+        # name, another port or https is another program's page.
+        listed = ["https://Printer.lan:8443/", "http://printer.lan"]
         with patch.object(
-            origin.config, "get_http_allowed_hosts", return_value=["printer.lan"]
+            origin.config, "get_http_allowed_origins", return_value=listed
         ):
+            for own in ("https://printer.lan:8443", "http://printer.lan"):
+                expect(_refusal({"Origin": own}, "127.0.0.1:5050")).to_equal(None)
             expect(
-                _refusal({"Origin": "http://printer.lan:8080"}, "127.0.0.1:5050")
+                _refusal({"Referer": "http://printer.lan/files"}, "127.0.0.1:5050")
             ).to_equal(None)
-            refusal = _refusal({"Origin": "http://evil.example"}, "127.0.0.1:5050")
-            expect(none_throws(refusal).code).to_equal("cross_site_request")
-        # Allowing any name to be asked for does not make every page a friend.
-        with patch.object(origin.config, "get_http_allowed_hosts", return_value=["*"]):
-            refusal = _refusal({"Origin": "http://evil.example"}, "127.0.0.1:5050")
+            for other in (
+                "http://printer.lan:8080",
+                "https://printer.lan",
+                "http://evil.example",
+                "http://sub.printer.lan",
+            ):
+                refusal = _refusal({"Origin": other}, "127.0.0.1:5050")
+                expect(none_throws(refusal).code).to_equal("cross_site_request")
+
+    def test_a_name_allowed_to_be_asked_for_is_not_thereby_a_friend(self) -> None:
+        with patch.object(
+            origin.config, "get_http_allowed_hosts", return_value=["printer.lan", "*"]
+        ):
+            refusal = _refusal({"Origin": "http://printer.lan:8080"}, "127.0.0.1:5050")
             expect(none_throws(refusal).code).to_equal("cross_site_request")
 
     def test_a_program_that_is_not_a_browser_is_let_through(self) -> None:
@@ -116,6 +129,34 @@ class BrowserTest(TestCase):
             {"User-Agent": "Not Mozilla/5.0"},
         ):
             expect(origin.is_browser(headers)).to_equal(False)
+
+
+class LinkFollowerTest(TestCase):
+    def test_what_follows_links_or_plays_media_is_not_a_slicer(self) -> None:
+        # Not every program that loads an address a page gave it calls
+        # itself a browser: players of sound and video, readers of feeds.
+        # They say things a slicer has no cause to.
+        for headers in (
+            {"User-Agent": "AppleCoreMedia/1.0.0 (iPhone)", "Range": "bytes=0-1"},
+            {"User-Agent": "Lynx/2.9", "Accept-Language": "en"},
+            {"Icy-MetaData": "1"},
+            # However the name of the header is written.
+            {"icy-metadata": "1"},
+            {"ACCEPT-LANGUAGE": "fr"},
+            {"Purpose": "prefetch"},
+            {"Sec-Purpose": "prefetch"},
+        ):
+            refusal = origin.browser_refusal(headers)
+            expect(none_throws(refusal).code).to_equal("browser_not_served")
+
+    def test_a_slicer_says_none_of_that(self) -> None:
+        for headers in (
+            {},
+            {"User-Agent": "UVtools/5.0", "Accept": "*/*"},
+            {"User-Agent": "curl/8.5.0", "Accept": "*/*"},
+            {"Accept-Encoding": "gzip", "Connection": "keep-alive"},
+        ):
+            expect(origin.browser_refusal(headers)).to_equal(None)
 
 
 class HostTest(TestCase):

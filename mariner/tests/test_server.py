@@ -1,7 +1,6 @@
 import hashlib
 import errno
 import io
-import shutil
 import os
 import subprocess
 import pathlib
@@ -940,6 +939,18 @@ class MarinerServerTest(TestCase):
             response = self.client.post("/api/create_directory?path=.&name=sub")
         expect(response.status_code).to_equal(400)
 
+    def test_a_request_is_not_measured_once_it_has_arrived(self) -> None:
+        # By then the web server has stored it: what room is left says
+        # nothing of whether it fitted. A full drive must not turn away
+        # what needs no room either.
+        with patch("shutil.disk_usage", return_value=Mock(free=0, total=1, used=1)):
+            response = self.client.post("/api/create_directory?path=.&name=sub")
+            expect(response.status_code).to_equal(200)
+            # Large enough to have been put in a file by the web server.
+            data = b"x" * (600 * 1024)
+            response = self.client.put("/uvtools/upload/large.ctb", data=data)
+            expect(response.status_code != 507).to_equal(True)
+
     def test_an_upload_with_no_room_to_wait_in_says_so(self) -> None:
         # Raised while the form is read, before the upload route runs.
         with patch(
@@ -950,28 +961,6 @@ class MarinerServerTest(TestCase):
             response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(507)
         expect(response.get_json()["code"]).to_equal("upload_not_stored")
-
-    def test_an_upload_announced_larger_than_the_room_to_wait_in(self) -> None:
-        # Refused before a byte is taken: twice its size for a form, which
-        # is kept once by the web server and once more as the form is read.
-        usage = shutil.disk_usage("/")
-        data = {"file": (io.BytesIO(b"x" * 600), "myfile.ctb")}
-        with patch(
-            "mariner.server.app.shutil.disk_usage",
-            return_value=usage._replace(free=1000),
-        ):
-            response = self.client.post("/api/upload_file", data=data)
-        expect(response.status_code).to_equal(507)
-        body = response.get_json()
-        expect(body["code"]).to_equal("upload_not_stored")
-        expect(os.path.exists("/mnt/usb_share/myfile.ctb")).to_equal(False)
-        with patch(
-            "mariner.server.app.shutil.disk_usage",
-            return_value=usage._replace(free=100_000),
-        ):
-            data = {"file": (io.BytesIO(b"x" * 600), "myfile.ctb")}
-            response = self.client.post("/api/upload_file", data=data)
-        expect(response.status_code).to_equal(200)
 
     def test_the_site_is_checked_before_anything_of_the_request_is_read(self) -> None:
         # Before the check of the token a form carries, which reads the
@@ -1001,12 +990,34 @@ class MarinerServerTest(TestCase):
         response = self.client.get(
             "/", headers={"Host": "<script>x</script>.example", "Accept": "text/html"}
         )
-        expect("<script>" in response.get_data(as_text=True)).to_equal(False)
+        page = response.get_data(as_text=True)
+        expect("<script>" in page).to_equal(False)
+        expect("&lt;script&gt;" in page).to_equal(True)
+        # A name with an underscore, which not every library takes for one.
+        response = self.client.get(
+            "/", headers={"Host": "my_printer.example.org:5000", "Accept": "text/html"}
+        )
+        expect(
+            'allowed_hosts = ["my_printer.example.org"]'
+            in response.get_data(as_text=True)
+        ).to_equal(True)
         # What a program asks for stays data.
         response = self.client.get(
             "/api/list_files", headers={"Host": "x.example", "Accept": "text/html"}
         )
         expect(response.mimetype).to_equal("application/json")
+
+    def test_the_cookie_is_not_sent_along_with_requests_from_other_sites(self) -> None:
+        application = self.client.application
+        expect(application.config["SESSION_COOKIE_SAMESITE"]).to_equal("Strict")
+        expect(application.config["SESSION_COOKIE_HTTPONLY"]).to_equal(True)
+
+    def test_the_page_is_not_kept_by_browsers_or_proxies(self) -> None:
+        # It carries the token its requests are checked against.
+        with patch("mariner.server.render_template", return_value="the page"):
+            for url in ("/", "/files"):
+                response = self.client.get(url)
+                expect(response.headers["Cache-Control"]).to_equal("no-store")
 
     def test_following_a_link_to_the_page_from_another_site_works(self) -> None:
         # Only what acts or tells is refused, not the page.

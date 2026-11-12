@@ -5,13 +5,13 @@ import tempfile
 from typing import Dict
 
 from flask import abort, render_template
-from waitress import serve
 
 from mariner import config
 from mariner.file_formats.reading import MalformedFile
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
 from mariner.server.app import UPLOAD_OVERHEAD_BYTES, app as flask_app, csrf
+from mariner.server.early import serve
 from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
 from mariner.server.utils import (

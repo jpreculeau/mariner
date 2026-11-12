@@ -58,12 +58,15 @@ Printer and prints
 Requests from the web
 
 - Refuse, on the web API and SDCP, what a page of another web site has a browser send when the browser says where it comes from (`cross_site_request`): a form posted, a WebSocket, a request whose answer a script reads. Such a page could start, stop or delete without anyone asking
-- Refuse browsers on the UVtools routes, which act on a plain GET: a link or a picture on any page was enough to start or stop a print or delete a file, and over plain HTTP a browser says nothing of where such a request comes from
+- Refuse browsers on the UVtools routes, which act on a plain GET (`browser_not_served`): a link or a picture on any page was enough to start or stop a print or delete a file, and over plain HTTP a browser says nothing of where such a request comes from. Programs that send what browsers and media players send are refused too; a script that calls itself a browser, as PowerShell does, must give itself another name
 - Answer only to an IP address or a name of the local network, unless told otherwise (`allowed_hosts`), so that a web site pointing its own name at the printer cannot read or drive it (`host_not_allowed`); a browser is shown what to add to the configuration
 - Send with Mariner's answers the headers that keep the page from being shown inside another site, its scripts to Mariner's own, and its data and pictures from being loaded by other sites. Mariner can therefore no longer be embedded in another page, a home automation dashboard for one
 - Add a setting to switch the UVtools routes off (`[uvtools] enabled`), beside the one SDCP has; a switch set to anything but `true` or `false` counts as off, and settings that are passed over are named in the logs at start
 - Keep what went wrong inside out of error answers: no call trace for a printer error (`printer_error`), a plain answer for an error nobody planned for (`internal_error`), debug mode off; the cause goes to the logs
-- Say that a file could not be stored (`upload_not_stored`) when an upload fails for want of room, on the printer's drive or where uploads wait, and refuse beforehand an upload larger than that room
+- Say that a file could not be stored (`upload_not_stored`) when an upload fails for want of room, on the printer's drive or where uploads wait. An upload that announces a size larger than the room where uploads wait is refused before any of it is sent
+- Refuse a request under a foreign name, from another site or too large for the room as soon as its headers are in: the web server used to take in and store the whole body first, up to the largest size allowed, before anything was checked
+- Add `[http] allowed_origins` for a relay in front of Mariner that asks it under another name or port than the browser used. A name in `allowed_hosts` no longer makes pages served under it Mariner's own
+- Keep the page and the cookie that goes with its token out of caches and out of requests other sites have the browser send
 
 Reading files
 

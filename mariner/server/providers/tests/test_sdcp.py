@@ -1695,6 +1695,9 @@ class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
     async def test_a_refusal_says_who_was_refused(self) -> None:
         # Should a slicer be turned away, the log must tell enough to see it.
         headers = {"Host": "192.168.1.20:3030", "Origin": "http://evil.example\nX"}
+        from mariner.server.providers.sdcp import service
+
+        service._refusals_logged.clear()
         with self.assertLogs(
             "mariner.server.providers.sdcp.service", level="WARNING"
         ) as logs:
@@ -1703,6 +1706,62 @@ class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
         expect("evil.example" in message).to_equal(True)
         expect("192.168.1.99" in message).to_equal(True)
         expect("\n" in message).to_equal(False)
+
+    async def test_a_refusal_says_what_gave_the_page_away(self) -> None:
+        from mariner.server.providers.sdcp import service
+
+        for headers, told in (
+            ({"Referer": "http://evil.example/page"}, "evil.example/page"),
+            ({"Sec-Fetch-Site": "cross-site"}, "cross-site"),
+        ):
+            service._refusals_logged.clear()
+            with self.assertLogs(
+                "mariner.server.providers.sdcp.service", level="WARNING"
+            ) as logs:
+                await self._answered({"Host": "192.168.1.20:3030", **headers})
+            expect(told in logs.records[0].getMessage()).to_equal(True)
+
+    async def test_an_answer_that_is_an_error_is_not_for_other_sites_either(
+        self,
+    ) -> None:
+        from aiohttp import web
+
+        from mariner.server.providers.sdcp.service import refuse_other_sites
+
+        async def handler(request: Any) -> Any:
+            raise web.HTTPNotFound()
+
+        request = cast(Any, _BrowserRequest({"Host": "192.168.1.20:3030"}))
+        with self.assertRaises(web.HTTPNotFound) as raised:
+            await refuse_other_sites(request, handler)
+        headers = raised.exception.headers
+        expect(headers["Cross-Origin-Resource-Policy"]).to_equal("same-origin")
+        expect(headers["X-Content-Type-Options"]).to_equal("nosniff")
+
+    async def test_refusals_do_not_fill_the_log(self) -> None:
+        # A page can have a browser knock without end.
+        from mariner.server.providers.sdcp import service
+
+        service._refusals_logged.clear()
+        headers = {
+            "Host": "192.168.1.20:3030",
+            "Origin": "http://e.example/" + "x" * 5000,
+        }
+        with self.assertLogs(
+            "mariner.server.providers.sdcp.service", level="WARNING"
+        ) as logs:
+            for _ in range(50):
+                await self._answered(headers)
+        expect(len(logs.records)).to_equal(1)
+        expect(len(logs.records[0].getMessage()) < 600).to_equal(True)
+        # Said again once time has passed, with how many there were.
+        with patch.object(
+            service.time, "monotonic", return_value=10**9
+        ), self.assertLogs(
+            "mariner.server.providers.sdcp.service", level="WARNING"
+        ) as logs:
+            await self._answered(headers)
+        expect("49" in logs.records[0].getMessage()).to_equal(True)
 
     async def test_answers_are_not_for_other_sites_to_load(self) -> None:
         from aiohttp import web

@@ -10,9 +10,10 @@ A request from another site
     address or a link is enough for the routes that act on a GET, a form
     or a WebSocket for the others. Browsers say what site a request comes
     from, but not always. ``Sec-Fetch-Site`` is only sent to addresses
-    reached over HTTPS, which Mariner's is not; ``Origin`` is sent with a
-    form posted, a WebSocket and a request a script reads the answer of,
-    and not with a link followed or a picture loaded. Both are checked
+    reached over HTTPS or on the machine itself, which Mariner's is not;
+    ``Origin`` is sent with a form posted, a WebSocket and a request a
+    script reads the answer of, and not with a link followed or a picture
+    loaded. Both are checked
     here when they are there. Programs that are not browsers, slicers
     among them, send neither and are let through.
 
@@ -20,7 +21,10 @@ A browser on the routes made for slicers
     That leaves the GET a browser sends without a word of the site. On
     the routes made for slicers, which act on a GET, a browser is turned
     away as such: it gives itself a name no page can change, and Mariner's
-    own page never asks for those routes. The web API acts on POST only,
+    own page never asks for those routes. So is what says other things
+    that only browsers and players of sound and video say. That is a list
+    of the programs known to follow a page's links, not a proof there are
+    no others. The web API acts on POST only,
     for which ``Origin`` is there.
 
 A request under a foreign name
@@ -63,6 +67,14 @@ _OTHER_SITE = Refusal(
     "This request comes from a page that is not Mariner's and was not served.",
 )
 
+_NOT_A_SLICER = Refusal(
+    "browser_not_served",
+    "Not For Browsers",
+    "These addresses are for slicers, and are not served to a web browser "
+    "or to a program that says what browsers say. A script must give "
+    "itself a name of its own (User-Agent) and leave out Accept-Language "
+    "and Range.",
+)
 _FOREIGN_NAME = Refusal(
     "host_not_allowed",
     "Name Not Allowed",
@@ -79,7 +91,7 @@ _DEFAULT_PORTS = {"http": "80", "https": "443"}
 _SCHEME = re.compile(r"[a-z][a-z0-9+.-]*")
 
 
-def _name_and_port(host: str) -> Optional[Tuple[str, str]]:
+def name_and_port(host: str) -> Optional[Tuple[str, str]]:
     """The two parts of a ``Host`` header, lower case; None if it is not one."""
     host = host.strip().lower()
     if host.startswith("["):
@@ -123,27 +135,37 @@ def _allowed_hosts() -> list:
     return config.get_http_allowed_hosts()
 
 
+def _site(address: str) -> Optional[Tuple[str, str, str]]:
+    """The scheme, name and port a page address stands for, if it is one."""
+    parts = urlsplit(address.strip().lower())
+    if parts.scheme not in _DEFAULT_PORTS or not parts.netloc:
+        return None
+    name = name_and_port(parts.netloc)
+    if name is None:
+        return None
+    return parts.scheme, name[0].rstrip("."), name[1] or _DEFAULT_PORTS[parts.scheme]
+
+
 def _is_own_page(address: str, host: str) -> bool:
     """Whether the page at *address* is one of Mariner's.
 
-    Served under the name and port the request asks for; or under a name
-    listed in ``allowed_hosts``, for a relay in front of Mariner that asks
-    it under another name or port than the browser used. ``"*"`` there
-    lets any name be asked for and does not make every page Mariner's.
+    Served under the name and port the request asks for; or at an address
+    listed whole in ``allowed_origins``, for a relay in front of Mariner
+    that asks it under another name or port than the browser used. A name
+    in ``allowed_hosts`` may be asked for and is not thereby a friend:
+    under the same name, another port is another program's page.
     """
-    parts = urlsplit(address.strip().lower())
-    if parts.scheme not in _DEFAULT_PORTS or not parts.netloc:
-        return False
-    page, asked = _name_and_port(parts.netloc), _name_and_port(host)
+    page = _site(address)
     if page is None:
         return False
-    listed = [entry.strip().lower().rstrip(".") for entry in _allowed_hosts()]
-    if page[0].rstrip(".") in listed:
+    if any(page == _site(listed) for listed in config.get_http_allowed_origins()):
         return True
+    asked = name_and_port(host)
     if asked is None:
         return False
-    default = _DEFAULT_PORTS[parts.scheme]
-    return page[0] == asked[0] and (page[1] or default) == (asked[1] or default)
+    return page[1] == asked[0].rstrip(".") and page[2] == (
+        asked[1] or _DEFAULT_PORTS[page[0]]
+    )
 
 
 def _is_a_program_s(origin: str) -> bool:
@@ -171,9 +193,25 @@ def is_browser(headers: Mapping[str, str]) -> bool:
     return agent.startswith(("mozilla/", "opera/"))
 
 
+# What a browser, a player of sound or video or a reader of feeds says
+# with a request, and a slicer has no cause to.
+_NOT_SAID_BY_SLICERS = frozenset(
+    ("accept-language", "range", "icy-metadata", "purpose", "sec-purpose")
+)
+
+
 def browser_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
-    """Why a request to a route made for slicers is not served to a browser."""
-    return _OTHER_SITE if is_browser(headers) else None
+    """Why a request to a route made for slicers is not served.
+
+    To a browser, or to another program that loads the addresses a page
+    gives it. This catches the ones known, not every one there could be:
+    what keeps the rest out is that Mariner is asked who is asking, once
+    it does that.
+    """
+    if is_browser(headers):
+        return _NOT_A_SLICER
+    said = {name.lower() for name in headers.keys()}
+    return _NOT_A_SLICER if said & _NOT_SAID_BY_SLICERS else None
 
 
 def host_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
@@ -182,7 +220,7 @@ def host_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
     if host is None:
         # Only a program written for the purpose leaves it out.
         return None
-    parts = _name_and_port(host)
+    parts = name_and_port(host)
     if parts is None or not _is_allowed_name(parts[0]):
         return _FOREIGN_NAME
     return None
@@ -208,6 +246,34 @@ def site_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
     if referer is not None and not _is_own_page(referer, host):
         return _OTHER_SITE
     return None
+
+
+# What acts on the printer or the files, or tells about them.
+GUARDED_PREFIXES = ("/api/", "/uvtools/")
+# What is made for slicers, and acts on a GET.
+SLICER_PREFIXES = ("/uvtools/",)
+
+# Sent with Mariner's answers that are data: not for other sites to load,
+# and what their type says whatever their contents look like.
+ANSWER_HEADERS = {
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+def request_refusal(path: str, headers: Mapping[str, str]) -> Optional[Refusal]:
+    """Why the web server does not serve a request for *path*; None if it does.
+
+    A foreign name is refused everywhere; a request from another site only
+    where it would act or tell, so that a link to Mariner on another page
+    still opens it; a browser on the routes made for slicers.
+    """
+    refusal = host_refusal(headers)
+    if refusal is None and path.startswith(GUARDED_PREFIXES):
+        refusal = site_refusal(headers)
+    if refusal is None and path.startswith(SLICER_PREFIXES):
+        refusal = browser_refusal(headers)
+    return refusal
 
 
 def refusal_for(headers: Mapping[str, str]) -> Optional[Refusal]:

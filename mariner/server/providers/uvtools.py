@@ -67,8 +67,9 @@ _PIECE_BYTES = 1024 * 1024
 def _write_as_it_arrives(stream: IO[bytes], path: Path) -> int:
     """Write what *stream* gives to the file at *path*; how many bytes.
 
-    A piece at a time: held whole in memory first, a file could be larger
-    than what the board has. A file past the largest size allowed does
+    A piece at a time: the web server has it in a file where uploads
+    wait, and read whole into memory it could be larger than what the
+    board has. A file past the largest size allowed does
     not get this far: the web server refuses it first.
     """
     received = 0
