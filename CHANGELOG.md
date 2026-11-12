@@ -135,6 +135,14 @@ Web interface
 - Go on showing an upload on whichever page is shown, say how far it is a quarter at a time to those who cannot see the bar, let it be given up, and warn before the page is left while it lasts
 - Write durations, percentages and decimals as each language does
 
+Installation and what is kept
+
+- Keep the key that signs sessions from one start to the next (`[state] directory`, `/var/lib/mariner` by default, for Mariner's account alone): a page left open goes on working after Mariner or the computer restarts, without asking for a new token
+- Keep the cache out of `/tmp` (`/var/cache/mariner` by default), where any account could make its folder before Mariner did; the history of prints shown to slicers moves to the state directory and now outlasts a restart
+- Service: give it its two folders (`StateDirectory`, `CacheDirectory`), start it again when it stops, put a ceiling on what it writes to the log (300 lines per 30 seconds: any device of the network can have lines written), and keep it from what it has no use for (`NoNewPrivileges`, `ProtectSystem=full`, `ProtectHome=read-only`, `PrivateTmp` and others). The serial port, the network and the folder of files are left as they are
+- Docker: `/var/lib/mariner` is a volume
+- Build and release workflows name every action they run by its commit rather than by a tag that can be moved
+
 ### 🚜 Refactor
 
 - Share one path and file name check between the web API, UVtools and SDCP

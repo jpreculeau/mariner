@@ -26,7 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxml2 libxslt1.1 zlib1g \
   && rm -rf /var/lib/apt/lists/* \
   && useradd -r -s /sbin/nologin -d /nonexistent mariner \
-  && usermod -aG dialout mariner
+  && usermod -aG dialout mariner \
+  && install -d -o mariner -g mariner -m 0700 /var/lib/mariner /var/cache/mariner
 
 COPY --from=python-builder /build/.venv /opt/venvs/mariner3d
 COPY --from=frontend-builder /build/frontend/dist /opt/venvs/mariner3d/dist
@@ -35,5 +36,8 @@ COPY config.toml /etc/mariner/config.toml
 ENV PATH="/opt/venvs/mariner3d/bin:${PATH}"
 
 EXPOSE 5000
+# What must outlast the container: the key of sessions, the password's hash,
+# the settings changed from the page.
+VOLUME /var/lib/mariner
 USER mariner
 ENTRYPOINT ["mariner"]

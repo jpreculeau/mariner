@@ -182,8 +182,25 @@ def get_spool_directory() -> str:
     return str(http_config.get("spool_directory", default_directory))
 
 
+def get_state_directory() -> str:
+    """Where Mariner keeps what must outlast a restart, for itself alone.
+
+    The key of sessions, the password's hash, the settings changed from
+    the page. ``directory`` under ``[state]``; the default is the folder
+    systemd makes for the service.
+    """
+    default_directory = "/var/lib/mariner"
+    state_config = _get_config().get("state")
+    if not isinstance(state_config, dict):
+        return default_directory
+    return str(state_config.get("directory", default_directory))
+
+
+DEFAULT_CACHE_DIRECTORY = "/var/cache/mariner"
+
+
 def get_cache_directory() -> str:
-    default_directory = "/tmp/mariner/"
+    default_directory = DEFAULT_CACHE_DIRECTORY
     cache_config = _get_config().get("cache")
     if not isinstance(cache_config, dict):
         return default_directory
@@ -297,13 +314,13 @@ def get_sdcp_history_limit() -> int:
     return int(_sdcp_config().get("history_limit", 50))
 
 
-def get_sdcp_history_path() -> Path:
-    """Where print task history is persisted.
+def get_sdcp_history_path() -> Optional[Path]:
+    """Where print task history is kept, when a place is named for it.
 
-    Defaults into the cache directory, which is often tmpfs, so history is
-    lost on reboot unless this is pointed somewhere durable.
+    ``history_path`` under ``[sdcp]``. Left out, it is kept with what
+    Mariner keeps from one start to the next (see ``[state]``).
     """
     configured = _sdcp_config().get("history_path")
     if configured:
         return Path(str(configured))
-    return Path(get_cache_directory()) / "sdcp_history.json"
+    return None

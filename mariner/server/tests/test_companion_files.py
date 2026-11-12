@@ -52,8 +52,8 @@ class CacheDirectoryTest(TestCase):
         # Emptying what is remembered of files, at each start, must leave
         # the rest alone: the history of prints shown to slicers, for one.
         kept = Path(app.config["CACHE_DIR"])
-        expect(kept.parent).to_equal(Path(config.get_cache_directory()))
-        expect(kept in config.get_sdcp_history_path().parents).to_equal(False)
+        expect(os.path.isdir(kept)).to_equal(True)
+        expect(config.get_sdcp_history_path()).to_equal(None)
 
     def test_a_cache_directory_that_cannot_be_used_does_not_stop_the_start(
         self,

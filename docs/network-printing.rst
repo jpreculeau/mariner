@@ -212,12 +212,12 @@ SDCP needs no configuration, but every value can be pinned in
    poll_interval_secs = 3.0
    history_enabled = true    # set false to record no print history
    history_limit = 50        # most recent tasks kept
-   history_path = ""         # defaults into the cache directory
+   history_path = ""         # defaults into the state directory
 
 .. note::
-   ``history_path`` defaults inside the cache directory, which is often
-   ``/tmp`` and therefore cleared on reboot. Point it somewhere durable if
-   you want print history to outlive a restart.
+   The history is kept with what Mariner keeps from one start to the next
+   (``directory`` under ``[state]``, ``/var/lib/mariner`` by default), so it
+   outlives a restart. Set ``history_path`` to keep it elsewhere.
 
 The mainboard ID is derived from the host's machine-id so it stays stable
 across restarts, which is what lets clients remember the printer. Pin

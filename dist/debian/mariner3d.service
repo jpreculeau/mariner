@@ -1,10 +1,41 @@
 [Unit]
 Description=mariner3d Printer Controller
+Documentation=https://github.com/mariner3d/mariner
+After=network.target
 
 [Service]
 User=mariner
 ExecStart=/usr/bin/mariner
-ExecReload=/bin/kill -HUP $MAINPID
+# Started again when it stops, whatever the reason. This is also how it is
+# restarted from its page after a change of settings.
+Restart=always
+RestartSec=3
+
+# Folders of its own: /var/lib/mariner for what must outlast a restart
+# (the key of sessions, the password's hash, settings changed from the
+# page), /var/cache/mariner for what can be made again.
+StateDirectory=mariner
+StateDirectoryMode=0700
+CacheDirectory=mariner
+CacheDirectoryMode=0700
+
+# A ceiling on what it writes to the log: any device of the network can
+# have lines written.
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=300
+
+# Kept from what it has no use for. The serial port, the network and the
+# folder of files are left as they are.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
 
 [Install]
 WantedBy=multi-user.target

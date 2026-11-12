@@ -56,8 +56,18 @@ spool_directory = "/var/tmp"
 
 [cache]
 # Directory in which cached information such as file metadata and thumbnails
-# will be stored
-directory = "/tmp/mariner/"
+# will be stored. Emptied at each start. Default is /var/cache/mariner, which
+# the service is given; if it cannot be used Mariner says so in the log and
+# uses a folder of its own under /tmp.
+#directory = "/var/cache/mariner"
+
+[state]
+# Directory in which Mariner keeps what must outlast a restart, for itself
+# alone: the key that signs sessions, the password's hash, the settings
+# changed from its page, the history of prints shown to slicers. Default is
+# /var/lib/mariner, which the service is given. Run several instances on one
+# computer with a directory each.
+#directory = "/var/lib/mariner"
 
 # Interfaces for slicers. Both are on unless switched off here.
 [uvtools]

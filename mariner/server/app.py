@@ -146,7 +146,15 @@ def usable_cache_directory(wanted: str) -> str:
     if _can_hold_the_cache(wanted):
         return wanted
     fallback = _own_folder()
-    logger.warning("Not using the cache directory %r; using %r", wanted, fallback)
+    # Not worth a warning where nothing was asked for: run outside its
+    # service, Mariner has no folder under /var/cache.
+    asked_for = not wanted.startswith(config.DEFAULT_CACHE_DIRECTORY)
+    logger.log(
+        logging.WARNING if asked_for else logging.INFO,
+        "Not using the cache directory %r; using %r",
+        wanted,
+        fallback,
+    )
     return fallback
 
 
@@ -349,6 +357,8 @@ app.config.from_mapping(
         # otherwise: by its size and by a number of entries of Mariner's
         # own, and emptied at each start (see mariner.server.utils).
         "CACHE_THRESHOLD": 0,
-        "SECRET_KEY": os.urandom(16),
+        # Replaced at start by the key that is kept (mariner.server.state):
+        # this one is for what imports the application without starting it.
+        "SECRET_KEY": os.urandom(32),
     }
 )

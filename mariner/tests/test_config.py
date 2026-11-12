@@ -21,7 +21,12 @@ class ConfigurationTest(TestCase):
         expect(config.get_http_host()).to_equal("0.0.0.0")
         expect(config.get_http_port()).to_equal(5050)
 
-        expect(config.get_cache_directory()).to_equal("/tmp/mariner/")
+        # Not in /tmp: any account can make a folder there before Mariner
+        # does, and what is there is gone at each restart.
+        expect(config.get_cache_directory()).to_equal("/var/cache/mariner")
+        expect(config.get_state_directory()).to_equal("/var/lib/mariner")
+        # Kept with what lasts, unless a place is named for it.
+        expect(config.get_sdcp_history_path()).to_equal(None)
 
         expect(config.get_max_upload_bytes()).to_equal(2048 * 1024 * 1024)
         expect(config.get_spool_directory()).to_equal("/var/tmp")
@@ -151,6 +156,20 @@ port = 80
         )
         expect(config.get_http_host()).to_equal("127.0.0.1")
         expect(config.get_http_port()).to_equal(80)
+
+    def test_can_say_where_things_are_kept(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[state]
+directory = "/srv/mariner"
+
+[sdcp]
+history_path = "/srv/history.json"
+            """,
+        )
+        expect(config.get_state_directory()).to_equal("/srv/mariner")
+        expect(config.get_sdcp_history_path()).to_equal(Path("/srv/history.json"))
 
     def test_can_customize_cache_settings(self) -> None:
         self.fs.create_file(

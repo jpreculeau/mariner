@@ -16,6 +16,7 @@ from aiohttp import WSMsgType, multipart, web
 from pyre_extensions import none_throws
 
 from mariner import config
+from mariner.server import state
 from mariner.server import origin, refusals
 from mariner.server.providers.sdcp import constants, identity, messages
 from mariner.server.providers.sdcp.bridge import PrinterBridge
@@ -131,7 +132,8 @@ class SDCPService:
         self._history: Optional[HistoryStore] = None
         if config.get_sdcp_history_enabled():
             self._history = HistoryStore(
-                config.get_sdcp_history_path(),
+                config.get_sdcp_history_path()
+                or state.directory() / "sdcp_history.json",
                 limit=config.get_sdcp_history_limit(),
             )
 

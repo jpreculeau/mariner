@@ -33,6 +33,8 @@ class StartupTest(TestCase):
             server, "start_providers", side_effect=record("providers")
         ), patch.object(
             server, "serve", side_effect=record("serve")
+        ), patch.object(
+            server.state, "session_key", return_value=b"k" * 32
         ):
             server.main()
 
@@ -67,10 +69,19 @@ class StartupTest(TestCase):
         ), patch.object(
             server, "start_providers"
         ), patch.object(
+            server.state, "session_key", return_value=b"k" * 32
+        ), patch.object(
             server, "serve"
         ) as serve:
             server.main()
         return serve
+
+    def test_sessions_are_signed_with_the_key_that_is_kept(self) -> None:
+        # The same at every start: a page left open goes on working, and
+        # whoever is signed in stays so.
+        with patch.object(server, "use_spool_directory"):
+            self._started()
+        self.assertEqual(server.flask_app.config["SECRET_KEY"], b"k" * 32)
 
     def test_the_web_server_takes_uploads_up_to_the_limit(self) -> None:
         # Left to itself it refuses anything over a gigabyte.
