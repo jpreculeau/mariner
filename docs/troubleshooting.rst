@@ -233,7 +233,7 @@ file is first read:
 
 .. code-block:: shell-session
 
-   $ sudo journalctl -u mariner3d.service | grep "Could not read"
+   $ sudo journalctl -u mariner3d.service | grep "Could not read .*: "
 
 The check is the web page's: a print asked for by other means, from a slicer
 or the printer's own screen, is started as before.

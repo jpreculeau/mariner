@@ -9,6 +9,7 @@ it is acted on: against the size of the file, and where that is not enough,
 as for the preview, against a ceiling set from what real files hold.
 """
 
+import dataclasses
 import os
 import struct
 from typing import BinaryIO, List, Type, TypeVar
@@ -138,6 +139,67 @@ def check_layers_fit(file: BinaryIO, end_byte_offset_by_layer: List[int]) -> Non
                 f"layer {layer} of {len(end_byte_offset_by_layer)} "
                 "lies outside the file: the file is incomplete"
             )
+
+
+_ENTRIES_PER_READ = 4096
+
+
+def _ends_format(struct_type: Type[Struct]) -> struct.Struct:
+    """Reads, of an entry of the layer table, where its image is and how long."""
+    layout = struct_type.FORMAT_PREFIX
+    for field in dataclasses.fields(struct_type):
+        field_format = field.metadata["format"]
+        if field.name in ("image_offset", "image_length"):
+            layout += field_format
+        else:
+            layout += f"{struct.calcsize(struct_type.FORMAT_PREFIX + field_format)}x"
+    return struct.Struct(layout)
+
+
+def read_layer_ends(
+    file: BinaryIO,
+    struct_type: Type[Struct],
+    table_offset: int,
+    layer_count: int,
+    passes: int = 1,
+) -> List[int]:
+    """Where each layer ends in *file*, from its layer table.
+
+    The table at *table_offset* holds one *struct_type* for each layer in
+    each of the *passes* the file stores (see ``passes_stored``). The ends
+    given are those of the first pass, which is what following a print
+    takes; every entry is checked to end within the file, as in
+    ``check_layers_fit``.
+
+    The table is read a few thousand entries at a time, and only the two
+    numbers needed are taken from each: entry by entry, the longest table
+    allowed took seconds to read.
+    """
+    entry = _ends_format(struct_type)
+    check_layer_count(file, layer_count, table_offset, entry.size, passes)
+    size = size_of(file)
+    total = layer_count * passes
+    ends: List[int] = []
+    read = 0
+    while read < total:
+        count = min(_ENTRIES_PER_READ, total - read)
+        block = read_bytes(
+            file, table_offset + read * entry.size, count * entry.size, "layer table"
+        )
+        for image_offset, image_length in entry.iter_unpack(block):
+            read += 1
+            end = image_offset + image_length
+            if end > size:
+                layer = (read - 1) % layer_count + 1
+                which = f"layer {layer} of {layer_count}"
+                if passes > 1:
+                    which += f" (pass {(read - 1) // layer_count + 1} of {passes})"
+                raise MalformedFile(
+                    f"{which} lies outside the file: the file is incomplete"
+                )
+            if read <= layer_count:
+                ends.append(end)
+    return ends
 
 
 def read_preview(

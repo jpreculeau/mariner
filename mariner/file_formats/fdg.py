@@ -6,8 +6,7 @@ from typedstruct import LittleEndianStruct, StructType
 
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.reading import (
-    check_layer_count,
-    check_layers_fit,
+    read_layer_ends,
     read_preview,
     read_struct,
     read_text,
@@ -110,26 +109,9 @@ class FDGFile(SlicedModelFile):
                 "printer name",
             )
 
-            layer_def_size = FDGLayerDef.get_size()
-            check_layer_count(
-                file,
-                fdg_header.layer_count,
-                fdg_header.layer_defs_offset,
-                layer_def_size,
+            end_byte_offset_by_layer = read_layer_ends(
+                file, FDGLayerDef, fdg_header.layer_defs_offset, fdg_header.layer_count
             )
-            end_byte_offset_by_layer = []
-            for layer in range(0, fdg_header.layer_count):
-                layer_def = read_struct(
-                    file,
-                    FDGLayerDef,
-                    fdg_header.layer_defs_offset + layer * layer_def_size,
-                    "layer table",
-                )
-                end_byte_offset_by_layer.append(
-                    layer_def.image_offset + layer_def.image_length
-                )
-
-            check_layers_fit(file, end_byte_offset_by_layer)
 
             return FDGFile(
                 filename=path.name,

@@ -53,10 +53,12 @@ Reading files
 - Show the details and preview of the file that is there now, after one was replaced by another of the same name
 - Keep starting up when a stored file cannot be read, and prepare every other file, those in folders included
 - Check every size, count and position a file states about itself against the size of the file before acting on it
-- Limit the preview picture to the size of a thumbnail and to the bytes such a picture can need, decode it in a fraction of the memory, and render one at a time, so that a damaged or crafted file costs a request about ten megabytes and a second or so of processor at most
+- Limit the preview picture to the size of a thumbnail and to the bytes such a picture can need, decode it in a fraction of the memory, and render one at a time, so that a damaged or crafted file costs a request about ten megabytes at most
 - List a file whose transfer stopped part of the way as one that cannot be printed, so that the web page does not offer to print it; that covers every anti-aliasing pass of a `.cbddlp` or `.photon` file, and a file that holds no layer
 - Find out once per version of a file that it cannot be read, and log the reason then, instead of at every listing
-- Keep one remembered entry of each kind per file, replaced with the file, with no limit on the number of files, and start from an empty cache; before, past 500 entries, files were read again at every listing
+- Keep one remembered entry of each kind per file, replaced with the file, with no limit on the number of files; before, past 500 entries, files were read again at every listing
+- Start from an empty cache, keep it under 64 MB by dropping the oldest entries, and keep working when it cannot be written
+- Read the layer table of a file in blocks: the longest one allowed took seconds, during which other requests waited
 - Let requests that arrive together for the same file share one read
 - Do not remember what was read of a file that was replaced during the read
 - Compare the signature of an encrypted CTB file in full

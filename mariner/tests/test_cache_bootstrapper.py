@@ -123,6 +123,23 @@ class CacheBootstrapperRobustnessTest(TestCase):
 
     @patch("mariner.server.read_cached_sliced_model_file")
     @patch("mariner.server.read_cached_preview")
+    def test_an_entry_the_drive_fails_on_does_not_stop_the_others(
+        self, preview: MagicMock, sliced: MagicMock
+    ) -> None:
+        # A damaged directory entry, after the drive was unplugged mid-write.
+        real_stat = os.stat
+
+        def failing_stat(path: Any, *args: Any, **kwargs: Any) -> Any:
+            if str(path).endswith("a.ctb"):
+                raise OSError(5, "Input/output error")
+            return real_stat(path, *args, **kwargs)
+
+        with patch("os.stat", side_effect=failing_stat):
+            read, _ = self._warmed(sliced, preview)
+        expect(read).to_equal(["b.ctb", "c.ctb"])
+
+    @patch("mariner.server.read_cached_sliced_model_file")
+    @patch("mariner.server.read_cached_preview")
     def test_companion_files_from_a_mac_are_left_alone(
         self, preview: MagicMock, sliced: MagicMock
     ) -> None:

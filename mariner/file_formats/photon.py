@@ -6,8 +6,7 @@ from typedstruct import LittleEndianStruct, StructType
 
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.reading import (
-    check_layer_count,
-    check_layers_fit,
+    read_layer_ends,
     passes_stored,
     read_preview,
     read_struct,
@@ -149,38 +148,19 @@ class PhotonFile(SlicedModelFile):
                     ]
                 )
 
-            layer_def_size = PhotonLayerDef.get_size()
             # The passes after the first are not needed to follow a print,
             # but a file that lacks part of them is as incomplete.
-            passes = passes_stored(
-                photon_header.magic,
-                photon_header.version,
-                photon_header.anti_alias_level,
-            )
-            check_layer_count(
+            end_byte_offset_by_layer = read_layer_ends(
                 file,
-                photon_header.layer_count,
+                PhotonLayerDef,
                 photon_header.layer_defs_offset,
-                layer_def_size,
-                passes,
+                photon_header.layer_count,
+                passes_stored(
+                    photon_header.magic,
+                    photon_header.version,
+                    photon_header.anti_alias_level,
+                ),
             )
-            entry_count = photon_header.layer_count * passes
-            end_byte_offset_by_entry = []
-            for layer in range(0, entry_count):
-                layer_def = read_struct(
-                    file,
-                    PhotonLayerDef,
-                    photon_header.layer_defs_offset + layer * layer_def_size,
-                    "layer table",
-                )
-                end_byte_offset_by_entry.append(
-                    layer_def.image_offset + layer_def.image_length
-                )
-
-            check_layers_fit(file, end_byte_offset_by_entry)
-            end_byte_offset_by_layer = end_byte_offset_by_entry[
-                : photon_header.layer_count
-            ]
 
             return PhotonFile(
                 filename=path.name,

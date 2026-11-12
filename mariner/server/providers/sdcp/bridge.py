@@ -354,7 +354,7 @@ class PrinterBridge:
         Rendering rather than trusting the extension: a supported extension
         is no guarantee the file parses, and advertising a Thumbnail address
         that then 404s leaves the client showing a broken image. The render
-        is memoized, so the GET that follows costs nothing extra.
+        is remembered, so the GET that follows costs nothing extra.
         """
         path = resolve_in_files_directory(filename)
         if path is None or not os.path.isfile(path):

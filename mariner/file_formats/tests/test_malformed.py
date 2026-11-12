@@ -213,6 +213,24 @@ class MalformedFileTest(TestCase):
             with self.assertRaises(MalformedFile):
                 CTBFile.read(self._copy("pyramid.cbddlp", whole[:-missing]))
 
+    def test_the_same_goes_for_a_photon_file(self) -> None:
+        # The two extensions are one format.
+        whole = (SAMPLES / "pyramid.cbddlp").read_bytes()
+        expect(PhotonFile.read(self._copy("p.photon", whole)).layer_count).to_equal(50)
+        with self.assertRaises(MalformedFile):
+            PhotonFile.read(self._copy("p.photon", whole[:-4096]))
+
+    def test_a_slicer_table_is_read_only_if_it_has_a_place_and_a_size(self) -> None:
+        for sample, parser, header in (
+            ("stairs.ctb", CTBFile, CTBHeader),
+            ("stairs.photon", PhotonFile, PhotonHeader),
+        ):
+            for field in ("slicer_offset", "slicer_size"):
+                path = self._with(
+                    sample, _offset_of(header, field), struct.pack("<I", 0)
+                )
+                expect(parser.read(path).slicer_version).to_equal("")
+
     def test_an_anti_aliased_file_reads_as_before(self) -> None:
         read = CTBFile.read(SAMPLES / "pyramid.cbddlp")
         expect(read.layer_count).to_equal(50)

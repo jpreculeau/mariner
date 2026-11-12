@@ -299,9 +299,11 @@ def printable_files() -> Iterator[Path]:
             if is_hidden_entry(name) or get_file_extension(name) not in supported:
                 continue
             path = Path(folder) / name
-            if path.is_symlink() and not stays_in_files_directory(path):
+            # These two answer False for an entry the drive fails on, which
+            # must not end the walk.
+            if os.path.islink(path) and not stays_in_files_directory(path):
                 continue
-            if not path.is_file() or is_macos_companion(path):
+            if not os.path.isfile(path) or is_macos_companion(path):
                 continue
             yield path
 

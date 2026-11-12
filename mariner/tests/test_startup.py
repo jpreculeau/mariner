@@ -24,7 +24,7 @@ class StartupTest(TestCase):
         ), patch.object(server.logging.getLogger(), "handlers", []), patch.object(
             server, "keep_requests_on_one_line", side_effect=record("log filter")
         ), patch.object(
-            server.cache, "clear", side_effect=record("cache emptied")
+            server, "empty_cache", side_effect=record("cache emptied")
         ), patch.object(
             server, "remove_stale_scratch_files", side_effect=record("cleanup")
         ), patch.object(

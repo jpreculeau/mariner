@@ -64,6 +64,7 @@ class ReadingTest(TestCase):
         old, new = 0x12FD0019, 0x12FD0086
         for magic, version, level, passes in (
             (old, 2, 4, 4),
+            (old, 2, 2, 2),
             (old, 3, 16, 16),
             (old, 3, 1, 1),
             (old, 3, 0, 1),
@@ -241,3 +242,86 @@ class ReadPreviewTest(TestCase):
             reading.read_preview(file, 2, 2, 0, 9)
         with self.assertRaises(MalformedFile):
             reading.read_preview(file, 2, 2, 0, 2**31)
+
+
+@dataclass(frozen=True)
+class _Layer(LittleEndianStruct):
+    height: float = StructType.float32()
+    image_offset: int = StructType.uint32()
+    image_length: int = StructType.uint32()
+    other: int = StructType.uint16()
+
+
+class _CountingFile:
+    """An open file that counts how many times it is read."""
+
+    def __init__(self, file: Any) -> None:
+        self._file = file
+        self.reads = 0
+
+    def read(self, size: int) -> bytes:
+        self.reads += 1
+        return bytes(self._file.read(size))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._file, name)
+
+
+class ReadLayerEndsTest(TestCase):
+    def _file(self, entries: Any, tail: int = 0) -> Any:
+        file = tempfile.TemporaryFile()
+        self.addCleanup(file.close)
+        file.write(b"head")
+        for offset, length in entries:
+            file.write(struct.pack("<fIIH", 1.0, offset, length, 7))
+        file.write(bytes(tail))
+        file.flush()
+        return file
+
+    def test_gives_where_each_layer_ends(self) -> None:
+        file = self._file([(10, 5), (15, 6), (21, 1)], tail=100)
+        expect(reading.read_layer_ends(file, _Layer, 4, 3)).to_equal([15, 21, 22])
+
+    def test_gives_the_layers_of_the_first_pass_and_checks_them_all(self) -> None:
+        entries = [(10, 5), (15, 6), (21, 1), (22, 2)]
+        file = self._file(entries, tail=100)
+        expect(reading.read_layer_ends(file, _Layer, 4, 2, passes=2)).to_equal([15, 21])
+        size = reading.size_of(file)
+        file = self._file(entries[:3] + [(size, 60)], tail=100)
+        with self.assertRaises(MalformedFile) as raised:
+            reading.read_layer_ends(file, _Layer, 4, 2, passes=2)
+        # Named as a layer of the file, which has two, not as a table entry.
+        expect("layer 2 of 2 (pass 2 of 2) lies" in str(raised.exception)).to_equal(
+            True
+        )
+
+    def test_refuses_a_layer_that_ends_past_the_file(self) -> None:
+        file = self._file([(10, 5), (15, 600)])
+        with self.assertRaises(MalformedFile) as raised:
+            reading.read_layer_ends(file, _Layer, 4, 2)
+        expect("layer 2 of 2 lies" in str(raised.exception)).to_equal(True)
+
+    def test_refuses_a_table_the_file_does_not_hold(self) -> None:
+        file = self._file([(10, 5), (15, 6)])
+        for count, passes in ((3, 1), (2, 2), (0, 1), (reading.MAX_LAYER_COUNT + 1, 1)):
+            with self.assertRaises(MalformedFile):
+                reading.read_layer_ends(file, _Layer, 4, count, passes=passes)
+
+    def test_a_long_table_is_read_in_few_reads(self) -> None:
+        # Entry by entry, the longest table allowed took seconds, during
+        # which other requests waited.
+        count = 20_000
+        file = _CountingFile(self._file([(10, 5)] * count, tail=100))
+        expect(reading.read_layer_ends(file, _Layer, 4, count)).to_equal([15] * count)
+        expect(file.reads <= 10).to_equal(True)
+
+    def test_a_long_table_is_not_held_whole_in_memory(self) -> None:
+        import tracemalloc
+
+        count = 200_000
+        file = self._file([(10, 5)] * count, tail=100)
+        tracemalloc.start()
+        reading.read_layer_ends(file, _Layer, 4, 12_500, passes=16)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        expect(peak < 1_000_000).to_equal(True)

@@ -126,8 +126,8 @@ class CachedReadsTest(TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
-        utils.cache.clear()
-        self.addCleanup(utils.cache.clear)
+        utils.empty_cache()
+        self.addCleanup(utils.empty_cache)
 
     def test_a_file_is_parsed_once(self) -> None:
         expect(utils.read_cached_sliced_model_file(self.path)).to_equal("first")
@@ -184,7 +184,7 @@ class CachedReadsTest(TestCase):
 
     def test_a_file_that_cannot_be_read_is_refused_once_per_version(self) -> None:
         # Finding out can take as long as reading a good file. The listing
-        # asks again every few seconds.
+        # status of a print asks again every few seconds.
         self.path.write_bytes(b"MALFORMED")
         for _ in range(3):
             with self.assertRaises(MalformedFile) as raised:
@@ -295,9 +295,118 @@ class CachedReadsTest(TestCase):
         expect(isinstance(raised.exception, MalformedFile)).to_equal(False)
         expect(_CountingFormat.reads).to_equal(3)
 
+    def test_one_file_is_one_entry_however_its_name_is_spelled(self) -> None:
+        # The FAT filesystem answers to any case of a name.
+        folder = Path(self.directory.name)
+        expect(utils._key("details", folder / "Model.ctb")).to_equal(
+            utils._key("details", folder / "MODEL.CTB")
+        )
+        expect(utils._key("details", self.path)).not_to_equal(
+            utils._key("preview", self.path)
+        )
+        expect(utils._key("details", self.path)).not_to_equal(
+            utils._key("details", folder / "other.ctb")
+        )
+        # A name that is not valid text still has a key.
+        utils._key("details", folder / os.fsdecode(b"\xff\xfe.ctb"))
+
+    def _size(self) -> int:
+        folder = utils.cache.cache._path
+        return sum(os.path.getsize(os.path.join(folder, n)) for n in os.listdir(folder))
+
+    def test_what_is_remembered_is_limited_in_size(self) -> None:
+        # Whatever leaves entries behind: files deleted since, or sent only
+        # to fill the place, which by default is in memory.
+        paths = [self.path.with_name(f"{number}.ctb") for number in range(40)]
+        with patch.object(utils, "MAX_CACHE_BYTES", 4000):
+            for path in paths:
+                path.write_bytes(b"x" * 500)
+                utils.read_cached_sliced_model_file(path)
+                expect(self._size() <= 4000).to_equal(True)
+            # The latest are those kept.
+            _CountingFormat.reads = 0
+            utils.read_cached_sliced_model_file(paths[-1])
+            expect(_CountingFormat.reads).to_equal(0)
+            utils.read_cached_sliced_model_file(paths[0])
+            expect(_CountingFormat.reads).to_equal(1)
+
+    def test_a_cache_that_cannot_be_written_does_not_cost_a_read_each_time(
+        self,
+    ) -> None:
+        # A full drive, say. The status is asked for every few seconds.
+        with patch.object(utils.cache, "set", return_value=False), self.assertLogs(
+            "mariner.server.utils", level="WARNING"
+        ) as logs:
+            for _ in range(3):
+                expect(utils.read_cached_sliced_model_file(self.path)).to_equal("first")
+            self.path.write_bytes(b"second, longer")
+            expect(utils.read_cached_sliced_model_file(self.path)).to_equal(
+                "second, longer"
+            )
+        expect(_CountingFormat.reads).to_equal(2)
+        # Said once, not at every request.
+        expect(len(logs.records)).to_equal(1)
+
+    def test_a_cache_folder_that_went_missing_is_made_again(self) -> None:
+        folder = utils.cache.cache._path
+        utils.read_cached_sliced_model_file(self.path)
+        for name in os.listdir(folder):
+            os.remove(os.path.join(folder, name))
+        os.rmdir(folder)
+        self.addCleanup(os.makedirs, folder, exist_ok=True)
+        utils.read_cached_sliced_model_file(self.path)
+        expect(len(os.listdir(folder))).to_equal(1)
+
+    def test_emptying_removes_everything_kept_there(self) -> None:
+        folder = Path(utils.cache.cache._path)
+        utils.read_cached_sliced_model_file(self.path)
+        # What a write that failed leaves behind.
+        (folder / "tmpabc.__wz_cache").write_bytes(b"x")
+        utils.empty_cache()
+        expect(os.listdir(folder)).to_equal([])
+
+    def test_what_is_remembered_does_not_expire(self) -> None:
+        with patch.object(utils.cache, "set", wraps=utils.cache.set) as stored:
+            utils.read_cached_sliced_model_file(self.path)
+            utils.read_cached_preview(self.path)
+        expect([call.kwargs["timeout"] for call in stored.call_args_list]).to_equal(
+            [0, 0]
+        )
+
+    def test_emptying_leaves_the_files_directory_alone(self) -> None:
+        # Should the cache be set to a place that holds the models.
+        models = Path(self.directory.name)
+        inside = models / "parsed"
+        inside.mkdir()
+        (inside / "model.ctb").write_bytes(b"x")
+        for folder in (models, inside):
+            with patch.dict(utils.app.config, {"CACHE_DIR": str(folder)}), patch(
+                "mariner.config.get_files_directory", return_value=models
+            ), self.assertLogs("mariner.server.utils", level="WARNING"):
+                utils.empty_cache()
+        expect(sorted(os.listdir(models))).to_equal(["model.ctb", "parsed"])
+        expect(os.listdir(inside)).to_equal(["model.ctb"])
+
+    def test_emptying_does_not_follow_a_link(self) -> None:
+        elsewhere = Path(self.directory.name) / "elsewhere"
+        elsewhere.mkdir()
+        (elsewhere / "kept").write_bytes(b"x")
+        link = Path(self.directory.name) / "link"
+        os.symlink(elsewhere, link)
+        with patch.dict(utils.app.config, {"CACHE_DIR": str(link)}), self.assertLogs(
+            "mariner.server.utils", level="WARNING"
+        ):
+            utils.empty_cache()
+        expect(os.listdir(elsewhere)).to_equal(["kept"])
+
+    def test_emptying_a_folder_that_is_not_there_is_not_an_error(self) -> None:
+        gone = str(Path(self.directory.name) / "gone")
+        with patch.dict(utils.app.config, {"CACHE_DIR": gone}):
+            utils.empty_cache()
+
     def test_previews_are_rendered_one_at_a_time(self) -> None:
         self.path.write_bytes(b"IS THE LOCK HELD")
-        utils.read_preview(self.path)
+        utils.read_cached_preview(self.path)
         expect(_CountingFormat.lock_was_held).to_equal(True)
         expect(utils._rendering.locked()).to_equal(False)
 
