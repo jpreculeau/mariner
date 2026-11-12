@@ -46,6 +46,15 @@ class PrintAlreadyRunning(MarinerException):
     def __str__(self) -> str:
         return "The printer is already printing."
 
+    def get_title(self) -> str:
+        return "Print In Progress"
+
+    def get_description(self) -> str:
+        return (
+            "The printer is already printing. Wait for the print to finish "
+            "or cancel it first."
+        )
+
 
 class PrintJustStarted(PrintAlreadyRunning):
     """A print was asked for a moment after Mariner started another.
@@ -57,6 +66,15 @@ class PrintJustStarted(PrintAlreadyRunning):
 
     def __str__(self) -> str:
         return "A print was started a moment ago."
+
+    def get_title(self) -> str:
+        return "Print Just Started"
+
+    def get_description(self) -> str:
+        return (
+            "A print was started a moment ago and the printer has yet to "
+            "report it. Try again in half a minute."
+        )
 
 
 class UnexpectedResponseLineNumber(MarinerException):

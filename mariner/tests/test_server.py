@@ -296,6 +296,17 @@ class MarinerServerTest(TestCase):
         # The healthy file alongside it is still reported normally.
         expect(files["foobar.ctb"]["can_be_printed"]).to_equal(True)
 
+    def test_listing_an_unparseable_file_keeps_its_name_on_one_log_line(self) -> None:
+        # Not a name Mariner would store, but one that can be on the drive.
+        name = "x\u2028FORGED entry.ctb"
+        self.fs.create_file(f"/mnt/usb_share/{name}", contents="not a ctb file")
+        with self.assertLogs("mariner.server.api", level="WARNING") as logs:
+            self.client.get("/api/list_files")
+        messages = [record.getMessage() for record in logs.records]
+        expect(len(messages)).to_equal(1)
+        expect("\u2028" in messages[0]).to_equal(False)
+        expect("FORGED entry.ctb" in messages[0]).to_equal(True)
+
     def test_list_files_from_missing_directory(self) -> None:
         response = self.client.get("/api/list_files?path=no_such_dir")
         expect(response.status_code).to_equal(404)

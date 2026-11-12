@@ -22,6 +22,8 @@ class StartupTest(TestCase):
         with patch.object(
             server.logging, "basicConfig", side_effect=record("logging")
         ), patch.object(server.logging.getLogger(), "handlers", []), patch.object(
+            server, "keep_requests_on_one_line", side_effect=record("log filter")
+        ), patch.object(
             server, "remove_stale_scratch_files", side_effect=record("cleanup")
         ), patch.object(
             server, "CacheBootstrapper", side_effect=record("cache warm-up")
@@ -37,5 +39,15 @@ class StartupTest(TestCase):
         # directory: the cache warm-up walks it, the providers and the web
         # server can start transfers into it.
         self.assertEqual(
-            order, ["logging", "cleanup", "cache warm-up", "providers", "serve"]
+            order,
+            [
+                "logging",
+                # Once the handlers exist, and before anything can be logged
+                # about a request.
+                "log filter",
+                "cleanup",
+                "cache warm-up",
+                "providers",
+                "serve",
+            ],
         )

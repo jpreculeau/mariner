@@ -135,8 +135,17 @@ class ChiTuPrinter:
             self._device_is_missing = False
 
     def close(self) -> None:
+        """Close the port. A line that fails while closing is not an error.
+
+        Whatever was asked has been sent and answered by then; what the
+        failure means for the next command is found out when it opens the
+        port.
+        """
         if self._is_connected:
-            self._serial_port.close()
+            try:
+                self._serial_port.close()
+            except _LINE_FAILURES:
+                pass
 
     def __enter__(self) -> "ChiTuPrinter":
         self.open()

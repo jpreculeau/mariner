@@ -259,7 +259,9 @@ def read_status() -> Tuple[PrintStatus, str]:
 
     A printer that cannot be reached, or whose answers cannot be read after
     a few attempts, is reported as CLOSED with no selected file, so callers
-    never have to handle a serial failure themselves.
+    never have to handle a serial failure themselves. An answer of nothing
+    but ``ok`` is reported as IDLE with ``counters_seen`` False, which
+    settles nothing either (see ``_is_confirmed_idle``).
 
     If the status is known but the selected file cannot be read, the status
     is kept and the file is reported as ``""``: knowing that a print is

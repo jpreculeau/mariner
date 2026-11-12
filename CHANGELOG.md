@@ -20,7 +20,7 @@ File names and paths
 - Answer 404 instead of 500 for a missing folder, an unknown printer command, or a file or folder that disappears during a deletion or an upload
 - Refuse to upload a file onto the name of a folder
 - Let a leftover whose name is no longer allowed be deleted from every interface
-- Keep line breaks in client-supplied names and values out of the logs
+- Keep line breaks out of the logs, whether they come in a client-supplied name or value, in the path of a request, or in the name of a file already on the drive
 
 Uploads
 
@@ -43,7 +43,7 @@ Printer and prints
 - Leave existing files alone unless the printer says clearly that it is not reading them; new names are always accepted
 - Tell apart a printer that answers unclearly from one that sends nothing at all, late answers included, and ask again a moment later after an unclear answer
 - Let a web API client override the refusal only for a printer that was asked and stayed silent, once the user has confirmed that it is switched off
-- Handle a failure of the serial line, of any kind, in every printer command and while the port is being opened
+- Handle a failure of the serial line, of any kind, in every printer command, while the port is being opened and while it is being closed
 - Keep the dashboard working when the file being printed cannot be read
 - Read the firmware version from boards that end lines with CRLF, and treat undecodable bytes from the printer as a bad answer instead of crashing
 - Answer the SDCP discovery broadcast without waiting on the printer, with the firmware version read when the service starts

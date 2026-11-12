@@ -19,6 +19,8 @@ from mariner.server.utils import (
 
 from itertools import chain
 
+from mariner.printer import has_control_character
+
 
 flask_app.register_blueprint(api_blueprint)
 register_providers(flask_app, csrf)
@@ -64,6 +66,38 @@ class CacheBootstrapper(multiprocessing.Process):
             read_cached_preview(file.absolute())
 
 
+class _OneLine(logging.Filter):
+    """Escape what would break a line in a record of the web server.
+
+    The web server logs the path of a request it could not finish as the
+    client sent it, and a path can hold a line break: the rest of it would
+    then read as a log line of its own. Mariner's own records are left
+    alone; they quote client text with ``%r`` where they carry any.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name.split(".")[0] == "waitress":
+            message = record.getMessage()
+            if has_control_character(message):
+                record.msg = "".join(
+                    (
+                        character.encode("unicode_escape").decode("ascii")
+                        if has_control_character(character)
+                        else character
+                    )
+                    for character in message
+                )
+                record.args = None
+        return True
+
+
+def keep_requests_on_one_line() -> None:
+    """Have every log handler in place escape the web server's records."""
+    for handler in logging.getLogger().handlers:
+        if not any(isinstance(known, _OneLine) for known in handler.filters):
+            handler.addFilter(_OneLine())
+
+
 def main() -> None:
     # Global log level applies to mariner.* and waitress output.
     log_level = getattr(logging, config.get_log_level(), logging.INFO)
@@ -73,6 +107,7 @@ def main() -> None:
         logging.getLogger().setLevel(log_level)
     logging.getLogger("mariner").setLevel(log_level)
     logging.getLogger("waitress").setLevel(log_level)
+    keep_requests_on_one_line()
 
     # First of all the work on the files directory: nothing else is reading
     # or writing it yet. After logging is set up, so that what was removed

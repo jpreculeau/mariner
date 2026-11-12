@@ -55,6 +55,14 @@ class ChiTuPrinterTest(TestCase):
         self.serial_port_mock.open.assert_not_called()
         self.serial_port_mock.close.assert_called_once_with()
 
+    def test_a_line_that_fails_while_closing_is_not_an_error(self) -> None:
+        # The command was sent and answered; a cable pulled right after
+        # must not turn that into a failure.
+        self.printer.open()
+        self.serial_port_mock.close.side_effect = OSError(5, "Input/output error")
+        self.printer.close()
+        self.serial_port_mock.close.assert_called_once_with()
+
     def test_usage_with_context_manager(self) -> None:
         self.serial_port_mock.open.assert_not_called()
         self.serial_port_mock.close.assert_not_called()

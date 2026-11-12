@@ -65,8 +65,9 @@ def silence_upload_parser() -> None:
 
     Its warning quotes the offending header as it came, and a warning is
     written straight to the stream the log goes to, where client text
-    could then start a line of its own. Nothing is lost: the upload
-    handler logs every malformed request itself, safely.
+    could then start a line of its own. Little is lost: the upload
+    handler logs, safely, every request it refuses. A parameter the library
+    merely drops is no longer reported.
     """
     for category in (
         multipart.BadContentDispositionHeader,

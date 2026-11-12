@@ -1486,6 +1486,14 @@ class UploadManagerTest(TestCase):
         result = self._upload(payload, chunk_size=2048, verify=True)
         expect(result.ok).to_equal(True)
         expect(pathlib.Path("/mnt/usb_share/model.ctb").read_bytes()).to_equal(payload)
+        # Nothing of the transfer that was started over is left.
+        leftovers = [
+            name
+            for _, _, names in os.walk("/mnt/usb_share")
+            for name in names
+            if name != "model.ctb"
+        ]
+        expect(leftovers).to_equal([])
 
     def test_terminate_without_transfer(self) -> None:
         ack = self.manager.terminate("nope")

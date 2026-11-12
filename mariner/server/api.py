@@ -176,7 +176,7 @@ def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
         return read_cached_sliced_model_file(path)
     except Exception:
         logger.warning(
-            "Could not read %s, which is being printed", selected_file, exc_info=True
+            "Could not read %r, which is being printed", selected_file, exc_info=True
         )
         return None
 
@@ -427,7 +427,7 @@ def list_files() -> Union[str, Response]:
                             )
                     except Exception:
                         logger.warning(
-                            "Could not read %s; listing it as unprintable",
+                            "Could not read %r; listing it as unprintable",
                             dir_entry.name,
                             exc_info=True,
                         )
@@ -602,20 +602,12 @@ def printer_command(command: str) -> Union[str, Response]:
             start_print(filename)
         except NotPrintable as error:
             abort(404 if error.reason == NotPrintable.MISSING else 400)
-        except PrintJustStarted:
+        except PrintAlreadyRunning as error:
+            just_started = isinstance(error, PrintJustStarted)
             body = {
-                "code": "print_just_started",
-                "title": "Print Just Started",
-                "description": "A print was started a moment ago and the "
-                "printer has yet to report it. Try again in half a minute.",
-            }
-            abort(make_response(jsonify(body), 409))
-        except PrintAlreadyRunning:
-            body = {
-                "code": "print_in_progress",
-                "title": "Print In Progress",
-                "description": "The printer is already printing. Wait for the "
-                "print to finish or cancel it first.",
+                "code": "print_just_started" if just_started else "print_in_progress",
+                "title": error.get_title(),
+                "description": error.get_description(),
             }
             abort(make_response(jsonify(body), 409))
         return jsonify({"success": True})
