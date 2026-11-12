@@ -3,13 +3,14 @@ import os
 import stat
 import tempfile
 from pathlib import Path
-from typing import Sequence, Tuple
+from typing import Optional, Sequence, Tuple
 
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, request
 from flask_wtf.csrf import CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
+from mariner.server import origin
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -101,6 +102,27 @@ app.config.from_mapping(
     MAX_CONTENT_LENGTH=config.get_max_upload_bytes()
     + UPLOAD_OVERHEAD_BYTES,
 )
+
+
+# What acts on the printer or the files, or tells about them.
+_GUARDED_PREFIXES = ("/api/", "/uvtools/")
+
+
+@app.before_request
+def refuse_other_sites() -> Optional[Tuple[Response, int]]:
+    """Turn away what a page from elsewhere has a browser send.
+
+    See ``mariner.server.origin``. A foreign name is refused everywhere; a
+    request from another site only where it would act or tell, so that a
+    link to Mariner on another page still opens it.
+    """
+    guarded = request.path.startswith(_GUARDED_PREFIXES)
+    refusal = origin.host_refusal(request.headers) or (
+        origin.site_refusal(request.headers) if guarded else None
+    )
+    if refusal is None:
+        return None
+    return jsonify(refusal.body()), 403
 
 
 @app.errorhandler(413)

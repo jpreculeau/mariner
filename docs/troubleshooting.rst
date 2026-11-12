@@ -217,6 +217,31 @@ told apart: the second one to start takes over, and pieces still arriving
 from the first can end up in its file. Slicers that ask for the checksum to be verified
 are protected: the file is then refused.
 
+.. rubric:: Mariner answers "Name Not Allowed" (error 403, ``host_not_allowed``)
+
+Mariner answers to its IP address and to names that only exist on a local
+network: a single word such as ``mariner``, or a name ending in ``.local``,
+``.lan``, ``.home``, ``.home.arpa`` or ``.internal``. If you reach it under
+another name, one of your own domain or of a VPN for instance, add that name
+under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
+
+.. code-block:: toml
+
+   [http]
+   allowed_hosts = ["printer.example.org"]
+
+The check is there because nothing in Mariner asks who is using it. Without
+it, a web site could point a name of its own at the address of your printer
+and have your browser read and drive it.
+
+.. rubric:: A request is refused as coming from another site (error 403, ``cross_site_request``)
+
+Browsers say which site a request comes from, and Mariner serves only its
+own pages' requests. A bookmark, a typed address and a link to Mariner all
+work. Slicers and scripts are not affected: they are not browsers and say
+nothing of a site. A script that sends an ``Origin`` header must send
+Mariner's own address in it, or none.
+
 .. rubric:: A file is refused as too large (error 413)
 
 Files can be 2048 MB at most, from the web page and from slicers. To accept

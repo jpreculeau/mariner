@@ -91,6 +91,26 @@ class UVToolsProviderTest(TestCase):
         )
         expect(response.status_code).to_equal(400)
 
+    def test_requests_from_another_site_are_refused(self) -> None:
+        # These routes act on a plain GET, which any page can have a
+        # browser send: an image address is enough.
+        for url in ("/uvtools/delete/foobar.ctb", "/uvtools/print/foobar.ctb"):
+            for headers in (
+                {"Sec-Fetch-Site": "cross-site"},
+                {"Origin": "http://evil.example"},
+                {"Host": "evil.example"},
+            ):
+                response = self.client.get(url, headers=headers)
+                expect(response.status_code).to_equal(403)
+        expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
+            True
+        )
+        self.printer_mock.start_printing.assert_not_called()
+
+    def test_a_slicer_is_served(self) -> None:
+        response = self.client.get("/uvtools/delete/foobar.ctb")
+        expect(response.status_code).to_equal(200)
+
     def test_upload_file_larger_than_allowed(self) -> None:
         with patch.dict(self.client.application.config, {"MAX_CONTENT_LENGTH": 2000}):
             response = self.client.post(

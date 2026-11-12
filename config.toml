@@ -36,6 +36,11 @@ baudrate = 115200
 host = "0.0.0.0"
 # TCP port on which to listen
 port = 5000
+# Names Mariner answers to, besides its IP address and the names of a local
+# network (one word, or ending in .local, .lan, .home, .home.arpa, .internal).
+# Needed only to reach it under another name; "*" allows any name, which
+# lets a web site that points its own name at the printer drive it.
+#allowed_hosts = ["printer.example.org"]
 # Largest file accepted, in megabytes, from the web page and from slicers.
 # Default is 2048.
 max_upload_size_mb = 2048

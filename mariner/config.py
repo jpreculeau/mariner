@@ -87,6 +87,22 @@ def get_http_port() -> int:
     return int(http_config.get("port", default_port))
 
 
+def get_http_allowed_hosts() -> List[str]:
+    """Names Mariner answers to besides its address and local names.
+
+    ``allowed_hosts`` under ``[http]``: a list of names, or ``"*"`` for any.
+    """
+    http_config = _get_config().get("http")
+    if not isinstance(http_config, dict):
+        return []
+    hosts = http_config.get("allowed_hosts", [])
+    if isinstance(hosts, str):
+        return [hosts]
+    if not isinstance(hosts, list):
+        return []
+    return [str(host) for host in hosts]
+
+
 DEFAULT_MAX_UPLOAD_SIZE_MB = 2048
 
 

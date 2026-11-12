@@ -16,6 +16,7 @@ from aiohttp import WSMsgType, multipart, web
 from pyre_extensions import none_throws
 
 from mariner import config
+from mariner.server import origin
 from mariner.server.providers.sdcp import constants, identity, messages
 from mariner.server.providers.sdcp.bridge import PrinterBridge
 from mariner.server.providers.sdcp.history import HistoryStore, TaskStatus
@@ -58,6 +59,21 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         payload = self._service.build_discovery_response(peer)
         logger.info("SDCP: discovery request from %s", peer)
         transport.sendto(json.dumps(payload).encode("utf-8"), addr)
+
+
+@web.middleware
+async def refuse_other_sites(request: web.Request, handler: Any) -> Any:
+    """Turn away what a page from elsewhere has a browser send.
+
+    A page can open a WebSocket to any address, and through this one start
+    or stop a print. Slicers are not browsers and say nothing of a site;
+    see ``mariner.server.origin``.
+    """
+    refusal = origin.refusal_for(request.headers)
+    if refusal is not None:
+        logger.warning("SDCP: refused a request: %s", refusal.code)
+        return web.json_response(refusal.body(), status=403)
+    return await handler(request)
 
 
 def silence_upload_parser() -> None:
@@ -153,16 +169,20 @@ class SDCPService:
         except Exception:
             logger.warning("SDCP: could not read the firmware version", exc_info=True)
 
-    async def _start_http(self, port: int) -> Optional[web.AppRunner]:
-        silence_upload_parser()
-        app = web.Application(client_max_size=MAX_UPLOAD_BODY)
+    def _application(self) -> web.Application:
+        app = web.Application(
+            client_max_size=MAX_UPLOAD_BODY, middlewares=[refuse_other_sites]
+        )
         app.router.add_get(constants.WEBSOCKET_PATH, self._handle_websocket)
         app.router.add_post(constants.UPLOAD_PATH, self._handle_upload)
         app.router.add_get(
             constants.THUMBNAIL_PATH + "/{task_id}", self._handle_thumbnail
         )
+        return app
 
-        runner = web.AppRunner(app, access_log=None)
+    async def _start_http(self, port: int) -> Optional[web.AppRunner]:
+        silence_upload_parser()
+        runner = web.AppRunner(self._application(), access_log=None)
         await runner.setup()
         site = web.TCPSite(runner, "0.0.0.0", port)
         try:

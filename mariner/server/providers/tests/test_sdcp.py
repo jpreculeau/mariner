@@ -1638,6 +1638,47 @@ class ServiceUploadTest(IsolatedAsyncioTestCase):
         expect(sent["data"]).to_equal(b"AAAA")
 
 
+class _BrowserRequest:
+    def __init__(self, headers: Any) -> None:
+        self.headers = headers
+        self.path = "/websocket"
+
+
+class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
+    async def _answered(self, headers: Any) -> Any:
+        from mariner.server.providers.sdcp.service import refuse_other_sites
+
+        async def handler(request: Any) -> str:
+            return "served"
+
+        return await refuse_other_sites(cast(Any, _BrowserRequest(headers)), handler)
+
+    async def test_a_slicer_is_served(self) -> None:
+        expect(await self._answered({"Host": "192.168.1.20:3030"})).to_equal("served")
+
+    async def test_every_route_of_the_service_goes_through_the_check(self) -> None:
+        from mariner.server.providers.sdcp.service import refuse_other_sites
+
+        service = SDCPService.__new__(SDCPService)
+        application = service._application()
+        expect(list(application.middlewares)).to_equal([refuse_other_sites])
+        paths = sorted(
+            route.resource.canonical for route in application.router.routes()
+        )
+        expect(len(paths) >= 3).to_equal(True)
+
+    async def test_a_page_of_another_site_is_refused(self) -> None:
+        # A page can open a WebSocket to any address, and through it start
+        # or stop a print.
+        for headers in (
+            {"Host": "192.168.1.20:3030", "Origin": "http://evil.example"},
+            {"Host": "192.168.1.20:3030", "Sec-Fetch-Site": "cross-site"},
+            {"Host": "evil.example:3030"},
+        ):
+            response = await self._answered(headers)
+            expect(response.status).to_equal(403)
+
+
 class _BrokenUploadRequest:
     headers: Any = {}
     remote = "192.168.1.20"

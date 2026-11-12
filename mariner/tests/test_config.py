@@ -38,6 +38,23 @@ spool_directory = "/srv/spool"
         expect(config.get_max_upload_bytes()).to_equal(300 * 1024 * 1024)
         expect(config.get_spool_directory()).to_equal("/srv/spool")
 
+    def test_host_names_can_be_allowed(self) -> None:
+        expect(config.get_http_allowed_hosts()).to_equal([])
+        config._get_config.cache_clear()
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents='[http]\nallowed_hosts = ["printer.example.org", "*"]\n',
+        )
+        expect(config.get_http_allowed_hosts()).to_equal(["printer.example.org", "*"])
+        self.fs.remove("/etc/mariner/config.toml")
+        config._get_config.cache_clear()
+        # One name given without the brackets is one name.
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents='[http]\nallowed_hosts = "printer.example.org"\n',
+        )
+        expect(config.get_http_allowed_hosts()).to_equal(["printer.example.org"])
+
     def test_an_upload_limit_that_makes_no_sense_is_the_default(self) -> None:
         for number, value in enumerate(("0", "-5", '"big"', "1.5", "true")):
             config._get_config.cache_clear()

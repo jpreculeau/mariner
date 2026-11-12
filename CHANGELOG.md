@@ -33,6 +33,9 @@ Uploads
 - Abandon an SDCP transfer that has received nothing for five minutes, with or without a client connected, and leave nothing behind after a refused, failed or abandoned one
 - Refuse an SDCP transfer whose last bytes could not be stored, instead of replacing the previous file with a short one
 - Treat a bare string in an SDCP delete request as one path, and report entries that are not paths as failures
+- Accept files up to 2 GB by default, from the web page and from slicers, and make the limit a setting (`max_upload_size_mb`); before, the web page and UVtools stopped at 1 GB, and SDCP had no limit
+- Keep a file on a drive while it arrives (`spool_directory`, `/var/tmp` by default) instead of in `/tmp`, which on current systems is held in memory
+- Write a file sent by UVtools as it arrives instead of holding it whole in memory
 
 Printer and prints
 
@@ -49,11 +52,10 @@ Printer and prints
 - Read the firmware version from boards that end lines with CRLF, and treat undecodable bytes from the printer as a bad answer instead of crashing
 - Answer the SDCP discovery broadcast without waiting on the printer, with the firmware version read when the service starts
 
-Uploads
+Requests from the web
 
-- Accept files up to 2 GB by default, from the web page and from slicers, and make the limit a setting (`max_upload_size_mb`); before, the web page and UVtools stopped at 1 GB, and SDCP had no limit
-- Keep a file on a drive while it arrives (`spool_directory`, `/var/tmp` by default) instead of in `/tmp`, which on current systems is held in memory
-- Write a file sent by UVtools as it arrives instead of holding it whole in memory
+- Refuse, on the web API, UVtools and SDCP, what a page of another web site has a browser send (`cross_site_request`): such a page could start, stop or delete without anyone asking
+- Answer only to an IP address or a name of the local network, unless told otherwise (`allowed_hosts`), so that a web site pointing its own name at the printer cannot read or drive it (`host_not_allowed`)
 
 Reading files
 

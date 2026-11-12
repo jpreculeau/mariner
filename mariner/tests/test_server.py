@@ -765,6 +765,46 @@ class MarinerServerTest(TestCase):
         response = self.client.post("/api/upload_file", data=data)
         expect(response.status_code).to_equal(400)
 
+    def test_requests_from_another_site_are_refused(self) -> None:
+        elsewhere = {"Sec-Fetch-Site": "cross-site"}
+        for method, url in (
+            ("get", "/api/print_status"),
+            ("get", "/api/list_files"),
+            ("post", "/api/printer/command/cancel_print"),
+            ("post", "/api/delete_file?filename=foobar.ctb"),
+            ("get", "/api/file_preview?filename=foobar.ctb"),
+        ):
+            response = getattr(self.client, method)(url, headers=elsewhere)
+            expect(response.status_code).to_equal(403)
+            expect(response.get_json()["code"]).to_equal("cross_site_request")
+        expect(os.path.exists("/mnt/usb_share/foobar.ctb")).to_equal(True)
+        self.printer_mock.stop_printing.assert_not_called()
+
+    def test_requests_from_the_page_itself_are_served(self) -> None:
+        for headers in (
+            {"Sec-Fetch-Site": "same-origin"},
+            {"Sec-Fetch-Site": "none"},
+            {"Origin": "http://localhost"},
+            {},
+        ):
+            response = self.client.get("/api/list_files", headers=headers)
+            expect(response.status_code).to_equal(200)
+
+    def test_following_a_link_to_the_page_from_another_site_works(self) -> None:
+        # Only what acts or tells is refused, not the page.
+        with patch("mariner.server.render_template", return_value="the page"):
+            response = self.client.get(
+                "/files",
+                headers={"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate"},
+            )
+        expect(response.status_code).to_equal(200)
+
+    def test_requests_under_a_name_from_the_wider_web_are_refused(self) -> None:
+        for url in ("/api/list_files", "/"):
+            response = self.client.get(url, headers={"Host": "evil.example"})
+            expect(response.status_code).to_equal(403)
+            expect(response.get_json()["code"]).to_equal("host_not_allowed")
+
     def test_upload_file_larger_than_allowed(self) -> None:
         data = {"file": (io.BytesIO(b"x" * 5000), "big.ctb")}
         with patch.dict(self.client.application.config, {"MAX_CONTENT_LENGTH": 2000}):
