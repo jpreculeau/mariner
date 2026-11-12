@@ -48,6 +48,15 @@ Printer and prints
 - Read the firmware version from boards that end lines with CRLF, and treat undecodable bytes from the printer as a bad answer instead of crashing
 - Answer the SDCP discovery broadcast without waiting on the printer, with the firmware version read when the service starts
 
+Reading files
+
+- Show the details and preview of the file that is there now, after one was replaced by another of the same name
+- Keep starting up when a stored file cannot be read, and prepare every other file, those in folders included
+- Check every size, count and position a file states about itself against the size of the file before acting on it, and limit the size of the preview picture, so that a damaged file cannot exhaust the memory of the board
+- List a file whose transfer stopped part of the way as one that cannot be printed, instead of letting its print start and stop midway
+- Compare the signature of an encrypted CTB file in full
+- Answer 422 with the code `file_unreadable` for the details or preview of a file that cannot be read, 400 for a kind of file Mariner does not read and 404 for a file removed meanwhile, instead of 500
+
 Web interface
 
 - Show why an upload or a deletion was refused
@@ -58,6 +67,8 @@ Web interface
 
 - Share one path and file name check between the web API, UVtools and SDCP
 - Read the printer status in one place for the web API, UVtools and SDCP
+- Share bounded reading and preview decoding between the CTB, FDG and Photon parsers
+- Remove two unused cipher classes
 
 ### 📚 Documentation
 

@@ -10,17 +10,16 @@ from mariner import config
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
 from mariner.server.app import app as flask_app, csrf
-from mariner.server.files import remove_stale_scratch_files
+from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
 from mariner.server.utils import (
     read_cached_preview,
     read_cached_sliced_model_file,
 )
 
-from itertools import chain
-
 from mariner.printer import has_control_character
 
+logger: logging.Logger = logging.getLogger(__name__)
 
 flask_app.register_blueprint(api_blueprint)
 register_providers(flask_app, csrf)
@@ -55,15 +54,25 @@ def spa_fallback(spa_path: str) -> str:
 
 
 class CacheBootstrapper(multiprocessing.Process):
+    """Reads every printable file once at startup, at low priority.
+
+    Parsing a large file takes seconds on a small board. Done here, it is
+    not paid for by the first listing or the first status request.
+    """
+
     def run(self) -> None:
         os.nice(5)
-        globs = [
-            config.get_files_directory().rglob(f"*{extension}")
-            for extension in get_supported_extensions()
-        ]
-        for file in chain.from_iterable(globs):
-            read_cached_sliced_model_file(file.absolute())
-            read_cached_preview(file.absolute())
+        for file in printable_files():
+            # One file that cannot be read must not leave the others cold.
+            try:
+                read_cached_sliced_model_file(file)
+            except Exception:
+                logger.warning("Could not read %r ahead of time", file.name)
+                continue
+            try:
+                read_cached_preview(file)
+            except Exception:
+                logger.warning("Could not render the preview of %r", file.name)
 
 
 class _OneLine(logging.Filter):

@@ -263,6 +263,27 @@ def remove_entry(path: Path) -> None:
     os.remove(path)
 
 
+def printable_files() -> Iterator[Path]:
+    """Every file of a supported format in the files directory, at any depth.
+
+    Hidden entries are left out, with all they hold, and so is whatever a
+    symbolic link leads to outside the files directory: a folder reached
+    through a link is not entered, and a file is given only if it stays
+    inside.
+    """
+    files_directory = config.get_files_directory().resolve()
+    supported = get_supported_extensions()
+    for folder, subfolders, names in os.walk(files_directory):
+        subfolders[:] = [name for name in subfolders if not is_hidden_entry(name)]
+        for name in names:
+            if is_hidden_entry(name) or get_file_extension(name) not in supported:
+                continue
+            path = Path(folder) / name
+            if path.is_symlink() and not stays_in_files_directory(path):
+                continue
+            yield path
+
+
 def move_aside(path: Path) -> Path:
     """Move the folder at *path* to a scratch name beside it, and give that name.
 

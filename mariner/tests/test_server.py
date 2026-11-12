@@ -23,7 +23,10 @@ from mariner.printer import (
 from mariner.server.api import reset_progress_tracking
 from mariner.server import printer_access
 from mariner.server.app import app
-from mariner.server.utils import read_cached_sliced_model_file
+from mariner.server.utils import (
+    read_cached_sliced_model_file,
+    read_sliced_model_file,
+)
 
 
 class MarinerServerTest(TestCase):
@@ -84,7 +87,7 @@ class MarinerServerTest(TestCase):
         # which pickle cannot serialize.
         self._read_ctb_file_patcher = patch(
             "mariner.server.api.read_cached_sliced_model_file",
-            side_effect=read_cached_sliced_model_file.__wrapped__,
+            side_effect=read_sliced_model_file,
         )
         self._read_ctb_file_patcher.start()
         reset_progress_tracking()
@@ -658,6 +661,53 @@ class MarinerServerTest(TestCase):
     def test_file_preview_with_invalid_path(self) -> None:
         response = self.client.get("/api/file_preview?filename=../../etc/passwd")
         expect(response.status_code).to_equal(400)
+
+    def test_details_and_preview_of_an_incomplete_file_say_so(self) -> None:
+        # What a transfer that stopped part of the way leaves behind. The
+        # picture is stored near the start, so it takes a shorter file for
+        # the preview to be missing too.
+        half = len(self.ctb_file_contents) // 2
+        self.fs.create_file(
+            "/mnt/usb_share/half.ctb", contents=self.ctb_file_contents[:half]
+        )
+        self.fs.create_file(
+            "/mnt/usb_share/start.ctb", contents=self.ctb_file_contents[:200]
+        )
+        for endpoint, name in (
+            ("file_details", "half.ctb"),
+            ("file_details", "start.ctb"),
+            ("file_preview", "start.ctb"),
+        ):
+            with self.assertLogs("mariner.server.api", level="WARNING"):
+                response = self.client.get(f"/api/{endpoint}?filename={name}")
+            expect(response.status_code).to_equal(422)
+            body = response.get_json()
+            expect(body["code"]).to_equal("file_unreadable")
+            expect(name in body["description"]).to_equal(True)
+            expect("traceback" in body).to_equal(False)
+
+    def test_details_and_preview_of_a_file_that_is_not_a_model_say_so(self) -> None:
+        for endpoint in ("file_details", "file_preview"):
+            with self.assertLogs("mariner.server.api", level="WARNING"):
+                response = self.client.get(f"/api/{endpoint}?filename=._foobar.ctb")
+            expect(response.status_code).to_equal(422)
+            expect(response.get_json()["code"]).to_equal("file_unreadable")
+
+    def test_details_and_preview_of_an_unsupported_kind_of_file(self) -> None:
+        self.fs.create_file("/mnt/usb_share/notes.txt", contents="hello")
+        for endpoint in ("file_details", "file_preview"):
+            response = self.client.get(f"/api/{endpoint}?filename=notes.txt")
+            expect(response.status_code).to_equal(400)
+
+    def test_details_and_preview_of_a_file_removed_meanwhile(self) -> None:
+        # Deleted between the check and the read, by another client.
+        for endpoint, reader in (
+            ("file_details", "read_cached_sliced_model_file"),
+            ("file_preview", "read_cached_preview"),
+        ):
+            with patch(f"mariner.server.api.{reader}", side_effect=FileNotFoundError()):
+                response = self.client.get(f"/api/{endpoint}?filename=foobar.ctb")
+            expect(response.status_code).to_equal(404)
 
     def test_upload_file_without_a_file(self) -> None:
         response = self.client.post("/api/upload_file")

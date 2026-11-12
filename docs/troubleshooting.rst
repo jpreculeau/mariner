@@ -217,6 +217,29 @@ told apart: the second one to start takes over, and pieces still arriving
 from the first can end up in its file. Slicers that ask for the checksum to be verified
 are protected: the file is then refused.
 
+.. rubric:: A file is listed but cannot be printed
+
+Mariner reads each file before offering to print it. A file it cannot make
+sense of stays in the list without the print action, so that it can still be
+deleted. The usual
+cause is a transfer that stopped part of the way: the start of the file is
+there, the last layers are not, and the print would stop midway. Send the
+file again from the slicer.
+
+The other causes are a file damaged on the drive, and a file made by a
+slicer version whose format Mariner does not know yet. The reason is in the
+logs, on a line starting with ``Could not read``:
+
+.. code-block:: shell-session
+
+   $ sudo journalctl -u mariner3d.service | grep "Could not read"
+
+If a file that prints correctly from the printer's own screen is listed this
+way, please report it with that line.
+
+Asked for the details or the preview of such a file, the web API answers 422
+with the code ``file_unreadable``.
+
 Printing
 --------
 

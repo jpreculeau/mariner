@@ -15,6 +15,7 @@ from typing import (
     NoReturn,
     Optional,
     Tuple,
+    TypeVar,
     Union,
 )
 
@@ -35,7 +36,11 @@ from mariner.exceptions import (
     PrintJustStarted,
 )
 from mariner.file_formats import SlicedModelFile
-from mariner.file_formats.utils import get_file_extension, get_supported_extensions
+from mariner.file_formats.utils import (
+    UnsupportedFileFormat,
+    get_file_extension,
+    get_supported_extensions,
+)
 from mariner.printer import PrinterState
 from mariner.server.files import (
     NotPrintable,
@@ -163,6 +168,36 @@ def handle_mariner_exception(exception: MarinerException) -> Tuple[Response, int
         ),
         500,
     )
+
+
+_T = TypeVar("_T")
+
+
+def _read_or_refuse(read: Callable[[Path], _T], path: Path) -> _T:
+    """What *read* makes of the file at *path*, for a request about it.
+
+    A file can be listed and still not be readable: cut short by a transfer
+    that failed, damaged, or made by a slicer version Mariner does not
+    know. The client is told so in words it can show, instead of an
+    internal error.
+    """
+    try:
+        return read(path)
+    except FileNotFoundError:
+        # Removed since the request checked that it was there.
+        abort(404)
+    except UnsupportedFileFormat:
+        abort(400)
+    except Exception:
+        logger.warning("Could not read %r", path.name, exc_info=True)
+        body = {
+            "code": "file_unreadable",
+            "title": "File Cannot Be Read",
+            "description": f"{path.name} cannot be read: it is incomplete, "
+            "damaged, or of a kind Mariner does not know. Transfer it again "
+            "from the slicer.",
+        }
+        abort(make_response(jsonify(body), 422))
 
 
 def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
@@ -467,7 +502,7 @@ def file_details() -> Union[str, Response]:
     path = _resolve_or_400(filename)
     if not os.path.isfile(path):
         abort(400)
-    sliced_model_file = read_cached_sliced_model_file(path)
+    sliced_model_file = _read_or_refuse(read_cached_sliced_model_file, path)
     return jsonify(
         {
             "filename": sliced_model_file.filename,
@@ -568,7 +603,7 @@ def file_preview() -> Response:
     if not os.path.isfile(path):
         abort(400)
 
-    preview_bytes = read_cached_preview(path)
+    preview_bytes = _read_or_refuse(read_cached_preview, path)
 
     response = make_response(preview_bytes)
     response.headers.set("Content-Type", "image/png")

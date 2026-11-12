@@ -3,13 +3,23 @@ from __future__ import annotations
 import pathlib
 import struct
 from dataclasses import dataclass
-from typing import List, Type, Union
+from typing import BinaryIO, Tuple, Type, Union
 
 import png
 from typedstruct import LittleEndianStruct, StructType
 
 from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.cipher import xorCipher, computeSHA256Hash
+from mariner.file_formats.reading import (
+    MalformedFile,
+    check_layer_count,
+    check_layers_fit,
+    read_bytes,
+    read_preview,
+    read_struct,
+    read_text,
+    size_of,
+)
 
 import base64
 from Crypto.Cipher import AES
@@ -167,48 +177,17 @@ class CTBPreview(LittleEndianStruct):
     image_length: int = StructType.uint32()
 
 
-REPEAT_RGB15_MASK: int = 1 << 5
-
-
 def check_encrypted(filename: str) -> Type[Union[CTBEncryptedFile, CTBFile]]:
+    """Which of the two CTB parsers the file at *filename* is for.
+
+    Told by the first four bytes. A file too short to have them is left to
+    the plain parser, which refuses it.
+    """
     with open(filename, "rb") as file:
-        ctb_header = CTBEncryptedHeader.unpack(file.read(CTBEncryptedHeader.get_size()))
-        if ctb_header.magic == MAGIC_CTB_ENCRYPTED:
-            return CTBEncryptedFile
-        else:
-            return CTBFile
-
-
-def _read_image(width: int, height: int, data: bytes) -> png.Image:
-    array: List[List[int]] = [[]]
-
-    (i, x) = (0, 0)
-    while i < len(data):
-        color16 = int(struct.unpack_from("<H", data, i)[0])
-        i += 2
-        repeat = 1
-        if color16 & REPEAT_RGB15_MASK:
-            repeat += int(struct.unpack_from("<H", data, i)[0]) & 0xFFF
-            i += 2
-
-        (r, g, b) = (
-            (color16 >> 0) & 0x1F,
-            (color16 >> 6) & 0x1F,
-            (color16 >> 11) & 0x1F,
-        )
-
-        while repeat > 0:
-            array[-1] += [r, g, b]
-            repeat -= 1
-
-            x += 1
-            if x == width:
-                x = 0
-                array.append([])
-
-    array.pop()
-
-    return png.from_array(array, "RGB;5")
+        magic = file.read(4)
+    if len(magic) == 4 and struct.unpack("<I", magic)[0] == MAGIC_CTB_ENCRYPTED:
+        return CTBEncryptedFile
+    return CTBFile
 
 
 def _aes_crypt(enc: bytes, encrypt: bool) -> bytes:
@@ -225,77 +204,86 @@ def _aes_crypt(enc: bytes, encrypt: bool) -> bytes:
         return Cipher.decrypt(bytes(temp))
 
 
+def _read_settings(file: BinaryIO) -> Tuple[CTBEncryptedHeader, CTBEncryptedSlicer]:
+    """The header of an encrypted CTB file and its decrypted settings block."""
+    ctb_header = read_struct(file, CTBEncryptedHeader, 0, "header")
+    if ctb_header.magic != MAGIC_CTB_ENCRYPTED:
+        raise MalformedFile("not an encrypted CTB file")
+    # The settings block has one size. A file that claims another is not
+    # read on its word: the block is decrypted whole, in memory.
+    if ctb_header.slicer_size != CTBEncryptedSlicer.get_size():
+        raise MalformedFile(
+            f"the settings block claims to be {ctb_header.slicer_size} bytes"
+        )
+    encrypted_block = read_bytes(
+        file, ctb_header.slicer_offset, ctb_header.slicer_size, "settings block"
+    )
+    try:
+        ctb_slicer = CTBEncryptedSlicer.unpack(_aes_crypt(encrypted_block, False))
+    except struct.error as error:
+        raise MalformedFile("the settings block cannot be read") from error
+    return (ctb_header, ctb_slicer)
+
+
+def _check_signature(
+    file: BinaryIO, ctb_header: CTBEncryptedHeader, ctb_slicer: CTBEncryptedSlicer
+) -> None:
+    """Refuse a file whose signature is not the one its settings call for.
+
+    The signature is the encrypted SHA-256 of the checksum stored in the
+    settings block. It is compared byte for byte: comparing the two as
+    sets of byte values, as was done before, accepts nearly anything.
+    """
+    checksum_bytes = ctb_slicer.checksum_value.to_bytes(8, "little")
+    expected = _aes_crypt(computeSHA256Hash(checksum_bytes), True)
+
+    # The header says where the signature is, so use it. Seeking back from
+    # the end instead assumes the signature is the last thing in the file,
+    # which breaks on writers that append anything after it.
+    if ctb_header.signature_offset and ctb_header.signature_size:
+        if ctb_header.signature_size != HASH_LENGTH:
+            raise MalformedFile(
+                f"the signature claims to be {ctb_header.signature_size} bytes"
+            )
+        offset = ctb_header.signature_offset
+    else:
+        offset = size_of(file) - HASH_LENGTH
+    if read_bytes(file, offset, HASH_LENGTH, "signature") != expected:
+        raise MalformedFile("the signature does not match the settings")
+
+
 @dataclass(frozen=True)
 class CTBEncryptedFile(SlicedModelFile):
     @classmethod
-    def read(self, path: pathlib.Path) -> "CTBEncryptedFile":
+    def read(cls, path: pathlib.Path) -> "CTBEncryptedFile":
         with open(str(path), "rb") as file:
-            ctb_header = CTBEncryptedHeader.unpack(
-                file.read(CTBEncryptedHeader.get_size())
+            ctb_header, ctb_slicer = _read_settings(file)
+            _check_signature(file, ctb_header, ctb_slicer)
+            printer_name = read_text(
+                file,
+                ctb_slicer.machine_name_offset,
+                ctb_slicer.machine_name_size,
+                "printer name",
             )
-            if ctb_header.magic != MAGIC_CTB_ENCRYPTED:
-                raise TypeError(
-                    "Not a valid encrypted CTB file\n"
-                    + str(ctb_header.magic)
-                    + "\n"
-                    + str(MAGIC_CTB_ENCRYPTED)
-                )
 
-            file.seek(ctb_header.slicer_offset)
-            encrypted_block = file.read(ctb_header.slicer_size)
-
-            decrypted_block = _aes_crypt(encrypted_block, False)
-            try:
-                ctb_slicer = CTBEncryptedSlicer.unpack(decrypted_block)
-            except struct.error:
-                raise Exception("len(decrypted_block) = " + str(len(decrypted_block)))
-
-            file.seek(ctb_slicer.machine_name_offset)
-            printer_name = file.read(ctb_slicer.machine_name_size).decode()
-
-            # Validate hash
-            checksum_bytes = ctb_slicer.checksum_value.to_bytes(8, "little")
-            checksum_hash = computeSHA256Hash(checksum_bytes)
-            encrypted_hash = _aes_crypt(checksum_hash, True)
-
-            # The header says where the signature is, so use it. Seeking back
-            # from the end instead assumes the signature is the last thing in
-            # the file, which breaks on writers that append anything after it.
-            if ctb_header.signature_offset and ctb_header.signature_size:
-                file.seek(ctb_header.signature_offset)
-                hash = file.read(ctb_header.signature_size)
-            else:
-                file.seek(-HASH_LENGTH, 2)
-                hash = file.read(HASH_LENGTH)
-            if not (set(hash) == set(encrypted_hash)):
-                raise TypeError(
-                    "The file checksum does not match, malformed file.\n"
-                    + str(hash)
-                    + "\n"
-                    + str(encrypted_hash)
-                    + "\n"
-                    + str(int.from_bytes(hash, "little"))
-                    + "\n"
-                    + str(int.from_bytes(encrypted_hash, "little"))
-                    + "\n"
-                    + str(int.from_bytes(checksum_hash, "little"))
-                )
-
-            file.seek(ctb_slicer.layer_table_offset)
-            LayersPointer = []
-            for _ in range(0, ctb_slicer.layer_count):
-                LayersPointer.append(
-                    CTBLayerPointer.unpack(file.read(CTBLayerPointer.get_size()))
-                )
-
-            LayersDefinition = []
+            pointer_size = CTBLayerPointer.get_size()
+            check_layer_count(
+                file,
+                ctb_slicer.layer_count,
+                ctb_slicer.layer_table_offset,
+                pointer_size,
+            )
             end_byte_offset_by_layer = []
             for layer in range(0, ctb_slicer.layer_count):
-                file.seek(LayersPointer[layer].layer_offset)
-                layer_def = CTBEncryptedLayerDef.unpack(
-                    file.read(CTBEncryptedLayerDef.get_size())
+                pointer = read_struct(
+                    file,
+                    CTBLayerPointer,
+                    ctb_slicer.layer_table_offset + layer * pointer_size,
+                    "layer table",
                 )
-                LayersDefinition.append(layer_def)
+                layer_def = read_struct(
+                    file, CTBEncryptedLayerDef, pointer.layer_offset, "layer"
+                )
                 enc_end = (
                     layer_def.encrypted_data_offset + layer_def.encrypted_data_length
                 )
@@ -305,6 +293,8 @@ class CTBEncryptedFile(SlicedModelFile):
                     end_byte_offset_by_layer.append(
                         layer_def.layer_def_offset + layer_def.data_length
                     )
+
+            check_layers_fit(file, end_byte_offset_by_layer)
 
             return CTBEncryptedFile(
                 filename=path.name,
@@ -319,33 +309,22 @@ class CTBEncryptedFile(SlicedModelFile):
                 resolution=(ctb_slicer.resolution_x, ctb_slicer.resolution_y),
                 print_time_secs=ctb_slicer.print_time,
                 end_byte_offset_by_layer=end_byte_offset_by_layer,
-                # Unable to find these in new slicer format
-                slicer_version=".".join(
-                    [
-                        str(1),
-                        str(1),
-                        str(9),
-                        str(1),
-                    ]
-                ),
+                # This format does not carry the version of the slicer.
+                slicer_version="1.1.9.1",
                 printer_name=printer_name,
             )
 
     @classmethod
     def read_preview(cls, path: pathlib.Path) -> png.Image:
         with open(str(path), "rb") as file:
-            ctb_header = CTBEncryptedHeader.unpack(
-                file.read(CTBEncryptedHeader.get_size())
+            _, ctb_slicer = _read_settings(file)
+            preview = read_struct(
+                file, CTBPreview, ctb_slicer.large_preview_offset, "preview header"
             )
-            file.seek(ctb_header.slicer_offset)
-            # We have to decrypt the block to get the preview information
-            encrypted_block = file.read(CTBEncryptedSlicer.get_size())
-            decrypted_block = _aes_crypt(encrypted_block, False)
-            ctb_slicer = CTBEncryptedSlicer.unpack(decrypted_block)
-            file.seek(ctb_slicer.large_preview_offset)
-            preview = CTBPreview.unpack(file.read(CTBPreview.get_size()))
-
-            file.seek(preview.image_offset)
-            data = file.read(preview.image_length)
-
-            return _read_image(preview.resolution_x, preview.resolution_y, data)
+            return read_preview(
+                file,
+                preview.resolution_x,
+                preview.resolution_y,
+                preview.image_offset,
+                preview.image_length,
+            )

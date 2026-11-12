@@ -1,0 +1,238 @@
+"""Files that are not what they claim: cut short, or made to mislead."""
+
+import dataclasses
+import pathlib
+import struct
+import tempfile
+from typing import Any, Type
+from unittest import TestCase
+
+from pyexpect import expect
+
+from mariner.file_formats import ctb_encrypted
+from mariner.file_formats.ctb import CTBFile, CTBHeader, CTBPreview
+from mariner.file_formats.ctb_encrypted import (
+    CTBEncryptedFile,
+    CTBEncryptedHeader,
+    CTBEncryptedSlicer,
+)
+from mariner.file_formats.fdg import FDGFile, FDGHeader, FDGPreview
+from mariner.file_formats.photon import PhotonFile, PhotonHeader, PhotonPreview
+from mariner.file_formats.reading import MalformedFile
+from mariner.file_formats.utils import UnsupportedFileFormat, get_file_format
+
+SAMPLES = pathlib.Path(__file__).parent.absolute()
+
+# Sample, parser, header, preview header.
+PLAIN = (
+    ("stairs.ctb", CTBFile, CTBHeader, CTBPreview),
+    ("pyramid.cbddlp", CTBFile, CTBHeader, CTBPreview),
+    ("stairs.fdg", FDGFile, FDGHeader, FDGPreview),
+    ("stairs.photon", PhotonFile, PhotonHeader, PhotonPreview),
+)
+
+
+def _offset_of(struct_type: Type[Any], name: str) -> int:
+    """Where the field *name* starts within *struct_type*."""
+    before = ""
+    for field in dataclasses.fields(struct_type):
+        if field.name == name:
+            return struct.calcsize(struct_type.FORMAT_PREFIX + before)
+        before += field.metadata["format"]
+    raise KeyError(name)
+
+
+class MalformedFileTest(TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+
+    def _copy(self, sample: str, contents: bytes) -> pathlib.Path:
+        path = pathlib.Path(self.directory.name) / sample
+        path.write_bytes(contents)
+        return path
+
+    def _with(self, sample: str, offset: int, patch: bytes) -> pathlib.Path:
+        contents = bytearray((SAMPLES / sample).read_bytes())
+        end = offset + len(patch)
+        contents[offset:end] = patch
+        return self._copy(sample, bytes(contents))
+
+    # ---- every format ----
+
+    def test_a_file_cut_short_is_refused(self) -> None:
+        for sample, parser, _, _ in PLAIN + (
+            ("bolts.ctb", CTBEncryptedFile, None, None),
+        ):
+            whole = (SAMPLES / sample).read_bytes()
+            for kept in (0, 10, 64, len(whole) // 2):
+                path = self._copy(sample, whole[:kept])
+                with self.assertRaises(MalformedFile):
+                    parser.read(path)
+            for kept in (0, 10, 64):
+                path = self._copy(sample, whole[:kept])
+                with self.assertRaises(MalformedFile):
+                    parser.read_preview(path)
+
+    def test_a_layer_count_the_file_cannot_hold_is_refused(self) -> None:
+        for sample, parser, header, _ in PLAIN:
+            for count in (0xFFFFFFFF, 100_001):
+                path = self._with(
+                    sample, _offset_of(header, "layer_count"), struct.pack("<I", count)
+                )
+                with self.assertRaises(MalformedFile):
+                    parser.read(path)
+
+    def test_a_file_missing_the_end_of_its_layers_is_refused(self) -> None:
+        # The headers and the layer table come first, so a transfer that
+        # stopped part of the way leaves a file that looks whole from the
+        # start. It would print until the data ran out.
+        for sample, parser, _, _ in PLAIN + (
+            ("bolts.ctb", CTBEncryptedFile, None, None),
+            ("bracket.ctb", CTBEncryptedFile, None, None),
+        ):
+            whole = (SAMPLES / sample).read_bytes()
+            # Some formats keep other parts after the layers.
+            end = max(parser.read(SAMPLES / sample).end_byte_offset_by_layer)
+            for missing in (1, 4096, end // 3):
+                with self.assertRaises(MalformedFile):
+                    parser.read(self._copy(sample, whole[: end - missing]))
+
+    def test_a_printer_name_of_absurd_length_is_refused(self) -> None:
+        path = self._with(
+            "stairs.fdg",
+            _offset_of(FDGHeader, "machine_size"),
+            struct.pack("<I", 0x7FFFFFFF),
+        )
+        with self.assertRaises(MalformedFile):
+            FDGFile.read(path)
+
+    def test_an_encrypted_layer_reaching_past_the_end_is_refused(self) -> None:
+        # The signature only covers the settings, so it still matches.
+        whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())
+        with open(SAMPLES / "bolts.ctb", "rb") as file:
+            _, slicer = ctb_encrypted._read_settings(file)
+        layer_offset = struct.unpack_from(
+            "<I",
+            whole,
+            slicer.layer_table_offset
+            + _offset_of(ctb_encrypted.CTBLayerPointer, "layer_offset"),
+        )[0]
+        where = layer_offset + _offset_of(
+            ctb_encrypted.CTBEncryptedLayerDef, "encrypted_data_length"
+        )
+        struct.pack_into("<I", whole, where, 0x7FFFFFF0)
+        with self.assertRaises(MalformedFile) as raised:
+            CTBEncryptedFile.read(self._copy("bolts.ctb", bytes(whole)))
+        expect("layer 1 of" in str(raised.exception)).to_equal(True)
+
+    def test_a_preview_of_absurd_size_is_refused(self) -> None:
+        for sample, parser, header, preview in PLAIN:
+            whole = (SAMPLES / sample).read_bytes()
+            where = struct.unpack_from(
+                "<I", whole, _offset_of(header, "high_res_preview_offset")
+            )[0]
+            for field, value in (
+                ("resolution_x", 0x10000),
+                ("resolution_y", 0),
+                ("image_length", 0x7FFFFFFF),
+                ("image_offset", 0x7FFFFFFF),
+            ):
+                path = self._with(
+                    sample, where + _offset_of(preview, field), struct.pack("<I", value)
+                )
+                with self.assertRaises(MalformedFile):
+                    parser.read_preview(path)
+
+    def test_a_preview_header_outside_the_file_is_refused(self) -> None:
+        for sample, parser, header, _ in PLAIN:
+            path = self._with(
+                sample,
+                _offset_of(header, "high_res_preview_offset"),
+                struct.pack("<I", 0x7FFFFFF0),
+            )
+            with self.assertRaises(MalformedFile):
+                parser.read_preview(path)
+
+    # ---- encrypted CTB ----
+
+    def _encrypted_with(self, **changes: int) -> pathlib.Path:
+        """bolts.ctb with fields of its encrypted settings block changed."""
+        whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())
+        header = CTBEncryptedHeader.unpack_from(bytes(whole))
+        start = header.slicer_offset
+        end = start + header.slicer_size
+        block = bytearray(ctb_encrypted._aes_crypt(bytes(whole[start:end]), False))
+        for name, value in changes.items():
+            struct.pack_into("<I", block, _offset_of(CTBEncryptedSlicer, name), value)
+        whole[start:end] = ctb_encrypted._aes_crypt(bytes(block), True)
+        return self._copy("bolts.ctb", bytes(whole))
+
+    def test_the_untouched_encrypted_sample_is_read(self) -> None:
+        expect(CTBEncryptedFile.read(self._encrypted_with()).layer_count).to_equal(110)
+
+    def test_an_encrypted_layer_count_the_file_cannot_hold_is_refused(self) -> None:
+        for count in (0xFFFFFFFF, 100_001, 60_000):
+            with self.assertRaises(MalformedFile):
+                CTBEncryptedFile.read(self._encrypted_with(layer_count=count))
+
+    def test_an_encrypted_layer_table_outside_the_file_is_refused(self) -> None:
+        with self.assertRaises(MalformedFile):
+            CTBEncryptedFile.read(self._encrypted_with(layer_table_offset=0x7FFFFFF0))
+
+    def test_an_encrypted_printer_name_of_absurd_length_is_refused(self) -> None:
+        with self.assertRaises(MalformedFile):
+            CTBEncryptedFile.read(self._encrypted_with(machine_name_size=0x7FFFFFFF))
+
+    def test_an_encrypted_preview_outside_the_file_is_refused(self) -> None:
+        with self.assertRaises(MalformedFile):
+            CTBEncryptedFile.read_preview(
+                self._encrypted_with(large_preview_offset=0x7FFFFFF0)
+            )
+
+    def test_settings_of_an_unexpected_size_are_refused(self) -> None:
+        for size in (0, 16, 0x7FFFFFFF):
+            path = self._with(
+                "bolts.ctb",
+                _offset_of(CTBEncryptedHeader, "slicer_size"),
+                struct.pack("<I", size),
+            )
+            with self.assertRaises(MalformedFile):
+                CTBEncryptedFile.read(path)
+            with self.assertRaises(MalformedFile):
+                CTBEncryptedFile.read_preview(path)
+
+    def test_a_signature_with_its_bytes_in_another_order_is_refused(self) -> None:
+        # Made of the same bytes, so the same set of values, but not equal.
+        whole = bytearray((SAMPLES / "bolts.ctb").read_bytes())
+        header = CTBEncryptedHeader.unpack_from(bytes(whole))
+        start = header.signature_offset
+        expect(whole[start] == whole[start + 1]).to_equal(False)
+        whole[start], whole[start + 1] = whole[start + 1], whole[start]
+        with self.assertRaises(MalformedFile):
+            CTBEncryptedFile.read(self._copy("bolts.ctb", bytes(whole)))
+
+    def test_a_signature_of_an_unexpected_size_is_refused(self) -> None:
+        for size in (16, 0x7FFFFFFF):
+            path = self._with(
+                "bolts.ctb",
+                _offset_of(CTBEncryptedHeader, "signature_size"),
+                struct.pack("<I", size),
+            )
+            with self.assertRaises(MalformedFile):
+                CTBEncryptedFile.read(path)
+
+    def test_a_file_that_is_not_an_encrypted_ctb_is_refused(self) -> None:
+        with self.assertRaises(MalformedFile):
+            CTBEncryptedFile.read(SAMPLES / "stairs.ctb")
+
+
+class FileFormatChoiceTest(TestCase):
+    def test_an_unsupported_extension_is_refused_by_name(self) -> None:
+        for name in ("notes.txt", "model.stl", "noextension", "archive.ctb.zip"):
+            with self.assertRaises(UnsupportedFileFormat):
+                get_file_format(name)
+
+    def test_the_extension_is_read_whatever_its_case(self) -> None:
+        expect(get_file_format("MODEL.FDG")).to_equal(FDGFile)
+        expect(get_file_format("model.Photon")).to_equal(PhotonFile)

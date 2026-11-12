@@ -20,17 +20,27 @@ EXTENSION_TO_FILE_FORMAT: Mapping[str, Type[SlicedModelFile]] = {
 }
 
 
+class UnsupportedFileFormat(ValueError):
+    """The name does not end in the extension of a format Mariner reads."""
+
+
 def get_file_extension(filename: str) -> str:
     (_, extension) = os.path.splitext(filename)
     return extension.lower()
 
 
 def get_file_format(filename: str) -> Type[SlicedModelFile]:
-    logger.debug(f"Filename is {filename}")
+    """The parser for *filename*, chosen by its extension.
+
+    A ``.ctb`` file is opened to tell the encrypted variant from the plain
+    one. Raises UnsupportedFileFormat for any other extension than the
+    supported ones.
+    """
     file_format = EXTENSION_TO_FILE_FORMAT.get(get_file_extension(filename))
+    if file_format is None:
+        raise UnsupportedFileFormat(filename)
     if file_format is CTBFile:
         file_format = check_encrypted(filename)
-    assert file_format is not None
     return file_format
 
 

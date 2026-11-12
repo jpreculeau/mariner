@@ -1,12 +1,17 @@
 import pathlib
-import struct
 from dataclasses import dataclass
-from typing import List
 
 import png
 from typedstruct import LittleEndianStruct, StructType
 
 from mariner.file_formats import SlicedModelFile
+from mariner.file_formats.reading import (
+    check_layer_count,
+    check_layers_fit,
+    read_preview,
+    read_struct,
+    read_text,
+)
 
 
 @dataclass(frozen=True)
@@ -108,61 +113,43 @@ class CTBPreview(LittleEndianStruct):
     image_length: int = StructType.uint32()
 
 
-REPEAT_RGB15_MASK: int = 1 << 5
-
-
-def _read_image(width: int, height: int, data: bytes) -> png.Image:
-    array: List[List[int]] = [[]]
-
-    (i, x) = (0, 0)
-    while i < len(data):
-        color16 = int(struct.unpack_from("<H", data, i)[0])
-        i += 2
-        repeat = 1
-        if color16 & REPEAT_RGB15_MASK:
-            repeat += int(struct.unpack_from("<H", data, i)[0]) & 0xFFF
-            i += 2
-
-        (r, g, b) = (
-            (color16 >> 0) & 0x1F,
-            (color16 >> 6) & 0x1F,
-            (color16 >> 11) & 0x1F,
-        )
-
-        while repeat > 0:
-            array[-1] += [r, g, b]
-            repeat -= 1
-
-            x += 1
-            if x == width:
-                x = 0
-                array.append([])
-
-    array.pop()
-
-    return png.from_array(array, "RGB;5")
-
-
 @dataclass(frozen=True)
 class CTBFile(SlicedModelFile):
     @classmethod
-    def read(self, path: pathlib.Path) -> "CTBFile":
+    def read(cls, path: pathlib.Path) -> "CTBFile":
         with open(str(path), "rb") as file:
-            ctb_header = CTBHeader.unpack(file.read(CTBHeader.get_size()))
+            ctb_header = read_struct(file, CTBHeader, 0, "header")
 
-            file.seek(ctb_header.slicer_offset)
-            ctb_slicer = CTBSlicer.unpack(file.read(CTBSlicer.get_size()))
+            ctb_slicer = read_struct(
+                file, CTBSlicer, ctb_header.slicer_offset, "slicer settings"
+            )
+            printer_name = read_text(
+                file,
+                ctb_slicer.machine_offset,
+                ctb_slicer.machine_size,
+                "printer name",
+            )
 
-            file.seek(ctb_slicer.machine_offset)
-            printer_name = file.read(ctb_slicer.machine_size).decode()
-
+            layer_def_size = CTBLayerDef.get_size()
+            check_layer_count(
+                file,
+                ctb_header.layer_count,
+                ctb_header.layer_defs_offset,
+                layer_def_size,
+            )
             end_byte_offset_by_layer = []
             for layer in range(0, ctb_header.layer_count):
-                file.seek(ctb_header.layer_defs_offset + layer * CTBLayerDef.get_size())
-                layer_def = CTBLayerDef.unpack(file.read(CTBLayerDef.get_size()))
+                layer_def = read_struct(
+                    file,
+                    CTBLayerDef,
+                    ctb_header.layer_defs_offset + layer * layer_def_size,
+                    "layer table",
+                )
                 end_byte_offset_by_layer.append(
                     layer_def.image_offset + layer_def.image_length
                 )
+
+            check_layers_fit(file, end_byte_offset_by_layer)
 
             return CTBFile(
                 filename=path.name,
@@ -191,12 +178,18 @@ class CTBFile(SlicedModelFile):
     @classmethod
     def read_preview(cls, path: pathlib.Path) -> png.Image:
         with open(str(path), "rb") as file:
-            ctb_header = CTBHeader.unpack(file.read(CTBHeader.get_size()))
+            ctb_header = read_struct(file, CTBHeader, 0, "header")
 
-            file.seek(ctb_header.high_res_preview_offset)
-            preview = CTBPreview.unpack(file.read(CTBPreview.get_size()))
-
-            file.seek(preview.image_offset)
-            data = file.read(preview.image_length)
-
-            return _read_image(preview.resolution_x, preview.resolution_y, data)
+            preview = read_struct(
+                file,
+                CTBPreview,
+                ctb_header.high_res_preview_offset,
+                "preview header",
+            )
+            return read_preview(
+                file,
+                preview.resolution_x,
+                preview.resolution_y,
+                preview.image_offset,
+                preview.image_length,
+            )
