@@ -27,6 +27,15 @@ const printing: PrintStatusResponse = {
   time_left_secs: 7340,
 };
 
+/** The page's main area, where focus goes when it has nowhere else. */
+function withContent(): HTMLElement {
+  const content = document.createElement("main");
+  content.id = "content";
+  content.tabIndex = -1;
+  document.body.appendChild(content);
+  return content;
+}
+
 function renderIndex() {
   return render(
     <QueryClientProvider
@@ -247,5 +256,24 @@ describe("Index", () => {
     expect(
       screen.getByRole("progressbar", { name: "Avancement de l'impression" }),
     ).toHaveAttribute("aria-valuetext", "39,6\u00a0%");
+  });
+
+  it("gives focus a place to go when the print it was on is over", async () => {
+    const content = withContent();
+    try {
+      const status = vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+      vi.spyOn(api, "printerCommand").mockResolvedValue();
+      renderIndex();
+      const pause = await screen.findByRole("button", { name: "Pause" });
+      pause.focus();
+      status.mockResolvedValue({ ...printing, state: "IDLE" });
+
+      fireEvent.click(pause);
+
+      await screen.findByText("See the files");
+      expect(document.activeElement).toBe(content);
+    } finally {
+      content.remove();
+    }
   });
 });

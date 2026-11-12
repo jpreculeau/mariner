@@ -1,4 +1,5 @@
 import * as React from "react";
+import { toast as sonner } from "sonner";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 
@@ -62,6 +63,7 @@ const DialogContent = React.forwardRef<
       onOpenAutoFocus,
       onCloseAutoFocus,
       onInteractOutside,
+      onEscapeKeyDown,
       ...props
     },
     ref,
@@ -83,6 +85,16 @@ const DialogContent = React.forwardRef<
             // For a dialog that opens by itself: before focus moves in.
             if (!noted) own.current = document.activeElement;
             onOpenAutoFocus?.(event);
+          }}
+          onEscapeKeyDown={(event) => {
+            // A message above the dialog goes first: the keyboard cannot
+            // reach it while the dialog holds focus, and it can cover the
+            // dialog's buttons.
+            if (document.querySelector("[data-sonner-toast]")) {
+              event.preventDefault();
+              sonner.dismiss();
+            }
+            onEscapeKeyDown?.(event);
           }}
           onInteractOutside={(event) => {
             // A message shown above the dialog is not the page behind it:
@@ -148,7 +160,11 @@ const DialogTitle = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Title
     ref={ref}
-    className={cn("text-lg font-semibold leading-snug", className)}
+    className={cn(
+      // A file name has no space to break at.
+      "text-lg font-semibold leading-snug [overflow-wrap:anywhere]",
+      className,
+    )}
     {...props}
   />
 ));
@@ -160,7 +176,10 @@ const DialogDescription = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Description
     ref={ref}
-    className={cn("text-base leading-relaxed text-muted-foreground", className)}
+    className={cn(
+      "text-base leading-relaxed text-muted-foreground [overflow-wrap:anywhere]",
+      className,
+    )}
     {...props}
   />
 ));

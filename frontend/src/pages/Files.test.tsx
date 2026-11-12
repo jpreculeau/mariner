@@ -36,6 +36,15 @@ function renderFiles() {
   return container.querySelector('input[type="file"]') as HTMLInputElement;
 }
 
+/** The page's main area, where focus goes when it has nowhere else. */
+function withContent(): HTMLElement {
+  const content = document.createElement("main");
+  content.id = "content";
+  content.tabIndex = -1;
+  document.body.appendChild(content);
+  return content;
+}
+
 function pick(input: HTMLInputElement, file: File) {
   fireEvent.change(input, { target: { files: [file] } });
 }
@@ -593,5 +602,118 @@ describe("Files", () => {
     expect(screen.getAllByText("Finishing dragon.ctb…").length).toBeGreaterThan(
       0,
     );
+  });
+
+  it("keeps the keyboard's place when trying again fails again", async () => {
+    // The button pressed goes with the message it was in.
+    // As over a network: not so fast that the page never shows it is
+    // asking.
+    vi.mocked(api.listFiles).mockImplementation(
+      () =>
+        new Promise((_resolve, reject) =>
+          setTimeout(() => reject(new ApiError(500, "x")), 10),
+        ),
+    );
+    renderFiles();
+    const again = await screen.findByRole("button", { name: "Try again" });
+    again.focus();
+
+    fireEvent.click(again);
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("region", { name: "Folder: /" }),
+      ),
+    );
+  });
+
+  it("keeps the keyboard's place in a folder that cannot be listed", async () => {
+    vi.mocked(api.listFiles).mockImplementation((path = ".") =>
+      path === "."
+        ? Promise.resolve({ directories: [{ dirname: "batch" }], files: [] })
+        : Promise.reject(new ApiError(500, "x")),
+    );
+    renderFiles();
+    const folder = await screen.findByRole("button", {
+      name: "Open folder batch",
+    });
+    folder.focus();
+    fireEvent.click(folder);
+    await screen.findByRole("alert");
+
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("region", { name: "Folder: /batch" }),
+      ),
+    );
+  });
+
+  it("does not take focus when the list is shown with none lost", async () => {
+    vi.mocked(api.listFiles).mockResolvedValue({ directories: [], files: [] });
+    renderFiles();
+    await screen.findByText("This folder is empty.");
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("gives focus a place to go when the upload it was on is over", async () => {
+    const content = withContent();
+    try {
+      vi.spyOn(api, "uploadFile").mockImplementation(
+        (_file, _path, _options, _onProgress, signal) =>
+          new Promise<void>((_resolve, reject) => {
+            signal!.addEventListener("abort", () =>
+              reject(new ApiError(0, "Upload cancelled.", "cancelled")),
+            );
+          }),
+      );
+      const input = renderFiles();
+      pick(input, new File(["x"], "dragon.ctb"));
+      const giveUp = await screen.findByRole("button", {
+        name: "Cancel the upload",
+      });
+      giveUp.focus();
+
+      fireEvent.click(giveUp);
+
+      await waitFor(() => expect(screen.queryByRole("progressbar")).toBeNull());
+      expect(document.activeElement).toBe(content);
+    } finally {
+      content.remove();
+    }
+  });
+
+  it("lets a long way up wrap rather than run off a narrow screen", async () => {
+    vi.mocked(api.listFiles).mockImplementation((path = ".") =>
+      path === "."
+        ? Promise.resolve({ directories: [{ dirname: "batch" }], files: [] })
+        : Promise.reject(new ApiError(404, "x")),
+    );
+    renderFiles();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Open folder batch" }),
+    );
+    await screen.findByRole("alert");
+    expect(
+      screen.getByRole("button", { name: "Up to the folder above" }),
+    ).toHaveClass("whitespace-normal");
+  });
+
+  it("goes back to the name of a folder that was refused", async () => {
+    vi.spyOn(api, "createDirectory").mockRejectedValue(
+      new ApiError(400, "A folder of this name is already there."),
+    );
+    renderFiles();
+    fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+    const name = await screen.findByLabelText("Folder name");
+    fireEvent.change(name, { target: { value: "batch" } });
+    const create = screen.getByRole("button", { name: "Create" });
+    create.focus();
+
+    fireEvent.click(create);
+
+    // Not switched off while it works: that would drop the focus it has.
+    expect(create).not.toBeDisabled();
+    await screen.findByRole("alert");
+    expect(document.activeElement).toBe(name);
   });
 });

@@ -1,9 +1,11 @@
+import { useEffect } from "react";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { PrinterOffDialog } from "@/components/PrinterOffDialog";
 import { useI18n } from "@/lib/i18n";
 import { useUploads } from "@/lib/uploads";
+import { focusContent, useFocusWithin } from "@/hooks/use-focus-within";
 
 /**
  * The upload under way, on whichever page is shown: how far it is, a way
@@ -26,10 +28,22 @@ export function UploadStatus() {
           percent: percent(shown),
         });
 
+  // The bar goes when the upload is over, and with it the button that
+  // may have focus.
+  const focus = useFocusWithin();
+  const shown = sending !== null;
+  useEffect(() => {
+    if (shown) return;
+    if (focus.lost()) focusContent();
+    focus.forget();
+    // `focus` is new at every drawing; what it notes is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown]);
+
   return (
     <>
       {sending && (
-        <div className="container pt-4">
+        <div className="container pt-4" {...focus.area}>
           <div className="rounded-lg border bg-card p-4">
             <div className="mb-2 flex items-start justify-between gap-3">
               <p

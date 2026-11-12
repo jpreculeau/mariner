@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PrintProgress } from "@/components/PrintProgress";
 import { PrintControls } from "@/components/PrintControls";
@@ -7,6 +7,7 @@ import { api, mapPrinterState, type PrinterStatus } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { focusContent, useFocusWithin } from "@/hooks/use-focus-within";
 import { toast } from "@/components/ui/sonner";
 import { WifiOff, CheckCircle2, Loader2, Unplug } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -29,6 +30,15 @@ export default function Index() {
   });
 
   const status: PrinterStatus = data ? mapPrinterState(data.state) : "offline";
+
+  // The buttons of a print go when it is over, and with them the one
+  // that may have focus.
+  const focus = useFocusWithin();
+  useEffect(() => {
+    if (focus.lost()) focusContent();
+    // `focus` is new at every drawing; what it notes is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   // Send a command to the printer and say how it went: a command the
   // printer did not take must not look like one that it did.
@@ -118,7 +128,7 @@ export default function Index() {
       {header}
 
       {(status === "printing" || status === "paused") && (
-        <div className="space-y-6">
+        <div className="space-y-6" {...focus.area}>
           <div className="rounded-lg border bg-card p-6">
             <PrintProgress job={job} />
           </div>

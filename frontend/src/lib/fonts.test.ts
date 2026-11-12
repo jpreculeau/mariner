@@ -118,4 +118,11 @@ describe("the page's own files", () => {
       );
     }
   });
+
+  it("shows where the keyboard is on the button that closes a message", () => {
+    // The library's own mark is a dark ring on a dark ground.
+    expect(read("src/index.css")).toMatch(
+      /\[data-sonner-toast\] \[data-button\]:focus-visible \{\s*outline: 2px solid hsl\(var\(--ring\)\);/,
+    );
+  });
 });

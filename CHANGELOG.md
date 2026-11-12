@@ -111,6 +111,9 @@ Web interface
 - Say that the printer did not answer when it sent nothing back to an order to stop, instead of taking the print for cancelled
 - Do not ask again, three times over, what the server has refused
 - Leave a dialog open when a message shown above it is dismissed
+- Break a long file name in a question rather than let it push the question and its buttons off a phone's screen
+- Close a message shown above a dialog with Escape, before the dialog: the keyboard could not reach it, and it could cover the dialog's buttons. Show where the keyboard is on the button that closes a message
+- Give focus a place to go when what it was on goes away: the upload bar, the buttons of a print that is over, a list that could not be fetched; and put it back on the name of a folder that was refused
 - Let the browser keep the page's scripts, styles and typefaces for good (their names change with their content), and carry OpenDyslexic in one form instead of two
 - Call the two times of a print what they are: estimates
 - Make the page usable without seeing it: name every button and link at every width of screen, announce the state of the printer and what is loading, label the field of a new folder, give the page a main area, a link to skip to it, a title of its own in the browser's tab, and say which page and which choices are the current ones other than by colour

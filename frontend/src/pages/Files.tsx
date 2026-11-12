@@ -16,6 +16,7 @@ import { errorText } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import { useUploads } from "@/lib/uploads";
 import { usePageTitle } from "@/hooks/use-page-title";
+import { useFocusWithin } from "@/hooks/use-focus-within";
 import {
   Folder,
   FileText,
@@ -65,8 +66,10 @@ export default function Files() {
       setNewFolderName("");
     },
     onError: (err: Error) => {
-      // By the field it is about, where it is read and stays.
+      // By the field it is about, where it is read and stays; and back
+      // to that field, to change the name.
       setFolderError(errorText(err, t, lang));
+      document.getElementById("new-folder-name")?.focus();
     },
   });
 
@@ -75,19 +78,17 @@ export default function Files() {
     setFolderError(null);
   }, [newFolderOpen]);
 
-  // When the list shown changes and focus was on something that went
-  // with it, put focus on the list rather than let it fall to the top of
-  // the page. Not when the list is first shown: nothing was lost.
+  // When what is shown changes (another folder, an error, a new try) and
+  // focus was on something that went with it, put focus on the list
+  // rather than let it fall to the top of the page. Not when focus was
+  // not in the page: nothing was lost.
   const listRef = useRef<HTMLDivElement>(null);
-  const listShown = useRef<typeof data>(undefined);
+  const focus = useFocusWithin();
   useEffect(() => {
-    if (!data) return;
-    const first = listShown.current === undefined;
-    listShown.current = data;
-    const lost =
-      !document.activeElement || document.activeElement === document.body;
-    if (!first && lost) listRef.current?.focus();
-  }, [data]);
+    if (focus.lost()) listRef.current?.focus();
+    // `focus` is new at every drawing; what it notes is not.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, error, isLoading]);
 
   const handleDirectoryClick = (dirname: string) => {
     if (dirname === "..") {
@@ -116,7 +117,7 @@ export default function Files() {
 
   const handleCreateFolder = () => {
     const name = newFolderName.trim();
-    if (!name) return;
+    if (!name || createFolderMutation.isPending) return;
     createFolderMutation.mutate(name);
   };
 
@@ -125,7 +126,7 @@ export default function Files() {
     "flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm transition-colors hover:bg-muted focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
 
   return (
-    <div className="container py-6">
+    <div className="container py-6" {...focus.area}>
       <div className="mb-6 flex items-center justify-between gap-4">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold">{t("files.heading")}</h1>
@@ -215,7 +216,7 @@ export default function Files() {
               // The folder may be gone: a way out other than reloading.
               <Button
                 variant="ghost"
-                className="mt-2 gap-2"
+                className="mt-2 h-auto min-h-10 gap-2 whitespace-normal"
                 onClick={() => handleDirectoryClick("..")}
               >
                 <CornerLeftUp className="h-4 w-4" aria-hidden />
@@ -362,9 +363,10 @@ export default function Files() {
               </Button>
               <Button
                 type="submit"
-                disabled={
-                  !newFolderName.trim() || createFolderMutation.isPending
-                }
+                disabled={!newFolderName.trim()}
+                // Said to be unavailable while it works rather than
+                // switched off, which would drop the focus it has.
+                aria-disabled={createFolderMutation.isPending}
               >
                 {createFolderMutation.isPending ? (
                   <>

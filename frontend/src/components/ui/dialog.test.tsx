@@ -1,4 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { toast as sonner } from "sonner";
+
+vi.mock("sonner", () => ({ toast: { dismiss: vi.fn() } }));
 import { useState } from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import {
@@ -98,5 +101,47 @@ describe("Dialog", () => {
     // Anywhere else still closes it.
     fireEvent.pointerDown(screen.getByText("elsewhere"));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("breaks a long name rather than run off the screen", async () => {
+    // A file name has no space to break at: on a phone it pushed the
+    // question, and its buttons, past the edge.
+    render(<Opened />);
+    fireEvent.click(screen.getByText("open"));
+    await screen.findByRole("dialog");
+    expect(screen.getByText("Question").className).toContain(
+      "[overflow-wrap:anywhere]",
+    );
+    expect(screen.getByText("Text").className).toContain(
+      "[overflow-wrap:anywhere]",
+    );
+  });
+
+  it("closes a message shown above it on Escape, before itself", async () => {
+    // The keyboard cannot reach the message while the dialog holds
+    // focus, and the message can cover the dialog's buttons.
+    const message = document.createElement("ol");
+    message.setAttribute("data-sonner-toaster", "");
+    message.innerHTML = "<li data-sonner-toast>refused</li>";
+    document.body.appendChild(message);
+    vi.mocked(sonner.dismiss).mockImplementation(() => {
+      message.innerHTML = "";
+      return "";
+    });
+    try {
+      render(<Opened />);
+      fireEvent.click(screen.getByText("open"));
+      const dialog = await screen.findByRole("dialog");
+
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      expect(sonner.dismiss).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole("dialog")).toBeInTheDocument();
+
+      fireEvent.keyDown(dialog, { key: "Escape" });
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(sonner.dismiss).toHaveBeenCalledTimes(1);
+    } finally {
+      message.remove();
+    }
   });
 });

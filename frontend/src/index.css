@@ -183,3 +183,10 @@
     font-family: var(--font-body);
   }
 }
+
+/* The button that closes a message: the library marks focus on it with a
+   dark ring, on a dark ground. */
+[data-sonner-toaster] [data-sonner-toast] [data-button]:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
