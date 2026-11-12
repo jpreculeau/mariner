@@ -72,8 +72,8 @@ _NOT_A_SLICER = Refusal(
     "Not For Browsers",
     "These addresses are for slicers, and are not served to a web browser "
     "or to a program that says what browsers say. A script must give "
-    "itself a name of its own (User-Agent) and leave out Accept-Language "
-    "and Range.",
+    "itself a name of its own (User-Agent) and leave out the headers "
+    "Accept-Language, Range, Icy-MetaData, Purpose and Sec-Purpose.",
 )
 _FOREIGN_NAME = Refusal(
     "host_not_allowed",
@@ -137,7 +137,11 @@ def _allowed_hosts() -> list:
 
 def _site(address: str) -> Optional[Tuple[str, str, str]]:
     """The scheme, name and port a page address stands for, if it is one."""
-    parts = urlsplit(address.strip().lower())
+    try:
+        parts = urlsplit(address.strip().lower())
+    except ValueError:
+        # Brackets that hold no address, say.
+        return None
     if parts.scheme not in _DEFAULT_PORTS or not parts.netloc:
         return None
     name = name_and_port(parts.netloc)
@@ -153,7 +157,9 @@ def _is_own_page(address: str, host: str) -> bool:
     listed whole in ``allowed_origins``, for a relay in front of Mariner
     that asks it under another name or port than the browser used. A name
     in ``allowed_hosts`` may be asked for and is not thereby a friend:
-    under the same name, another port is another program's page.
+    under the same name, another port is another program's page. A request
+    that names no port is taken to be on the usual one for the page's
+    scheme, as it is behind a relay that passes the name on as it came.
     """
     page = _site(address)
     if page is None:
@@ -172,8 +178,10 @@ def _is_a_program_s(origin: str) -> bool:
     """Whether an ``Origin`` is of a kind no page on the web can give.
 
     A slicer built as a desktop application can give one of its own, such
-    as ``app://name``. A page gives ``http``, ``https`` or, when it hides
-    where it is from, ``null``.
+    as ``app://name``. A page on the web gives ``http``, ``https`` or,
+    when it hides where it is from, ``null``. A page that belongs to an
+    extension installed in the browser gives the extension's own, and is
+    served: whoever installed it gave it that reach.
     """
     scheme, separator, _ = origin.strip().lower().partition("://")
     return (
@@ -264,9 +272,11 @@ ANSWER_HEADERS = {
 def request_refusal(path: str, headers: Mapping[str, str]) -> Optional[Refusal]:
     """Why the web server does not serve a request for *path*; None if it does.
 
-    A foreign name is refused everywhere; a request from another site only
-    where it would act or tell, so that a link to Mariner on another page
-    still opens it; a browser on the routes made for slicers.
+    A foreign name is refused wherever the application answers (the
+    page's own scripts and styles, which tell nothing, are served before
+    it); a request from another site only where it would act or tell, so
+    that a link to Mariner on another page still opens it; a browser on
+    the routes made for slicers.
     """
     refusal = host_refusal(headers)
     if refusal is None and path.startswith(GUARDED_PREFIXES):
@@ -274,6 +284,15 @@ def request_refusal(path: str, headers: Mapping[str, str]) -> Optional[Refusal]:
     if refusal is None and path.startswith(SLICER_PREFIXES):
         refusal = browser_refusal(headers)
     return refusal
+
+
+def body_refusal(path: str, headers: Mapping[str, str]) -> Optional[Refusal]:
+    """Why the web server does not take in the body of a request for *path*.
+
+    As ``request_refusal``, but another site is turned away wherever it
+    sends: a body is stored before anyone looks at where it was going.
+    """
+    return request_refusal(path, headers) or site_refusal(headers)
 
 
 def refusal_for(headers: Mapping[str, str]) -> Optional[Refusal]:

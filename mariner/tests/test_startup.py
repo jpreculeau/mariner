@@ -82,6 +82,13 @@ class StartupTest(TestCase):
             serve.call_args.kwargs["max_request_body_size"], 3 * 1024**3 + 1024**2
         )
 
+    def test_a_connection_that_says_nothing_is_not_kept_for_long(self) -> None:
+        # There are only so many: held open and silent, they would keep
+        # everyone else out for as long.
+        with patch.object(server, "use_spool_directory"):
+            serve = self._started()
+        self.assertLessEqual(serve.call_args.kwargs["channel_timeout"], 60)
+
     def test_the_web_server_is_the_one_that_refuses_early(self) -> None:
         from mariner.server import early
 

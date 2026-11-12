@@ -222,8 +222,9 @@ are protected: the file is then refused.
 Mariner answers to its IP address and to names of the kind used on a local
 network: a single word such as ``mariner``, the name of the computer it
 runs on, or a name ending in ``.local``, ``.lan``, ``.home``,
-``.home.arpa``, ``.internal`` or ``.localdomain``. (These endings are
-custom, not law: no web site can own a name ending in them today.) If you reach it under
+``.home.arpa``, ``.internal`` or ``.localdomain``. (This is custom, not
+law: no web site can own a single word or a name with one of these endings
+today.) If you reach it under
 another name, one your router gives (``mariner.fritz.box``), one of a VPN
 (Tailscale's ``.ts.net``) or of your own domain, add that name, without a
 port, under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
@@ -272,15 +273,24 @@ request, which any page can have a browser send by a link or a picture, so
 they are not served to a browser, whatever page it comes from, nor to a
 program that sends what browsers and media players send.
 
-A script is refused there when it calls itself a browser or sends
-``Accept-Language`` or ``Range``. PowerShell does the first: give
-``Invoke-WebRequest`` and ``Invoke-RestMethod`` a name of your own with
-``-UserAgent "my-script"``. curl, wget and Python's libraries are served as
-they are.
+A script is refused there when it calls itself a browser or sends one of
+the headers ``Accept-Language``, ``Range``, ``Icy-MetaData``, ``Purpose``
+or ``Sec-Purpose``. PowerShell does the first: give ``Invoke-WebRequest``
+and ``Invoke-RestMethod`` a name of your own with ``-UserAgent
+"my-script"``. curl, wget and Python's libraries are served as they are,
+unless asked to resume a download (``curl -C``, ``curl -r``, ``wget -c``),
+which sends ``Range``.
 
 This keeps out the programs known to follow a page's links. It is not a
 lock: if the printer's network holds devices or people you do not trust,
 switch these addresses off (``[uvtools] enabled = false``).
+
+.. rubric:: A request is refused as too large (error 413, ``request_too_large``)
+
+Only the addresses files are sent to (``/api/upload_file`` and
+``/uvtools/upload/``) take more than 512 KB, or data of no size said
+beforehand. Nothing Mariner's page or a slicer sends elsewhere comes near
+that.
 
 .. rubric:: A file is refused as too large (error 413)
 
@@ -293,11 +303,13 @@ web server itself, as plain text.
 
 While it arrives, a file is kept in ``/var/tmp``, on the drive of the
 computer Mariner runs on, which must have room for it: twice its size for a
-file sent from the web page, its size for one sent by a slicer. A file that
-says how large it is, as the web page and slicers do, is refused before any
-of it is sent when that room is not there. One that does not say is taken
-in until the drive is full; the connection is then closed without an
-answer. Free some room, or set another place on a drive as
+file sent from the web page, its size for one sent by a slicer, and 64 MB
+that Mariner leaves free for the system. A file that says how large it is,
+as the web page and slicers do, is refused before Mariner takes any of it
+in when that room is not there. Room is measured when a file starts to
+arrive: of several sent at once, or of one that does not say how large it
+is, one may still find the drive full on the way, and its connection is
+then closed without an answer. Free some room, or set another place on a drive as
 ``spool_directory`` under ``[http]``. If that place cannot be used, Mariner
 says so in the logs at start and falls back on ``/tmp``; where ``/tmp`` is
 held in memory there is little room in it.

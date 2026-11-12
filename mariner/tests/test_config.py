@@ -108,6 +108,23 @@ spool_directory = "/srv/spool"
         for setting in ("max_upload_size_mb", "[uvtools] enabled", "[sdcp] enabled"):
             expect(setting in named).to_equal(True)
 
+    def test_names_and_addresses_that_can_never_match_are_named(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="[http]\n"
+            'allowed_hosts = ["good.example.org", "*", "evil.com:5000", '
+            '"*.evil.com", "http://evil.com"]\n'
+            'allowed_origins = ["https://good.example.org:8443", '
+            '"printer.example.org", "*"]\n',
+        )
+        named = config.ignored_settings()
+        expect(len(named)).to_equal(5)
+        text = " ".join(named)
+        for entry in ("evil.com:5000", "*.evil.com", "http://evil.com"):
+            expect(f"allowed_hosts entry {entry!r}" in text).to_equal(True)
+        for entry in ("printer.example.org", "*"):
+            expect(f"allowed_origins entry {entry!r}" in text).to_equal(True)
+
     def test_can_customize_files_directory(self) -> None:
         self.fs.create_file(
             "/etc/mariner/config.toml",

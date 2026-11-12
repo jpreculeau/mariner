@@ -28,9 +28,19 @@ class EarlyRefusalTest(TestCase):
             application, host="127.0.0.1", port=0, max_request_body_size=10**9
         )
         self.port = self.server.effective_port
-        thread = threading.Thread(target=self.server.run, daemon=True)
+
+        def run() -> None:
+            try:
+                self.server.run()
+            except OSError:
+                # Closed under it, at the end of the test.
+                pass
+
+        thread = threading.Thread(target=run, daemon=True)
         thread.start()
         self.addCleanup(self.server.close)
+        # Before that, let what is being answered finish.
+        self.addCleanup(self.server.task_dispatcher.shutdown)
 
     def _exchange(
         self, head: str, body: bytes = b"", wait_for_body: bool = False
@@ -141,6 +151,93 @@ class EarlyRefusalTest(TestCase):
             )
             expect(sock.recv(12)).to_equal(b"HTTP/1.1 100")
 
+    def test_another_site_s_body_is_not_taken_in_wherever_it_is_sent(self) -> None:
+        # A page can have a browser post to any address, not only to the
+        # ones that act: the body would be stored all the same.
+        for path in ("/", "/files", "/assets/x.js", "/no/such/thing"):
+            status, _, body = self._exchange(
+                f"POST {path} HTTP/1.1\nHost: 127.0.0.1\n"
+                "Origin: http://evil.example\nContent-Length: 500000000\n"
+            )
+            expect(status).to_equal(403)
+            expect(json.loads(body)["code"]).to_equal("cross_site_request")
+        expect(self.called).to_equal([])
+
+    def test_only_a_file_being_sent_may_be_large(self) -> None:
+        for path, extra in (
+            ("/api/create_directory", "Content-Length: 600000\n"),
+            ("/", "Content-Length: 600000\n"),
+            ("/uvtools/print/x.ctb", "Content-Length: 600000\n"),
+            # Of no known size.
+            ("/api/create_directory", "Transfer-Encoding: chunked\n"),
+        ):
+            status, headers, body = self._exchange(
+                f"POST {path} HTTP/1.1\nHost: 127.0.0.1\n{extra}"
+            )
+            expect(status).to_equal(413)
+            expect(json.loads(body)["code"]).to_equal("request_too_large")
+        expect(self.called).to_equal([])
+        # What goes with an ordinary request is taken.
+        status, _, _ = self._exchange(
+            "POST /api/create_directory HTTP/1.1\nHost: 127.0.0.1\n"
+            "Content-Length: 300000\n",
+            b"x" * 300000,
+            wait_for_body=True,
+        )
+        expect(status).to_equal(200)
+        # And a file of unknown size, where files are sent.
+        status, _, _ = self._exchange(
+            "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+            "Transfer-Encoding: chunked\n",
+            b"5\r\nhello\r\n0\r\n\r\n",
+            wait_for_body=True,
+        )
+        expect(status).to_equal(200)
+
+    def test_some_room_is_left_on_the_drive(self) -> None:
+        # The drive uploads wait on is the system's own: filled to the
+        # last byte, more than uploads would stop working.
+        usage = shutil.disk_usage("/")
+        reserve = early.KEPT_FREE_BYTES
+        expect(reserve >= 32 * 1024 * 1024).to_equal(True)
+        with patch.object(
+            early.shutil,
+            "disk_usage",
+            return_value=usage._replace(free=reserve + 1_000_000),
+        ):
+            status, _, _ = self._exchange(
+                "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                "Content-Length: 1100000\n"
+            )
+            expect(status).to_equal(507)
+
+    def test_what_the_web_server_refuses_itself_is_left_to_it(self) -> None:
+        # Larger than any file may be: not a matter of room.
+        usage = shutil.disk_usage("/")
+        early._room_refusals_said.clear()
+        with patch.object(
+            early.shutil, "disk_usage", return_value=usage._replace(free=0)
+        ), self.assertNoLogs("mariner.server.early", level="WARNING"):
+            status, _, _ = self._exchange(
+                "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                "Content-Length: 2000000000\n"
+            )
+        expect(status).to_equal(413)
+
+    def test_refusals_for_want_of_room_do_not_fill_the_log(self) -> None:
+        usage = shutil.disk_usage("/")
+        early._room_refusals_said.clear()
+        with patch.object(
+            early.shutil, "disk_usage", return_value=usage._replace(free=0)
+        ), self.assertLogs("mariner.server.early", level="WARNING") as logs:
+            for _ in range(20):
+                status, _, _ = self._exchange(
+                    "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                    "Content-Length: 900000000\n"
+                )
+                expect(status).to_equal(507)
+        expect(len(logs.records)).to_equal(1)
+
     def test_a_page_may_be_asked_for_from_another_site(self) -> None:
         status, _, _ = self._exchange(
             "GET /files HTTP/1.1\nHost: 127.0.0.1\nReferer: http://other.example/\n"
@@ -152,7 +249,9 @@ class EarlyRefusalTest(TestCase):
     ) -> None:
         usage = shutil.disk_usage("/")
         with patch.object(
-            early.shutil, "disk_usage", return_value=usage._replace(free=1_000_000)
+            early.shutil,
+            "disk_usage",
+            return_value=usage._replace(free=early.KEPT_FREE_BYTES + 1_000_000),
         ):
             # Once in the room for a slicer's upload, twice for a form: the
             # web server keeps it, and so does the reading of the form.

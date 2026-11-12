@@ -223,8 +223,10 @@ def _no_room(what: str) -> Tuple[Response, int]:
 
     The web server refuses beforehand an upload that announces a size
     larger than the room there is (``mariner.server.early``). This is for
-    what it could not foresee: no size announced, or several uploads at
-    once.
+    a form that ran out of room while it was taken apart, which that
+    could not foresee: several uploads at once, say. When the web server
+    itself runs out while it takes a body in, it closes the connection
+    and nothing is answered.
     """
     logger.warning("No room to keep an upload in while it arrives: %s", what)
     return jsonify(early.no_room_body(None)), 507

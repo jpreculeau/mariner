@@ -121,6 +121,7 @@ def keep_requests_on_one_line() -> None:
 
 
 CONNECTION_LIMIT = 32
+CHANNEL_TIMEOUT_SECONDS = 30
 
 
 def use_spool_directory() -> None:
@@ -174,4 +175,7 @@ def main() -> None:
         max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
         # Each connection can hold an upload waiting on the drive.
         connection_limit=CONNECTION_LIMIT,
+        # A connection that says nothing is closed after this long. It
+        # holds one of the few there are.
+        channel_timeout=CHANNEL_TIMEOUT_SECONDS,
     )

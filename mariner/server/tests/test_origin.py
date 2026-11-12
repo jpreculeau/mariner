@@ -104,6 +104,18 @@ class CrossSiteTest(TestCase):
             refusal = _refusal({"Origin": "http://printer.lan:8080"}, "127.0.0.1:5050")
             expect(none_throws(refusal).code).to_equal("cross_site_request")
 
+    def test_an_address_that_cannot_be_read_is_not_a_friend_s(self) -> None:
+        # Refused as any other, not an error.
+        for headers in ({"Origin": "http://[x"}, {"Referer": "http://[x/page"}):
+            refusal = _refusal(headers, "192.168.1.20:5050")
+            expect(none_throws(refusal).code).to_equal("cross_site_request")
+        with patch.object(
+            origin.config, "get_http_allowed_origins", return_value=["http://[x"]
+        ):
+            expect(
+                _refusal({"Origin": "http://192.168.1.20:5050"}, "192.168.1.20:5050")
+            ).to_equal(None)
+
     def test_a_program_that_is_not_a_browser_is_let_through(self) -> None:
         # Slicers and scripts send neither.
         expect(_refusal({})).to_equal(None)
