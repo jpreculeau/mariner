@@ -208,6 +208,17 @@ class DegradedTest(TestCase):
                 state.directory()
         expect(state.is_makeshift()).to_equal(True)
 
+    def test_none_that_can_be_made_is_known_before_one_is_looked_for(self) -> None:
+        # The slicers' switches are read before the folder is made.
+        blocked = self.root / "a-file"
+        blocked.write_bytes(b"x")
+        self._configured(blocked / "state")
+        with patch("mariner.server.state._FALLBACKS", [str(blocked / "own")]):
+            expect(state.is_makeshift()).to_equal(True)
+        with patch("mariner.server.state._FALLBACKS", [str(self.root / "own")]):
+            expect(state.is_makeshift()).to_equal(False)
+        expect((self.root / "own").exists()).to_equal(False)
+
     def test_looking_makes_no_folder(self) -> None:
         wanted = self.root / "state"
         wanted.mkdir()

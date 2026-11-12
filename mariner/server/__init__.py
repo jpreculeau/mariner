@@ -188,6 +188,11 @@ def main() -> None:
         flask_app.config["SECRET_KEY"] = state.new_session_key()
         auth.start_signed_out_list_again()
 
+    # A slicer's interface that is switched off is sent no file either.
+    early.UPLOAD_PREFIXES = ("/api/upload_file",) + (
+        ("/uvtools/upload/",) if config.get_uvtools_enabled() else ()
+    )
+
     # Asked for before a body is taken in, not once it has been stored.
     early.password_refusal = lambda method, path, headers: auth.refusal(
         path,

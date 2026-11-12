@@ -144,11 +144,8 @@ class PasswordTest(_WithState):
 
 
 class AttemptsTest(_WithState):
-    def _claims(self, times: int, now: float, known: bool = False) -> list:
-        return [
-            auth.claim_attempt("known" if known else "others", now=now)
-            for _ in range(times)
-        ]
+    def _claims(self, times: int, now: float) -> list:
+        return [auth.claim_attempt("others", now=now) for _ in range(times)]
 
     def test_a_few_wrong_ones_cost_nothing(self) -> None:
         expect(self._claims(3, now=100.0)).to_equal([0, 0, 0])
@@ -205,14 +202,54 @@ class AttemptsTest(_WithState):
         auth.note_success("others")
         expect(self._claims(3, now=100.0)).to_equal([0, 0, 0])
 
-    def test_a_browser_that_signed_in_before_does_not_wait_for_others(self) -> None:
-        # Else anyone on the network could keep the owner out, a wrong
-        # password every half minute.
-        self._claims(10, now=100.0)
-        expect(auth.claim_attempt("others", now=100.0) > 0).to_equal(True)
-        expect(self._claims(3, now=100.0, known=True)).to_equal([0, 0, 0])
-        # It has a count of its own all the same.
-        expect(auth.claim_attempt("known", now=100.0)).to_equal(1)
+    def test_each_address_has_a_count_of_its_own(self) -> None:
+        # Else anyone on the network could keep the owner out for as
+        # long as they like, a wrong password every half minute.
+        theirs = auth.count_of("192.0.2.7", now=100.0)
+        for _ in range(10):
+            auth.claim_attempt(theirs, now=100.0)
+        expect(auth.claim_attempt(theirs, now=100.0) > 0).to_equal(True)
+        mine = auth.count_of("192.0.2.8", now=100.0)
+        expect(mine == theirs).to_equal(False)
+        expect([auth.claim_attempt(mine, now=100.0) for _ in range(3)]).to_equal(
+            [0, 0, 0]
+        )
+
+    def test_addresses_beyond_a_few_share_one_count(self) -> None:
+        # Else trying passwords would only take changing address.
+        for number in range(auth._MOST_ADDRESSES):
+            auth.claim_attempt(auth.count_of(f"192.0.2.{number}", now=100.0), now=100.0)
+        ninth = auth.count_of("192.0.2.100", now=100.0)
+        tenth = auth.count_of("192.0.2.101", now=100.0)
+        expect(ninth).to_equal(tenth)
+        # One that has its count keeps it.
+        expect(auth.count_of("192.0.2.3", now=100.0) == ninth).to_equal(False)
+
+    def test_an_address_left_alone_makes_room_for_another(self) -> None:
+        for number in range(auth._MOST_ADDRESSES):
+            auth.claim_attempt(auth.count_of(f"192.0.2.{number}", now=100.0), now=100.0)
+        shared = auth.count_of("192.0.2.100", now=100.0)
+        later = 100.0 + auth._FORGOTTEN_AFTER_SECS + 1
+        expect(auth.count_of("192.0.2.100", now=later) == shared).to_equal(False)
+
+    def test_the_addresses_of_one_network_share_a_count(self) -> None:
+        # A computer has as many as it likes of these.
+        expect(auth.count_of("2001:db8:1:2::7", now=100.0)).to_equal(
+            auth.count_of("2001:db8:1:2:aaaa::9", now=100.0)
+        )
+        expect(
+            auth.count_of("2001:db8:1:3::7", now=100.0)
+            == auth.count_of("2001:db8:1:2::7", now=100.0)
+        ).to_equal(False)
+        # The same computer, written the other way.
+        expect(auth.count_of("::ffff:192.0.2.7", now=100.0)).to_equal(
+            auth.count_of("192.0.2.7", now=100.0)
+        )
+
+    def test_one_that_is_no_address_is_counted_with_the_rest(self) -> None:
+        expect(auth.count_of(None, now=100.0)).to_equal(
+            auth.count_of("not an address", now=100.0)
+        )
 
 
 class _Page(FlaskClient):
@@ -832,36 +869,35 @@ class OnlyTheCookieTest(_WithClient):
         )
         expect(answer.status_code).to_equal(200)
 
-    def test_the_reader_s_browser_does_not_wait_for_the_wrong_ones_of_others(
+    def test_the_reader_does_not_wait_for_the_wrong_ones_of_another_computer(
         self,
     ) -> None:
-        # Through signing out and in again, which is when it matters.
+        # Signed out, which is when it matters; and as the page is then:
+        # it has forgotten its key.
         self.post("/api/auth/logout")
         stranger = self.application.test_client()
+        stranger.environ_base["REMOTE_ADDR"] = "192.0.2.99"
         for _ in range(6):
             stranger.post("/api/auth/login", json={"password": "not the one"})
         expect(
             stranger.post("/api/auth/login", json={"password": PASSWORD}).status_code
         ).to_equal(429)
-        expect(self.post("/api/auth/login", password=PASSWORD).status_code).to_equal(
-            200
-        )
+        reader = self.application.test_client()
+        expect(
+            reader.post("/api/auth/login", json={"password": PASSWORD}).status_code
+        ).to_equal(200)
+
+    def test_signing_out_leaves_nothing_in_the_session(self) -> None:
+        self.post("/api/auth/logout")
+        with self.client.session_transaction() as held:
+            left = {name for name in held if not name.startswith("csrf")}
+        expect(left).to_equal(set())
 
     def test_wrong_current_passwords_are_counted_when_changing_it(self) -> None:
         for _ in range(3):
             self.post("/api/auth/password", current="wrong", new="new password!")
         answer = self.post("/api/auth/password", current=PASSWORD, new="new password!")
         expect(answer.status_code).to_equal(429)
-
-    def test_a_browser_is_known_only_under_the_password_it_signed_in_with(
-        self,
-    ) -> None:
-        self.post("/api/auth/logout")
-        with self.client.session_transaction() as held:
-            left = dict(held)
-        expect(auth.is_known_with(left)).to_equal(True)
-        auth.set_password("another one!")
-        expect(auth.is_known_with(left)).to_equal(False)
 
     def test_another_session_of_the_same_reader_does_not_come_before_this_one(
         self,

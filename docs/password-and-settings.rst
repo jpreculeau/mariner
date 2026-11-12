@@ -44,8 +44,9 @@ not trust was ever signed in.
 
 After three wrong passwords the next attempt has to wait: one second, then
 two, four, and so on up to thirty. The count starts again at the first right
-one. A browser that signed in before has a count of its own, so that
-someone else's wrong passwords do not keep you waiting.
+one. The count is kept for each computer (by its address), so that someone
+else's wrong passwords do not keep you waiting. Only a few computers have a
+count of their own at a time; past that the rest share one.
 
 What the password does not cover
 --------------------------------

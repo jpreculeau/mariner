@@ -10,6 +10,7 @@ and are not behind this one; each has a switch.
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import math
@@ -169,17 +170,55 @@ def clear_if_asked_on_the_boot_drive() -> bool:
 
 # -- attempts --------------------------------------------------------------
 
-# Counted for all comers together: there is one password, and one person
-# who knows it. Counted by address, someone trying passwords would only
-# have to change address. A browser that signed in before has a count of
-# its own, so that the attempts of others do not keep the owner out.
+# Counted by address: counted for all comers together, anyone on the
+# network would keep the owner out for as long as they liked, one wrong
+# password every half minute. Only a few addresses have a count of their
+# own, the rest share one: else trying passwords would only take changing
+# address. Changing the password has a count of its own: wrong ones sent
+# to sign in do not keep the owner from changing it.
 _FREE_ATTEMPTS = 3
 _LONGEST_WAIT_SECS = 30
+_MOST_ADDRESSES = 8
+# An address that sent nothing wrong for this long leaves its place.
+_FORGOTTEN_AFTER_SECS = 600
+_SHARED = "others"
+_OWN = "from "
 _attempts_lock = threading.Lock()
-# For each count ("others", "known", "change"): wrong ones so far, and
-# when the last was looked at. Changing the password has a count of its
-# own: wrong ones sent to sign in do not keep the owner from changing it.
+# For each count: wrong ones so far, and when the last was looked at.
 _attempts: Dict[str, Tuple[int, float]] = {}
+
+
+def _place_of(address: Optional[str]) -> Optional[str]:
+    """What stands for the computer at *address*, if it is one."""
+    try:
+        parsed = ipaddress.ip_address(address or "")
+    except ValueError:
+        return None
+    if isinstance(parsed, ipaddress.IPv6Address):
+        if parsed.ipv4_mapped is not None:
+            return str(parsed.ipv4_mapped)
+        # A computer gives itself as many of these as it likes, all in
+        # the one network it is on.
+        whole = ipaddress.ip_network((int(parsed), 64), strict=False)
+        return str(whole.network_address)
+    return str(parsed)
+
+
+def count_of(address: Optional[str], now: Optional[float] = None) -> str:
+    """The count the passwords sent from *address* go to."""
+    place = _place_of(address)
+    if place is None:
+        return _SHARED
+    own = _OWN + place
+    moment = time.monotonic() if now is None else now
+    with _attempts_lock:
+        for name, (_, last) in list(_attempts.items()):
+            if name.startswith(_OWN) and last + _FORGOTTEN_AFTER_SECS < moment:
+                del _attempts[name]
+        if own in _attempts:
+            return own
+        taken = sum(1 for name in _attempts if name.startswith(_OWN))
+        return own if taken < _MOST_ADDRESSES else _SHARED
 
 
 def forget_attempts() -> None:
@@ -347,30 +386,6 @@ def is_signed_in() -> bool:
     return let_in(session, request.headers.get(KEY_HEADER, ""))
 
 
-# Kept through signing out: this browser signed in before.
-_KNOWN_AS = "known"
-_KNOWN_KEY_AS = "known_key"
-
-
-def is_known_with(held: Mapping[str, Any]) -> bool:
-    """Whether *held* is of a browser that signed in under the password
-    in place, and has the key of the page to show for it."""
-    current = generation()
-    return current is not None and held.get(_KNOWN_AS) == current
-
-
-def _is_known() -> bool:
-    # With the key the page was given then: the cookie alone, which
-    # other programs on the same computer are sent, is not enough.
-    expected = session.get(_KNOWN_KEY_AS)
-    key = request.headers.get(KEY_HEADER, "")
-    return (
-        is_known_with(session)
-        and isinstance(expected, str)
-        and hmac.compare_digest(_hash_of(key), expected)
-    )
-
-
 def _sign_in(under: str) -> Response:
     """Sign this browser in *under* the password of that number.
 
@@ -388,8 +403,6 @@ def _sign_in(under: str) -> Response:
     session[_SIGNED_IN_AS] = under
     session[_SESSION_AS] = secrets.token_hex(8)
     session[_KEY_AS] = _hash_of(key)
-    session[_KNOWN_AS] = under
-    session[_KNOWN_KEY_AS] = _hash_of(key)
     session.permanent = True
     return jsonify({"success": True, "csrf_token": generate_csrf(), "page_key": key})
 
@@ -547,8 +560,8 @@ def login() -> Response:
     given = _given("password")
     if given is None:
         return _not_a_password()
-    known = "known" if _is_known() else "others"
-    wait = claim_attempt(known)
+    count = count_of(request.remote_addr)
+    wait = claim_attempt(count)
     if wait:
         return _wait_answer(wait)
     current = generation()
@@ -557,24 +570,18 @@ def login() -> Response:
         return _refuse(
             "wrong_password", "Wrong Password", "This is not the password.", 401
         )
-    note_success(known)
+    note_success(count)
     return _sign_in(current)
 
 
 @auth_api.route("/logout", methods=["POST"])
 def logout() -> Response:
-    known = session.get(_KNOWN_AS) if _is_known() else None
-    known_key = session.get(_KNOWN_KEY_AS)
     number = session.get(_SESSION_AS)
     # Only with the key of the page: the cookie alone, which other
     # programs on the same computer are sent, signs nobody out.
     if isinstance(number, str) and is_signed_in():
         _note_signed_out(number)
     session.clear()
-    if known:
-        session[_KNOWN_AS] = known
-        session[_KNOWN_KEY_AS] = known_key
-        session.permanent = True
     # With a token for what comes next, which is signing in again.
     return jsonify({"success": True, "csrf_token": generate_csrf()})
 

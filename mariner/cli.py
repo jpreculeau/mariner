@@ -8,6 +8,7 @@ loading the server.
 import getpass
 import json
 import os
+import pwd
 import stat
 import sys
 import tempfile
@@ -42,7 +43,12 @@ def _folders() -> List[str]:
 
 def _reset_password() -> int:
     folders = _folders()
-    holding = [one for one in folders if os.path.lexists(passwords.kept_path(one))]
+    try:
+        holding = [one for one in folders if _holds_a_password(one)]
+    except PermissionError:
+        print("This account may not look into the folder Mariner keeps things in.")
+        print("Run this command with sudo.")
+        return 1
     if not holding:
         print(f"No password was set (looked in {' and '.join(folders)}).")
         print("Open Mariner's page to choose one, or run: mariner set-password")
@@ -67,6 +73,27 @@ def _reset_password() -> int:
     return 0
 
 
+def _holds_a_password(folder: str) -> bool:
+    try:
+        os.lstat(passwords.kept_path(folder))
+    except PermissionError:
+        raise
+    except OSError:
+        return False
+    return True
+
+
+_SERVICE_ACCOUNT = "mariner"
+
+
+def _runs_under_another_account() -> bool:
+    """Whether Mariner is installed as a service of its own account."""
+    try:
+        return pwd.getpwnam(_SERVICE_ACCOUNT).pw_uid != os.geteuid()
+    except KeyError:
+        return False
+
+
 def _folder_to_write() -> Optional[str]:
     """The folder Mariner keeps things in, made if this account may."""
     folders = _folders()
@@ -76,6 +103,9 @@ def _folder_to_write() -> Optional[str]:
     if os.geteuid() == 0:
         # Made by root, the service would not use it, and its page would
         # stay shut.
+        return None
+    if _runs_under_another_account():
+        # Made in the home of this account, the service would not read it.
         return None
     for one in folders:
         try:
@@ -90,8 +120,8 @@ def _set_password() -> int:
     directory = _folder_to_write()
     if directory is None:
         print(f"There is no {_folders()[0]} yet: start Mariner once first, then")
-        print("run this command again. If Mariner runs under another account")
-        print("than root, run this command as that account.")
+        print("run this command again with sudo. If Mariner runs by hand under")
+        print("an account of yours, run this command as that account.")
         return 1
     first = getpass.getpass("New password for Mariner: ")
     second = getpass.getpass("Again: ")

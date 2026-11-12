@@ -48,7 +48,21 @@ def is_makeshift() -> bool:
     # Not yet looked for, and not made for the sake of asking: the one
     # asked for is there and cannot be used.
     wanted = os.path.expanduser(config.get_state_directory())
-    return os.path.lexists(wanted) and not _usable(wanted)
+    if os.path.lexists(wanted):
+        return not _usable(wanted)
+    # Nor is there anywhere to make one that lasts.
+    return not any(_can_be_made(one) for one in [wanted] + _FALLBACKS)
+
+
+def _can_be_made(wanted: str) -> bool:
+    """Whether a folder could be made at *wanted*, without making it."""
+    above = os.path.abspath(os.path.expanduser(wanted))
+    while not os.path.lexists(above):
+        parent = os.path.dirname(above)
+        if parent == above:
+            return False
+        above = parent
+    return os.path.isdir(above) and os.access(above, os.W_OK | os.X_OK)
 
 
 def _usable(wanted: str) -> bool:

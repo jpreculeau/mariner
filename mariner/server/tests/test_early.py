@@ -208,6 +208,16 @@ class EarlyRefusalTest(TestCase):
             expect(json.loads(body)["code"]).to_equal("cross_site_request")
         expect(self.called).to_equal([])
 
+    def test_a_slicer_s_interface_that_is_off_takes_no_file(self) -> None:
+        with patch.object(early, "UPLOAD_PREFIXES", ("/api/upload_file",)):
+            status, _, body = self._exchange(
+                "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                "Content-Length: 600000\n"
+            )
+        expect(status).to_equal(413)
+        expect(json.loads(body)["code"]).to_equal("request_too_large")
+        expect(self.called).to_equal([])
+
     def test_only_a_file_being_sent_may_be_large(self) -> None:
         for path, extra in (
             ("/api/create_directory", "Content-Length: 600000\n"),

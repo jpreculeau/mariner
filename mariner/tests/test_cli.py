@@ -24,6 +24,14 @@ class CommandLineTest(TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        # Never the folder in the home of whoever runs the tests.
+        fallbacks = patch("mariner.config.STATE_FALLBACKS", [str(self.root / "own")])
+        fallbacks.start()
+        self.addCleanup(fallbacks.stop)
+        # Whether or not the computer the tests run on has the service.
+        service = patch.object(cli, "_runs_under_another_account", return_value=False)
+        service.start()
+        self.addCleanup(service.stop)
         cost = patch.object(passwords, "SCRYPT_N", 2**4)
         cost.start()
         self.addCleanup(cost.stop)
@@ -239,3 +247,36 @@ class CommandLineTest(TestCase):
         with patch("os.unlink", side_effect=PermissionError("not yours")):
             expect(self._run("reset-password")).to_equal(1)
         expect("sudo" in self.out.getvalue()).to_equal(True)
+
+    def test_reset_password_does_not_say_none_was_set_when_it_cannot_look(
+        self,
+    ) -> None:
+        # The folder of the service, which this account may not enter.
+        self._run("set-password", typed=("long enough!", "long enough!"))
+        kept = passwords.kept_path(str(self.state))
+        real = os.lstat
+
+        def lstat(path: object, *more: object, **named: object) -> os.stat_result:
+            if str(path) == kept:
+                raise PermissionError("not yours")
+            return real(path, *more, **named)  # type: ignore
+
+        self.out = io.StringIO()
+        with patch("os.lstat", side_effect=lstat):
+            expect(self._run("reset-password")).to_equal(1)
+        said = self.out.getvalue()
+        expect("sudo" in said).to_equal(True)
+        expect("no password" in said.lower()).to_equal(False)
+        expect(os.path.exists(kept)).to_equal(True)
+
+    def test_set_password_makes_no_folder_of_its_own_beside_the_service(
+        self,
+    ) -> None:
+        # Mariner runs under its own account, and has not started yet:
+        # a password kept in this account's home would never be read.
+        with patch.object(cli, "_runs_under_another_account", return_value=True):
+            status = self._run("set-password", typed=("long enough!", "long enough!"))
+        expect(status).to_equal(1)
+        expect("sudo" in self.out.getvalue()).to_equal(True)
+        expect((self.root / "own").exists()).to_equal(False)
+        expect(self.state.exists()).to_equal(False)

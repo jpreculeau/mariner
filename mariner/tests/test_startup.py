@@ -6,6 +6,12 @@ from mariner import server
 
 
 class StartupTest(TestCase):
+    def setUp(self) -> None:
+        # Starting sets these for the web server: not for the tests that
+        # run after these.
+        for name in ("password_refusal", "UPLOAD_PREFIXES"):
+            self.addCleanup(setattr, server.early, name, getattr(server.early, name))
+
     def test_unfinished_transfers_are_cleared_before_anything_else_runs(self) -> None:
         order: List[str] = []
 
@@ -127,6 +133,17 @@ class StartupTest(TestCase):
         with patch.object(server, "use_spool_directory"):
             self._started()
         self.assertEqual(server.flask_app.config["SECRET_KEY"], b"k" * 32)
+
+    def test_a_slicer_s_interface_that_is_off_is_sent_no_file(self) -> None:
+        for running, expected in (
+            (True, ("/api/upload_file", "/uvtools/upload/")),
+            (False, ("/api/upload_file",)),
+        ):
+            with patch.object(
+                server.config, "get_uvtools_enabled", return_value=running
+            ), patch.object(server, "use_spool_directory"):
+                self._started()
+            self.assertEqual(server.early.UPLOAD_PREFIXES, expected)
 
     def test_the_web_server_takes_uploads_up_to_the_limit(self) -> None:
         # Left to itself it refuses anything over a gigabyte.
