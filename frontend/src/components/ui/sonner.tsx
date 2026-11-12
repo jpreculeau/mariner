@@ -17,12 +17,38 @@ function noteFocus(event: FocusEvent) {
   }
 }
 
+/** The reader put focus nowhere: there is then no place to go back to. */
+function forgetFocus(event: FocusEvent) {
+  if (event.relatedTarget) return;
+  const was = event.target;
+  // A moment later, when it can be told from what had focus being taken
+  // away: it is then still there.
+  setTimeout(() => {
+    const nowhere =
+      !document.activeElement || document.activeElement === document.body;
+    if (lastOutside === was && was instanceof Element && was.isConnected) {
+      if (nowhere) lastOutside = null;
+    }
+  });
+}
+
 function focusBackOutside() {
+  const content = () => document.getElementById("content");
   const back =
     lastOutside instanceof HTMLElement && lastOutside.isConnected
       ? lastOutside
-      : document.getElementById("content");
+      : content();
   back?.focus();
+  // What focus went back to can go in its turn: the button of a menu
+  // that the same press closed.
+  setTimeout(() => {
+    const nowhere =
+      !document.activeElement || document.activeElement === document.body;
+    const messages = document.querySelector(
+      '[data-sonner-toast]:not([data-removed="true"])',
+    );
+    if (nowhere && !messages) content()?.focus();
+  }, 400);
 }
 
 const NARROW = "(max-width: 640px)";
@@ -63,9 +89,11 @@ const Toaster = ({ ...props }: ToasterProps) => {
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("focusin", noteFocus);
+    document.addEventListener("focusout", forgetFocus);
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("focusin", noteFocus);
+      document.removeEventListener("focusout", forgetFocus);
     };
   }, []);
   return (
@@ -120,6 +148,9 @@ const toast = {
         // On to the next message, if there is one, and else back to
         // where focus was: the button pressed goes with its message.
         onClick: (event: { currentTarget: Element }) => {
+          // Not when the reader is not in the messages: some browsers do
+          // not give focus to a button that is pressed.
+          if (!document.activeElement?.closest("[data-sonner-toaster]")) return;
           const here = event.currentTarget.closest("[data-sonner-toast]");
           const next = here?.nextElementSibling ?? here?.previousElementSibling;
           if (next instanceof HTMLElement) next.focus();

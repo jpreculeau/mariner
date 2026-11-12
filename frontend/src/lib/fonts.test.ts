@@ -147,7 +147,7 @@ describe("the page's own files", () => {
     );
     // With colours forced the button would be bare text.
     expect(css).toMatch(
-      /forced-colors: active[^}]*\[data-button\] \{\s*border: 1px solid ButtonText;/,
+      /forced-colors: active[^}]*\[data-sonner-toast\]\[data-styled="true"\]\s*\[data-button\] \{\s*border: 1px solid ButtonText;/,
     );
   });
 });

@@ -111,6 +111,7 @@ describe("where messages are shown", () => {
 describe("closing one message of several", () => {
   it("puts focus on the next rather than nowhere", () => {
     const list = document.createElement("ol");
+    list.setAttribute("data-sonner-toaster", "");
     list.innerHTML =
       '<li data-sonner-toast tabindex="0">first<button>Close</button></li>' +
       '<li data-sonner-toast tabindex="0">second</li>';
@@ -206,5 +207,70 @@ describe("closing the last message", () => {
 
     expect(sonner.dismiss).toHaveBeenCalled();
     expect(document.activeElement).toBe(row);
+  });
+
+  it("leaves focus alone when the reader was not in the messages", () => {
+    // Some browsers do not give focus to a button that is pressed.
+    render(<Toaster />);
+    const elsewhere = document.createElement("button");
+    document.body.appendChild(elsewhere);
+    try {
+      row.focus();
+      elsewhere.focus();
+      row.focus();
+      elsewhere.focus();
+      closeOf()({ currentTarget: list.querySelector("button")! });
+      expect(document.activeElement).toBe(elsewhere);
+    } finally {
+      elsewhere.remove();
+    }
+  });
+
+  it("does not go back to a place the reader had left for nowhere", async () => {
+    const content = document.createElement("main");
+    content.id = "content";
+    content.tabIndex = -1;
+    document.body.appendChild(content);
+    try {
+      render(<Toaster />);
+      row.focus();
+      row.blur();
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      const button = list.querySelector("button")!;
+      button.focus();
+
+      closeOf()({ currentTarget: button });
+
+      expect(document.activeElement).toBe(content);
+    } finally {
+      content.remove();
+    }
+  });
+
+  it("gives focus a place when what it went back to goes too", async () => {
+    // A menu that the same press closed: its button is there a moment
+    // longer, then goes.
+    const content = document.createElement("main");
+    content.id = "content";
+    content.tabIndex = -1;
+    document.body.appendChild(content);
+    vi.useFakeTimers();
+    try {
+      render(<Toaster />);
+      row.focus();
+      const button = list.querySelector("button")!;
+      button.focus();
+      closeOf()({ currentTarget: button });
+      expect(document.activeElement).toBe(row);
+      list.innerHTML = "";
+      row.remove();
+
+      vi.advanceTimersByTime(500);
+
+      expect(document.activeElement).toBe(content);
+    } finally {
+      vi.useRealTimers();
+      content.remove();
+    }
   });
 });

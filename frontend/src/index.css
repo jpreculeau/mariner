@@ -208,7 +208,8 @@
 /* With colours forced by the system, the button of a message would be
    bare text. */
 @media (forced-colors: active) {
-  [data-sonner-toaster] [data-sonner-toast] [data-button] {
+  /* As precise as the library's own rule, which takes the edge away. */
+  [data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
     border: 1px solid ButtonText;
   }
 }
