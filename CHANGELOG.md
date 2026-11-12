@@ -138,6 +138,7 @@ Web interface
 - Keep an error on screen until it is closed; say why a folder could not be made by the field it is about; say aloud that the power menu wants a second press, and that the computer is going down
 - Go on showing an upload on whichever page is shown, say how far it is a quarter at a time to those who cannot see the bar, let it be given up, and warn before the page is left while it lasts
 - Write durations, percentages and decimals as each language does
+- Sign-in and first-visit screens, a Settings page (printer's name, slicers' switches, the question about a silent printer, changing the password, signing out, restarting Mariner), in English and French; the page asks for the password again by itself when its session is over
 
 Installation and what is kept
 
@@ -156,6 +157,7 @@ Installation and what is kept
 
 ### 📚 Documentation
 
+- Add "Password and Settings": choosing the password, what it does not cover, what to do when it is lost, the settings changed from the page, where all of it is kept, signing in from a script
 - Update changelog
 - Update readme
 

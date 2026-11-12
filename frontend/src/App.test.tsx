@@ -3,17 +3,29 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import App from "./App";
 import { api } from "@/lib/api";
 
+/** The page once Mariner has said that it is signed in. */
+async function shown() {
+  const rendered = render(<App />);
+  await screen.findByRole("navigation");
+  return rendered;
+}
+
 describe("App", () => {
   beforeEach(() => {
     localStorage.clear();
     window.history.pushState({}, "", "/");
     vi.spyOn(api, "printStatus").mockReturnValue(new Promise(() => {}));
     vi.spyOn(api, "listFiles").mockReturnValue(new Promise(() => {}));
+    // Signed in: what is shown to who is not is in Gate.test.
+    vi.spyOn(api, "authState").mockResolvedValue({
+      password_set: true,
+      signed_in: true,
+    });
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("lets a keyboard go straight to the content, past the menu", () => {
-    render(<App />);
+  it("lets a keyboard go straight to the content, past the menu", async () => {
+    await shown();
     const skip = screen.getByRole("link", { name: "Skip to content" });
     // First of the page, so the first that Tab reaches.
     expect(document.querySelector("a, button")).toBe(skip);
@@ -24,7 +36,7 @@ describe("App", () => {
   });
 
   it("is read in the language chosen in its menu", async () => {
-    render(<App />);
+    await shown();
     fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
     fireEvent.click(await screen.findByRole("button", { name: "Français" }));
 
@@ -41,9 +53,9 @@ describe("App", () => {
     expect(document.documentElement.lang).toBe("fr");
   });
 
-  it("says that there is nothing at an unknown address, and the way back", () => {
+  it("says that there is nothing at an unknown address, and the way back", async () => {
     window.history.pushState({}, "", "/nowhere");
-    render(<App />);
+    await shown();
     expect(
       screen.getByRole("heading", { level: 1, name: "Page not found" }),
     ).toBeInTheDocument();
@@ -55,7 +67,7 @@ describe("App", () => {
 
   it("puts focus in the content when another page is shown", async () => {
     // Else it stays on a link of the menu, or falls to the top.
-    render(<App />);
+    await shown();
     const files = screen.getByRole("link", { name: "Files" });
     files.focus();
     fireEvent.click(files);
@@ -64,13 +76,13 @@ describe("App", () => {
     expect(document.title).toBe("Files · Mariner");
   });
 
-  it("does not take focus when the page is first shown", () => {
-    render(<App />);
+  it("does not take focus when the page is first shown", async () => {
+    await shown();
     expect(screen.getByRole("main")).not.toHaveFocus();
   });
 
-  it("has one place for its messages", () => {
-    render(<App />);
+  it("has one place for its messages", async () => {
+    await shown();
     expect(screen.getAllByRole("region")).toHaveLength(1);
   });
 
@@ -79,7 +91,7 @@ describe("App", () => {
     vi.mocked(api.listFiles).mockResolvedValue({ directories: [], files: [] });
     vi.spyOn(api, "uploadFile").mockReturnValue(new Promise(() => {}));
     window.history.pushState({}, "", "/files");
-    const { container } = render(<App />);
+    const { container } = await shown();
     await screen.findByText("This folder is empty.");
     fireEvent.change(
       container.querySelector('input[type="file"]') as HTMLInputElement,

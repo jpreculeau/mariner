@@ -275,7 +275,10 @@ class SignInTest(_WithClient):
 
     def test_signing_out_ends_the_session(self) -> None:
         self.post("/api/auth/login", password=PASSWORD)
-        expect(self.post("/api/auth/logout").status_code).to_equal(200)
+        response = self.post("/api/auth/logout")
+        expect(response.status_code).to_equal(200)
+        # With a token for what comes next, which is signing in again.
+        expect(len(response.get_json()["csrf_token"]) > 20).to_equal(True)
         expect(self.state_of()["signed_in"]).to_equal(False)
         expect(self.client.get("/api/print_status").status_code).to_equal(401)
 

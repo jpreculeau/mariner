@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Printer, FolderOpen } from "lucide-react";
+import { Printer, FolderOpen, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PowerMenu } from "@/components/PowerMenu";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -8,6 +8,7 @@ import { useI18n, type TextKey } from "@/lib/i18n";
 const navItems: { to: string; label: TextKey; icon: typeof Printer }[] = [
   { to: "/", label: "nav.dashboard", icon: Printer },
   { to: "/files", label: "nav.files", icon: FolderOpen },
+  { to: "/settings", label: "nav.settings", icon: Settings },
 ];
 
 export function AppNav() {
@@ -24,7 +25,11 @@ export function AppNav() {
           >
             <Printer className="h-4 w-4 text-primary-foreground" />
           </div>
-          <span className="font-display text-lg font-bold">Mariner 2</span>
+          {/* Not on the narrowest screens, where the menu takes the
+              whole bar. */}
+          <span className="hidden font-display text-lg font-bold min-[400px]:inline">
+            Mariner 2
+          </span>
         </div>
 
         <div className="flex items-center gap-1">

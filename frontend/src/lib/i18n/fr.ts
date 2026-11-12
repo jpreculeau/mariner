@@ -12,6 +12,64 @@ export const fr: Record<TextKey, string> = {
   "title.dashboard": "Tableau de bord",
   "title.files": "Fichiers",
   "title.notFound": "Page introuvable",
+  "title.signIn": "Connexion",
+  "title.choosePassword": "Choisir un mot de passe",
+  "title.settings": "Réglages",
+  "nav.settings": "Réglages",
+
+  "access.checking": "Ouverture de Mariner…",
+  "signIn.heading": "Connexion à Mariner",
+  "signIn.password": "Mot de passe",
+  "signIn.submit": "Se connecter",
+  "signIn.submitting": "Connexion…",
+  "signIn.lost":
+    "Mot de passe perdu\u00a0? Sur l'ordinateur qui fait tourner Mariner, lancez «\u00a0sudo mariner reset-password\u00a0», ou déposez un fichier vide nommé «\u00a0reset-password\u00a0» sur la partition de démarrage de sa carte puis redémarrez-le. Un nouveau mot de passe se choisit alors ici.",
+  "choose.heading": "Choisir un mot de passe",
+  "choose.intro":
+    "Il sera demandé à toute personne qui ouvre cette page. Les trancheurs (UVtools, ChiTuBox) envoient leurs fichiers sans lui\u00a0: leur accès se coupe dans les réglages.",
+  "choose.new": "Nouveau mot de passe",
+  "choose.hint": "Au moins 8 caractères.",
+  "choose.repeat": "Répéter le mot de passe",
+  "choose.submit": "Enregistrer le mot de passe",
+  "choose.submitting": "Enregistrement…",
+  "choose.mismatch": "Les deux mots de passe ne sont pas identiques.",
+
+  "settings.heading": "Réglages",
+  "settings.loading": "Lecture des réglages…",
+  "settings.loadError": "Les réglages n'ont pas pu être lus",
+  "settings.saved": "Enregistré",
+  "settings.printer": "Imprimante",
+  "settings.name": "Nom affiché pour l'imprimante",
+  "settings.name.hint":
+    "Affiché sur le tableau de bord. Laissez vide pour reprendre le nom du fichier de configuration.",
+  "settings.name.save": "Enregistrer le nom",
+  "settings.slicers": "Trancheurs",
+  "settings.slicers.intro":
+    "Les trancheurs envoient des fichiers et lancent des impressions par le réseau sans le mot de passe\u00a0: ils ne savent pas en donner. Coupez ce que vous n'utilisez pas.",
+  "settings.uvtools": "UVtools",
+  "settings.uvtools.hint":
+    "Fichiers et commandes envoyés par UVtools, sur le port de cette page.",
+  "settings.sdcp": "ChiTuBox (SDCP)",
+  "settings.sdcp.hint":
+    "L'impression en réseau que parle ChiTuBox\u00a0: découverte, fichiers et commandes sur les ports 3000 et 3030.",
+  "settings.files": "Fichiers",
+  "settings.assumeOff": "Ne pas demander quand l'imprimante ne répond pas",
+  "settings.assumeOff.hint":
+    "Remplacer ou supprimer un fichier se fait alors sans question quand l'imprimante est muette, comme si vous aviez confirmé qu'elle est éteinte. Un fichier en cours d'impression reste protégé quand l'imprimante répond.",
+  "settings.restartNeeded":
+    "Ce changement prendra effet au prochain démarrage de Mariner.",
+  "settings.restartByHand":
+    "Redémarrez Mariner de la façon dont il a été lancé pour qu'il prenne effet.",
+  "settings.restart": "Redémarrer Mariner",
+  "settings.restarting": "Redémarrage…",
+  "settings.restarted": "Mariner redémarre. Cette page revient toute seule.",
+  "settings.password": "Mot de passe",
+  "settings.password.current": "Mot de passe actuel",
+  "settings.password.repeat": "Répéter le nouveau mot de passe",
+  "settings.password.change": "Changer le mot de passe",
+  "settings.password.changed":
+    "Mot de passe changé. Les autres pages ont été déconnectées.",
+  "settings.signOut": "Se déconnecter",
 
   "appearance.open": "Apparence",
   "appearance.theme": "Thème de couleurs",
@@ -136,6 +194,20 @@ export const fr: Record<TextKey, string> = {
   "error.network":
     "Mariner est injoignable. Vérifiez que l'ordinateur qui le fait tourner est allumé et relié au réseau.",
   "error.unknown": "Une erreur s'est produite (erreur {status}).",
+  "error.wrong_password": "Ce n'est pas le mot de passe.",
+  "error.too_many_attempts":
+    "Trop de mots de passe erronés. Patientez un instant puis réessayez.",
+  "error.password_too_short": "Un mot de passe compte au moins 8 caractères.",
+  "error.password_too_long": "Un mot de passe compte au plus 1024 caractères.",
+  "error.password_missing": "Aucun mot de passe n'a été donné.",
+  "error.password_already_set":
+    "Un mot de passe a déjà été choisi. Rechargez la page et connectez-vous.",
+  "error.password_not_set":
+    "Aucun mot de passe n'a encore été choisi. Rechargez la page pour en choisir un.",
+  "error.login_required": "Connectez-vous d'abord.",
+  "error.setting_not_valid": "Ce réglage n'a pas été pris en compte.",
+  "error.restart_not_available":
+    "Mariner ne tourne pas ici comme un service\u00a0: redémarrez-le de la façon dont il a été lancé.",
   "error.token_refused":
     "Cette page n'est plus à jour. Rechargez-la et réessayez.",
   "error.file_too_large": "Ce fichier dépasse la taille que Mariner accepte.",

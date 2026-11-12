@@ -69,7 +69,9 @@ spool_directory = "/var/tmp"
 # computer with a directory each.
 #directory = "/var/lib/mariner"
 
-# Interfaces for slicers. Both are on unless switched off here.
+# Interfaces for slicers. Both are on unless switched off here or in the
+# page's settings, which come first. Neither is behind Mariner's password:
+# slicers cannot give one. Switch off what you do not use.
 [uvtools]
 # Routes UVtools sends files and commands to, on the port of the web page.
 enabled = true

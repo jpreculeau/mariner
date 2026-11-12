@@ -11,6 +11,64 @@ export const en = {
   "title.dashboard": "Dashboard",
   "title.files": "Files",
   "title.notFound": "Page not found",
+  "title.signIn": "Sign in",
+  "title.choosePassword": "Choose a password",
+  "title.settings": "Settings",
+  "nav.settings": "Settings",
+
+  "access.checking": "Opening Mariner…",
+  "signIn.heading": "Sign in to Mariner",
+  "signIn.password": "Password",
+  "signIn.submit": "Sign in",
+  "signIn.submitting": "Signing in…",
+  "signIn.lost":
+    "Password lost? On the computer Mariner runs on, run “sudo mariner reset-password”, or put an empty file named “reset-password” on the boot drive of its card and restart it. A new one is then chosen here.",
+  "choose.heading": "Choose a password",
+  "choose.intro":
+    "It will be asked of anyone who opens this page. Slicers (UVtools, ChiTuBox) send files without it: their access can be switched off in the settings.",
+  "choose.new": "New password",
+  "choose.hint": "At least 8 characters.",
+  "choose.repeat": "Repeat the password",
+  "choose.submit": "Set the password",
+  "choose.submitting": "Setting the password…",
+  "choose.mismatch": "The two passwords are not the same.",
+
+  "settings.heading": "Settings",
+  "settings.loading": "Fetching the settings…",
+  "settings.loadError": "The settings could not be fetched",
+  "settings.saved": "Saved",
+  "settings.printer": "Printer",
+  "settings.name": "Name shown for the printer",
+  "settings.name.hint":
+    "Shown on the dashboard. Leave it empty to use the name in the configuration file.",
+  "settings.name.save": "Save the name",
+  "settings.slicers": "Slicers",
+  "settings.slicers.intro":
+    "Slicers send files and start prints over the network without the password: they cannot give one. Switch off what you do not use.",
+  "settings.uvtools": "UVtools",
+  "settings.uvtools.hint":
+    "Files and commands sent by UVtools, on the port of this page.",
+  "settings.sdcp": "ChiTuBox (SDCP)",
+  "settings.sdcp.hint":
+    "The network printing ChiTuBox speaks: discovery, files and commands on ports 3000 and 3030.",
+  "settings.files": "Files",
+  "settings.assumeOff": "Do not ask when the printer does not answer",
+  "settings.assumeOff.hint":
+    "Replacing or deleting a file then goes ahead when the printer is silent, as if you had confirmed that it is switched off. A file being printed is still protected when the printer does answer.",
+  "settings.restartNeeded":
+    "This change takes effect when Mariner is started again.",
+  "settings.restartByHand":
+    "Restart Mariner the way it was started for it to take effect.",
+  "settings.restart": "Restart Mariner",
+  "settings.restarting": "Restarting…",
+  "settings.restarted":
+    "Mariner is restarting. This page comes back by itself.",
+  "settings.password": "Password",
+  "settings.password.current": "Current password",
+  "settings.password.repeat": "Repeat the new password",
+  "settings.password.change": "Change the password",
+  "settings.password.changed": "Password changed. Other pages were signed out.",
+  "settings.signOut": "Sign out",
 
   // Appearance menu
   "appearance.open": "Appearance",
@@ -145,6 +203,20 @@ export const en = {
   "error.network":
     "Mariner cannot be reached. Check that the computer running it is switched on and on the network.",
   "error.unknown": "Something went wrong (error {status}).",
+  "error.wrong_password": "This is not the password.",
+  "error.too_many_attempts":
+    "Too many wrong passwords. Wait a moment and try again.",
+  "error.password_too_short": "A password has at least 8 characters.",
+  "error.password_too_long": "A password has at most 1024 characters.",
+  "error.password_missing": "No password was given.",
+  "error.password_already_set":
+    "A password has already been chosen. Reload the page and sign in.",
+  "error.password_not_set":
+    "No password has been chosen yet. Reload the page to choose one.",
+  "error.login_required": "Sign in first.",
+  "error.setting_not_valid": "This setting was not taken.",
+  "error.restart_not_available":
+    "Mariner is not run as a service here: restart it the way it was started.",
   "error.token_refused": "This page is out of date. Reload it and try again.",
   "error.file_too_large": "This file is larger than Mariner accepts.",
   "error.request_too_large": "This request is larger than Mariner accepts.",

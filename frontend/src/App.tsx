@@ -11,6 +11,9 @@ import { shouldRetry } from "@/lib/api";
 import Index from "./pages/Index";
 import Files from "./pages/Files";
 import NotFound from "./pages/NotFound";
+import Settings from "./pages/Settings";
+import { AccessProvider } from "@/components/AccessProvider";
+import { Gate } from "@/components/Gate";
 
 /**
  * Put focus in the content when another page is shown: it would
@@ -46,6 +49,7 @@ function Page() {
         <Routes>
           <Route path="/" element={<Index />} />
           <Route path="/files" element={<Files />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
@@ -67,11 +71,17 @@ const App = () => {
       <LanguageProvider>
         <TooltipProvider>
           <Sonner duration={8000} />
-          <BrowserRouter>
-            <UploadProvider>
-              <Page />
-            </UploadProvider>
-          </BrowserRouter>
+          <AccessProvider>
+            {/* Nothing of the printer is drawn, or asked for, before
+                the page is signed in. */}
+            <Gate>
+              <BrowserRouter>
+                <UploadProvider>
+                  <Page />
+                </UploadProvider>
+              </BrowserRouter>
+            </Gate>
+          </AccessProvider>
         </TooltipProvider>
       </LanguageProvider>
     </QueryClientProvider>

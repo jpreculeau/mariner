@@ -17,6 +17,7 @@ function serverCodes(): string[] {
     /"code":\s*"([a-z_]+)" if [^\n]+ else "([a-z_]+)"/g, // one of two
     /_refuse\(\s*"([a-z_]+)"/g, // a request the page is told why not
     /Refusal\(\s*"([a-z_]+)"/g, // a request turned away
+    /PasswordNotAllowed\(\s*"([a-z_]+)"/g, // a password that is not one
     /Usage\.\w+: \(\s*"([a-z_]+)"/g, // a file that cannot change now
   ];
   const codes = new Set<string>();

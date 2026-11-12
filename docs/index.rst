@@ -15,7 +15,8 @@ Features
 Mariner 2 provides the following features:
 
 - Wide range of :ref:`supported MSLA 3D printers <Supported Printers>`.
-- Web interface with support for both desktop and mobile.
+- Web interface with support for both desktop and mobile, behind a
+  :doc:`password <password-and-settings>`.
 - Upload files to be printed through the web UI over WiFi!
 - :ref:`Network printing <Network Printing>`: send files straight from your
   slicer over the network. Speaks SDCP v3.0.0, so ChiTuBox discovers and
@@ -32,6 +33,7 @@ Mariner 2 provides the following features:
 
    supported-printers
    install
+   password-and-settings
    network-printing
    troubleshooting
    contributing

@@ -430,7 +430,8 @@ def login() -> Response:
 @auth_api.route("/logout", methods=["POST"])
 def logout() -> Response:
     session.clear()
-    return jsonify({"success": True})
+    # With a token for what comes next, which is signing in again.
+    return jsonify({"success": True, "csrf_token": generate_csrf()})
 
 
 @auth_api.route("/password", methods=["POST"])

@@ -37,6 +37,28 @@ export interface FileDetailsResponse {
   print_time_secs: number;
 }
 
+/** Whether a password is set, and whether this page is signed in. */
+export interface AuthState {
+  password_set: boolean;
+  signed_in: boolean;
+}
+
+/** The settings that can be changed from the page. */
+export interface Settings {
+  printer_display_name: string | null;
+  uvtools_enabled: boolean;
+  sdcp_enabled: boolean;
+  assume_printer_off: boolean;
+}
+
+export interface SettingsResponse {
+  settings: Settings;
+  /** A change waits for Mariner to be started again. */
+  restart_needed: boolean;
+  /** Whether Mariner can be restarted from the page. */
+  can_restart: boolean;
+}
+
 // The token asked for again since the page was loaded, if any.
 let renewedCsrfToken: string | null = null;
 
@@ -267,6 +289,32 @@ function unreachable(): ApiError {
   return new ApiError(0, "Mariner cannot be reached.", "network");
 }
 
+// Who is told when the server says that this page is not signed in.
+const signedOutListeners = new Set<() => void>();
+
+/**
+ * Be told when the server answers that this page is not signed in: its
+ * session ended, or the password was changed or cleared from elsewhere.
+ * Returns what stops the telling.
+ */
+export function onSignedOut(listener: () => void): () => void {
+  signedOutListeners.add(listener);
+  return () => {
+    signedOutListeners.delete(listener);
+  };
+}
+
+/** The same error, after telling whoever listens if it is being signed out. */
+function noted(error: ApiError): ApiError {
+  if (
+    error.status === 401 &&
+    (error.code === "login_required" || error.code === "password_not_set")
+  ) {
+    signedOutListeners.forEach((listener) => listener());
+  }
+  return error;
+}
+
 async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
   let res: Response;
   try {
@@ -275,12 +323,73 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<T> {
     throw unreachable();
   }
   if (!res.ok) {
-    throw await errorFrom(res, `API error: ${res.status} ${res.statusText}`);
+    throw noted(
+      await errorFrom(res, `API error: ${res.status} ${res.statusText}`),
+    );
   }
   return res.json();
 }
 
+/** Send an object as JSON. */
+function post<T>(url: string, body?: unknown): Promise<T> {
+  return apiFetch<T>(url, {
+    method: "POST",
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+  });
+}
+
+/**
+ * Send what signs in. The answer carries the token of the new session:
+ * the one the page held went with the session it had.
+ */
+async function signedInBy(url: string, body?: unknown): Promise<void> {
+  const answer = await post<{ csrf_token?: string }>(url, body);
+  if (typeof answer?.csrf_token === "string") {
+    renewedCsrfToken = answer.csrf_token;
+  }
+}
+
 export const api = {
+  async authState(): Promise<AuthState> {
+    return apiFetch<AuthState>("/api/auth/state");
+  },
+
+  /** Choose the password, when there is none yet. Signs in. */
+  async choosePassword(password: string): Promise<void> {
+    await signedInBy("/api/auth/setup", { password });
+  },
+
+  async signIn(password: string): Promise<void> {
+    await signedInBy("/api/auth/login", { password });
+  },
+
+  async signOut(): Promise<void> {
+    // The answer carries a token for what comes next: signing in again.
+    await signedInBy("/api/auth/logout", undefined);
+  },
+
+  /** Replace the password. Every other page is signed out. */
+  async changePassword(current: string, next: string): Promise<void> {
+    await signedInBy("/api/auth/password", { current, new: next });
+  },
+
+  async settings(): Promise<SettingsResponse> {
+    return apiFetch<SettingsResponse>("/api/settings");
+  },
+
+  async saveSettings(changes: Partial<Settings>): Promise<SettingsResponse> {
+    return post<SettingsResponse>("/api/settings", changes);
+  },
+
+  async restart(): Promise<void> {
+    await post("/api/restart");
+  },
+
   async printStatus(): Promise<PrintStatusResponse> {
     return apiFetch<PrintStatusResponse>("/api/print_status");
   },
@@ -322,7 +431,9 @@ export const api = {
     if ((await tokenWasRefused(res)) && (await renewCsrfToken())) {
       res = await sendFile(url, formData, file.size, onProgress, signal);
     }
-    if (!res.ok) throw await errorFrom(res, `Upload failed: ${res.status}`);
+    if (!res.ok) {
+      throw noted(await errorFrom(res, `Upload failed: ${res.status}`));
+    }
   },
 
   async deleteFile(
