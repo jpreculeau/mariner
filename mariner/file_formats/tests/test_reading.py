@@ -60,6 +60,15 @@ class ReadingTest(TestCase):
     def test_read_text(self) -> None:
         expect(reading.read_text(self.file, 8, 4, "name")).to_equal("name")
 
+    def test_read_text_of_no_length_reads_nothing(self) -> None:
+        # Wherever it is said to be: some writers leave the place unset.
+        expect(reading.read_text(self.file, 0x7FFFFFFF, 0, "name")).to_equal("")
+
+    def test_the_layer_ceiling_is_allowed_and_one_more_is_not(self) -> None:
+        reading.check_layer_count(self.file, reading.MAX_LAYER_COUNT, 0, 0)
+        with self.assertRaises(MalformedFile):
+            reading.check_layer_count(self.file, reading.MAX_LAYER_COUNT + 1, 0, 0)
+
     def test_read_text_refuses_a_text_too_long_to_be_a_name(self) -> None:
         # Even when the file does hold that many bytes.
         self.file.write(bytes(2 * reading.MAX_TEXT_BYTES))
@@ -83,6 +92,9 @@ class ReadingTest(TestCase):
 
     def test_check_layer_count(self) -> None:
         reading.check_layer_count(self.file, 2, 0, 8)
+        with self.assertRaises(MalformedFile):
+            # Nothing to print.
+            reading.check_layer_count(self.file, 0, 0, 8)
         with self.assertRaises(MalformedFile):
             # Three entries of eight bytes do not fit in sixteen.
             reading.check_layer_count(self.file, 3, 0, 8)
@@ -123,6 +135,30 @@ class DecodePreviewTest(TestCase):
         data = _point(1, 1, 1) + _point(2, 2, 2) + _point(3, 3, 3, repeats=5)[:3]
         expect(_rows(reading.decode_preview(2, 2, data))).to_equal([[1, 1, 1, 2, 2, 2]])
 
+    def test_a_large_picture_is_decoded_into_bytes_not_lists(self) -> None:
+        # A list entry costs eight times a byte; the difference is what a
+        # request for a preview may cost in memory.
+        import tracemalloc
+
+        data = _point(3, 3, 3, repeats=0xFFF) * 245
+        tracemalloc.start()
+        image = reading.decode_preview(1000, 1000, data)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        expect(image.info["height"]).to_equal(1000)
+        expect(peak < 8_000_000).to_equal(True)
+
+    def test_data_past_the_picture_is_not_decoded(self) -> None:
+        import tracemalloc
+
+        data = _point(3, 3, 3, repeats=0xFFF) * 100_000
+        tracemalloc.start()
+        image = reading.decode_preview(4, 3, data)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        expect(_rows(image)).to_equal([[3, 3, 3] * 4] * 3)
+        expect(peak < 100_000).to_equal(True)
+
     def test_refuses_data_without_a_complete_row(self) -> None:
         for data in (b"", b"\x01", _point(1, 1, 1)):
             with self.assertRaises(MalformedFile):
@@ -156,9 +192,25 @@ class ReadPreviewTest(TestCase):
             with self.assertRaises(MalformedFile):
                 reading.read_preview(file, width, height, 0, 4)
 
+    def test_the_ceilings_are_those_of_a_thumbnail(self) -> None:
+        # The largest previews slicers embed are a few hundred points a
+        # side. Decoding costs memory in proportion to the points, whatever
+        # the size of the file, on a board with little of it.
+        expect(reading.MAX_PREVIEW_SIDE <= 1024).to_equal(True)
+        expect(reading.MAX_PREVIEW_POINTS <= 1_000_000).to_equal(True)
+
+    def test_refuses_more_data_than_the_picture_can_need(self) -> None:
+        # Otherwise a header could have the whole file read into memory.
+        # Four bytes a point is the most the encoding can spend.
+        file = self._file(bytes(64))
+        reading.read_preview(file, 2, 2, 0, 16)
+        with self.assertRaises(MalformedFile) as raised:
+            reading.read_preview(file, 2, 2, 0, 17)
+        expect("17 bytes" in str(raised.exception)).to_equal(True)
+
     def test_refuses_a_picture_the_file_does_not_hold(self) -> None:
         file = self._file(_point(1, 2, 3, repeats=3))
         with self.assertRaises(MalformedFile):
-            reading.read_preview(file, 2, 2, 0, 5)
+            reading.read_preview(file, 2, 2, 0, 9)
         with self.assertRaises(MalformedFile):
             reading.read_preview(file, 2, 2, 0, 2**31)

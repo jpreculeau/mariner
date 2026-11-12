@@ -8,6 +8,7 @@ from mariner.file_formats import SlicedModelFile
 from mariner.file_formats.reading import (
     check_layer_count,
     check_layers_fit,
+    passes_stored,
     read_preview,
     read_struct,
     read_text,
@@ -124,36 +125,60 @@ class PhotonFile(SlicedModelFile):
     def read(cls, path: pathlib.Path) -> "PhotonFile":
         with open(str(path), "rb") as file:
             photon_header = read_struct(file, PhotonHeader, 0, "header")
-            photon_slicer = read_struct(
-                file, PhotonSlicer, photon_header.slicer_offset, "slicer settings"
-            )
-            printer_name = read_text(
-                file,
-                photon_slicer.machine_offset,
-                photon_slicer.machine_size,
-                "printer name",
-            )
+            # The first version of the format has no table of slicer
+            # settings, and gives 0 as its place. Read from there, the
+            # header itself would be taken for the table.
+            printer_name = ""
+            slicer_version = ""
+            if photon_header.slicer_offset and photon_header.slicer_size:
+                photon_slicer = read_struct(
+                    file, PhotonSlicer, photon_header.slicer_offset, "slicer settings"
+                )
+                printer_name = read_text(
+                    file,
+                    photon_slicer.machine_offset,
+                    photon_slicer.machine_size,
+                    "printer name",
+                )
+                slicer_version = ".".join(
+                    [
+                        str(photon_slicer.version_release),
+                        str(photon_slicer.version_major),
+                        str(photon_slicer.version_minor),
+                        str(photon_slicer.version_patch),
+                    ]
+                )
 
             layer_def_size = PhotonLayerDef.get_size()
+            # The passes after the first are not needed to follow a print,
+            # but a file that lacks part of them is as incomplete.
+            entry_count = photon_header.layer_count * passes_stored(
+                photon_header.magic,
+                photon_header.version,
+                photon_header.anti_alias_level,
+            )
             check_layer_count(
                 file,
-                photon_header.layer_count,
+                entry_count,
                 photon_header.layer_defs_offset,
                 layer_def_size,
             )
-            end_byte_offset_by_layer = []
-            for layer in range(0, photon_header.layer_count):
+            end_byte_offset_by_entry = []
+            for layer in range(0, entry_count):
                 layer_def = read_struct(
                     file,
                     PhotonLayerDef,
                     photon_header.layer_defs_offset + layer * layer_def_size,
                     "layer table",
                 )
-                end_byte_offset_by_layer.append(
+                end_byte_offset_by_entry.append(
                     layer_def.image_offset + layer_def.image_length
                 )
 
-            check_layers_fit(file, end_byte_offset_by_layer)
+            check_layers_fit(file, end_byte_offset_by_entry)
+            end_byte_offset_by_layer = end_byte_offset_by_entry[
+                : photon_header.layer_count
+            ]
 
             return PhotonFile(
                 filename=path.name,
@@ -168,14 +193,7 @@ class PhotonFile(SlicedModelFile):
                 resolution=(photon_header.resolution_x, photon_header.resolution_y),
                 print_time_secs=photon_header.print_time,
                 end_byte_offset_by_layer=end_byte_offset_by_layer,
-                slicer_version=".".join(
-                    [
-                        str(photon_slicer.version_release),
-                        str(photon_slicer.version_major),
-                        str(photon_slicer.version_minor),
-                        str(photon_slicer.version_patch),
-                    ]
-                ),
+                slicer_version=slicer_version,
                 printer_name=printer_name,
             )
 

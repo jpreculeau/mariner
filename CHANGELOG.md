@@ -52,10 +52,15 @@ Reading files
 
 - Show the details and preview of the file that is there now, after one was replaced by another of the same name
 - Keep starting up when a stored file cannot be read, and prepare every other file, those in folders included
-- Check every size, count and position a file states about itself against the size of the file before acting on it, and limit the size of the preview picture, so that a damaged file cannot exhaust the memory of the board
-- List a file whose transfer stopped part of the way as one that cannot be printed, instead of letting its print start and stop midway
+- Check every size, count and position a file states about itself against the size of the file before acting on it
+- Limit the preview picture to the size of a thumbnail and to the bytes such a picture can need, decode it in a tenth of the memory, and render one at a time, so that a damaged or crafted file costs a request a few megabytes at most
+- List a file whose transfer stopped part of the way as one that cannot be printed, so that the web page does not offer to print it; that covers every anti-aliasing pass of a `.cbddlp` or `.photon` file, and a file that holds no layer
+- Find out once per version of a file that it cannot be read, and log the reason once, instead of at every listing
+- Do not remember what was read of a file that was replaced during the read
 - Compare the signature of an encrypted CTB file in full
-- Answer 422 with the code `file_unreadable` for the details or preview of a file that cannot be read, 400 for a kind of file Mariner does not read and 404 for a file removed meanwhile, instead of 500
+- Answer 422 with the code `file_unreadable` for the details or preview of a file that cannot be read, 400 for a kind of file Mariner does not read and 404 for a file removed meanwhile, instead of 500; a read that fails for another reason answers 500 with the code `file_read_failed` and no internal detail
+- Read `.cbddlp` and `.photon` files of the first format version, which have no slicer settings
+- Leave the companion files macOS writes (`._name`) out of the start-up reading
 
 Web interface
 

@@ -10,7 +10,7 @@ from unittest import TestCase
 from pyexpect import expect
 
 from mariner.file_formats import ctb_encrypted
-from mariner.file_formats.ctb import CTBFile, CTBHeader, CTBPreview
+from mariner.file_formats.ctb import CTBFile, CTBHeader, CTBPreview, CTBSlicer
 from mariner.file_formats.ctb_encrypted import (
     CTBEncryptedFile,
     CTBEncryptedHeader,
@@ -106,6 +106,88 @@ class MalformedFileTest(TestCase):
         )
         with self.assertRaises(MalformedFile):
             FDGFile.read(path)
+
+    def test_a_file_of_the_first_format_version_is_read(self) -> None:
+        # It has no table of slicer settings: where its place would be
+        # given, the header says 0. Nothing is known then of the printer
+        # and the slicer, and the file prints all the same.
+        for sample, parser, header, _ in PLAIN:
+            if "slicer_offset" not in [f.name for f in dataclasses.fields(header)]:
+                continue
+            whole = bytearray((SAMPLES / sample).read_bytes())
+            struct.pack_into("<I", whole, _offset_of(header, "version"), 1)
+            struct.pack_into("<I", whole, _offset_of(header, "slicer_offset"), 0)
+            struct.pack_into("<I", whole, _offset_of(header, "slicer_size"), 0)
+            expected = parser.read(SAMPLES / sample)
+            read = parser.read(self._copy(sample, bytes(whole)))
+            expect(read.printer_name).to_equal("")
+            expect(read.slicer_version).to_equal("")
+            expect(read.layer_count).to_equal(expected.layer_count)
+            expect(read.end_byte_offset_by_layer).to_equal(
+                expected.end_byte_offset_by_layer
+            )
+
+    def test_a_printer_name_of_no_length_is_read_wherever_it_is_said_to_be(
+        self,
+    ) -> None:
+        whole = bytearray((SAMPLES / "stairs.ctb").read_bytes())
+        slicer = struct.unpack_from(
+            "<I", whole, _offset_of(CTBHeader, "slicer_offset")
+        )[0]
+        struct.pack_into(
+            "<II",
+            whole,
+            slicer + _offset_of(CTBSlicer, "machine_offset"),
+            0x7FFFFFFF,
+            0,
+        )
+        expect(
+            CTBFile.read(self._copy("stairs.ctb", bytes(whole))).printer_name
+        ).to_equal("")
+
+    def test_a_file_without_a_layer_is_refused(self) -> None:
+        for sample, parser, header, _ in PLAIN:
+            path = self._with(
+                sample, _offset_of(header, "layer_count"), struct.pack("<I", 0)
+            )
+            with self.assertRaises(MalformedFile) as raised:
+                parser.read(path)
+            expect(str(raised.exception)).to_equal("the file holds no layer")
+        with self.assertRaises(MalformedFile) as raised:
+            CTBEncryptedFile.read(self._encrypted_with(layer_count=0))
+        expect(str(raised.exception)).to_equal("the file holds no layer")
+
+    def test_anti_aliasing_in_the_newer_format_does_not_multiply_the_layers(
+        self,
+    ) -> None:
+        # There the passes are folded into one image per layer.
+        path = self._with(
+            "stairs.ctb",
+            _offset_of(CTBHeader, "anti_alias_level"),
+            struct.pack("<I", 4),
+        )
+        expect(CTBFile.read(path).layer_count).to_equal(400)
+
+    def test_a_ctb_file_too_short_to_say_which_kind_it_is_is_refused(self) -> None:
+        for contents in (b"", b"ab", b"abc"):
+            path = self._copy("short.ctb", contents)
+            with self.assertRaises(MalformedFile):
+                get_file_format(str(path)).read(path)
+
+    def test_an_anti_aliased_file_cut_in_its_last_pass_is_refused(self) -> None:
+        # This format stores each layer once per anti-aliasing pass. The
+        # passes after the first come last in the file.
+        whole = (SAMPLES / "pyramid.cbddlp").read_bytes()
+        CTBFile.read(self._copy("pyramid.cbddlp", whole))
+        for missing in (64, 4096):
+            with self.assertRaises(MalformedFile):
+                CTBFile.read(self._copy("pyramid.cbddlp", whole[:-missing]))
+
+    def test_an_anti_aliased_file_reads_as_before(self) -> None:
+        read = CTBFile.read(SAMPLES / "pyramid.cbddlp")
+        expect(read.layer_count).to_equal(50)
+        expect(len(read.end_byte_offset_by_layer)).to_equal(50)
+        expect(max(read.end_byte_offset_by_layer)).to_equal(5862924)
 
     def test_an_encrypted_layer_reaching_past_the_end_is_refused(self) -> None:
         # The signature only covers the settings, so it still matches.

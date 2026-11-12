@@ -7,6 +7,7 @@ from flask import abort, render_template
 from waitress import serve
 
 from mariner import config
+from mariner.file_formats.reading import MalformedFile
 from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
 from mariner.server.app import app as flask_app, csrf
@@ -64,15 +65,25 @@ class CacheBootstrapper(multiprocessing.Process):
         os.nice(5)
         for file in printable_files():
             # One file that cannot be read must not leave the others cold.
+            # A file that is not what its format says is reported, with the
+            # reason, where it is read.
             try:
                 read_cached_sliced_model_file(file)
+            except MalformedFile:
+                continue
             except Exception:
-                logger.warning("Could not read %r ahead of time", file.name)
+                logger.warning(
+                    "Could not read %r ahead of time", file.name, exc_info=True
+                )
                 continue
             try:
                 read_cached_preview(file)
+            except MalformedFile:
+                pass
             except Exception:
-                logger.warning("Could not render the preview of %r", file.name)
+                logger.warning(
+                    "Could not render the preview of %r", file.name, exc_info=True
+                )
 
 
 class _OneLine(logging.Filter):

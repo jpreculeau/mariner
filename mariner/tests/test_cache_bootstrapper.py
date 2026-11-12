@@ -7,6 +7,7 @@ from unittest.mock import call, patch, MagicMock
 
 from pyexpect import expect
 
+from mariner.file_formats.reading import MalformedFile
 from mariner.server import CacheBootstrapper
 
 
@@ -80,6 +81,38 @@ class CacheBootstrapperRobustnessTest(TestCase):
         expect(previewed).to_equal(["b.ctb", "c.ctb"])
         expect(len(logs.records)).to_equal(1)
         expect("a.ctb" in logs.records[0].getMessage()).to_equal(True)
+
+    @patch("mariner.server.read_cached_sliced_model_file")
+    @patch("mariner.server.read_cached_preview")
+    def test_a_malformed_file_does_not_stop_the_others_and_is_not_reported_twice(
+        self, preview: MagicMock, sliced: MagicMock
+    ) -> None:
+        def malformed(path: pathlib.Path) -> None:
+            if path.name == "a.ctb":
+                raise MalformedFile("cut short")
+
+        sliced.side_effect = malformed
+        preview.side_effect = malformed
+        (self.root / "a.ctb").write_bytes(b"x")
+        # Where the file is read, the reason was logged already.
+        with self.assertNoLogs("mariner.server", "WARNING"):
+            read, previewed = self._warmed(sliced, preview)
+        expect(read).to_equal(["a.ctb", "b.ctb", "c.ctb"])
+        expect(previewed).to_equal(["b.ctb", "c.ctb"])
+
+    @patch("mariner.server.read_cached_sliced_model_file")
+    @patch("mariner.server.read_cached_preview")
+    def test_companion_files_from_a_mac_are_left_alone(
+        self, preview: MagicMock, sliced: MagicMock
+    ) -> None:
+        # What macOS writes beside a file on a drive that is not its own.
+        (self.root / "._a.ctb").write_bytes(
+            b"\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X    "
+        )
+        # Not one of those, whatever its name.
+        (self.root / "._d.ctb").write_bytes(b"x")
+        read, _ = self._warmed(sliced, preview)
+        expect(read).to_equal(["._d.ctb", "a.ctb", "b.ctb", "c.ctb"])
 
     @patch("mariner.server.read_cached_sliced_model_file")
     @patch("mariner.server.read_cached_preview")

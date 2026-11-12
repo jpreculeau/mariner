@@ -299,16 +299,29 @@ class MarinerServerTest(TestCase):
         # The healthy file alongside it is still reported normally.
         expect(files["foobar.ctb"]["can_be_printed"]).to_equal(True)
 
-    def test_listing_an_unparseable_file_keeps_its_name_on_one_log_line(self) -> None:
+    def test_listing_a_file_the_drive_fails_on_keeps_its_name_on_one_log_line(
+        self,
+    ) -> None:
         # Not a name Mariner would store, but one that can be on the drive.
         name = "x\u2028FORGED entry.ctb"
-        self.fs.create_file(f"/mnt/usb_share/{name}", contents="not a ctb file")
-        with self.assertLogs("mariner.server.api", level="WARNING") as logs:
-            self.client.get("/api/list_files")
+        self.fs.create_file(f"/mnt/usb_share/{name}", contents="whatever")
+        self.fs.remove("/mnt/usb_share/foobar.ctb")
+        self.fs.remove("/mnt/usb_share/._foobar.ctb")
+        with patch(
+            "mariner.server.api.read_cached_sliced_model_file",
+            side_effect=OSError(5, "Input/output error"),
+        ), self.assertLogs("mariner.server.api", level="WARNING") as logs:
+            response = self.client.get("/api/list_files")
+        expect(response.get_json()["files"][0]["can_be_printed"]).to_equal(False)
         messages = [record.getMessage() for record in logs.records]
         expect(len(messages)).to_equal(1)
         expect("\u2028" in messages[0]).to_equal(False)
         expect("FORGED entry.ctb" in messages[0]).to_equal(True)
+
+    def test_listing_an_unparseable_file_does_not_log_it_again(self) -> None:
+        self.fs.create_file("/mnt/usb_share/corrupt.ctb", contents="not a ctb file")
+        with self.assertNoLogs("mariner.server.api", level="WARNING"):
+            self.client.get("/api/list_files")
 
     def test_list_files_from_missing_directory(self) -> None:
         response = self.client.get("/api/list_files?path=no_such_dir")
@@ -678,7 +691,8 @@ class MarinerServerTest(TestCase):
             ("file_details", "start.ctb"),
             ("file_preview", "start.ctb"),
         ):
-            with self.assertLogs("mariner.server.api", level="WARNING"):
+            # Not logged here: where the file is read, once, with the reason.
+            with self.assertNoLogs("mariner.server.api", level="WARNING"):
                 response = self.client.get(f"/api/{endpoint}?filename={name}")
             expect(response.status_code).to_equal(422)
             body = response.get_json()
@@ -688,10 +702,28 @@ class MarinerServerTest(TestCase):
 
     def test_details_and_preview_of_a_file_that_is_not_a_model_say_so(self) -> None:
         for endpoint in ("file_details", "file_preview"):
-            with self.assertLogs("mariner.server.api", level="WARNING"):
+            with self.assertNoLogs("mariner.server.api", level="WARNING"):
                 response = self.client.get(f"/api/{endpoint}?filename=._foobar.ctb")
             expect(response.status_code).to_equal(422)
             expect(response.get_json()["code"]).to_equal("file_unreadable")
+
+    def test_details_and_preview_when_the_read_itself_fails(self) -> None:
+        # The drive, or the memory: not something sending the file again
+        # would cure, so the file is not blamed.
+        for endpoint, reader in (
+            ("file_details", "read_cached_sliced_model_file"),
+            ("file_preview", "read_cached_preview"),
+        ):
+            with patch(
+                f"mariner.server.api.{reader}",
+                side_effect=OSError(5, "Input/output error"),
+            ), self.assertLogs("mariner.server.api", level="WARNING"):
+                response = self.client.get(f"/api/{endpoint}?filename=foobar.ctb")
+            expect(response.status_code).to_equal(500)
+            body = response.get_json()
+            expect(body["code"]).to_equal("file_read_failed")
+            expect("foobar.ctb" in body["description"]).to_equal(True)
+            expect("traceback" in body).to_equal(False)
 
     def test_details_and_preview_of_an_unsupported_kind_of_file(self) -> None:
         self.fs.create_file("/mnt/usb_share/notes.txt", contents="hello")

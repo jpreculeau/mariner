@@ -4,9 +4,9 @@ A sliced model file says of itself where its parts are and how large. None
 of that can be taken at its word: a file cut short by a failed transfer, or
 one made to that end, would otherwise have Mariner read far past what it
 needs or build a picture of millions of points, on a board with little
-memory. Every size and count read from a file is therefore checked against
-the size of the file, or against a ceiling no real file comes near, before
-it is acted on.
+memory. Every size and count read from a file is therefore checked before
+it is acted on: against the size of the file, and where that is not enough,
+as for the preview, against a ceiling set from what real files hold.
 """
 
 import os
@@ -16,12 +16,17 @@ from typing import BinaryIO, List, Type, TypeVar
 import png
 from typedstruct import Struct
 
-# No real file comes near these. A print of 100 000 layers at the finest
-# layer height in use would be two metres tall; the largest previews slicers
-# embed are a few hundred points a side.
+# A print of 100 000 layers at the finest layer height in use would be two
+# metres tall.
 MAX_LAYER_COUNT = 100_000
-MAX_PREVIEW_SIDE = 4096
-MAX_PREVIEW_POINTS = 4_000_000
+# The largest previews slicers embed are a few hundred points a side: 400
+# by 300 is usual. Decoding one costs time and memory in proportion to its
+# points, not to the bytes it is stored in, so the ceiling is kept near
+# what is real.
+MAX_PREVIEW_SIDE = 1024
+MAX_PREVIEW_POINTS = 1_000_000
+# The most the encoding can spend on a point: a colour and a repeat count.
+MAX_PREVIEW_BYTES_PER_POINT = 4
 MAX_TEXT_BYTES = 1024
 
 
@@ -68,7 +73,13 @@ def read_struct(
 
 
 def read_text(file: BinaryIO, offset: int, length: int, what: str) -> str:
-    """The text of *length* bytes stored in *file* at *offset*."""
+    """The text of *length* bytes stored in *file* at *offset*.
+
+    A text of no length is empty wherever it is said to be: its place may
+    have been left unset.
+    """
+    if length == 0:
+        return ""
     if length > MAX_TEXT_BYTES:
         raise MalformedFile(f"{what} is {length} bytes long")
     return read_bytes(file, offset, length, what).decode("utf-8", errors="replace")
@@ -77,11 +88,32 @@ def read_text(file: BinaryIO, offset: int, length: int, what: str) -> str:
 def check_layer_count(
     file: BinaryIO, layer_count: int, table_offset: int, entry_size: int
 ) -> None:
-    """Refuse a layer table the file is too small to hold, or absurdly long."""
+    """Refuse a layer table that is empty, absurdly long, or outside the file."""
+    if layer_count == 0:
+        raise MalformedFile("the file holds no layer")
     if layer_count > MAX_LAYER_COUNT:
         raise MalformedFile(f"the file claims {layer_count} layers")
     if table_offset + layer_count * entry_size > size_of(file):
         raise MalformedFile("the layer table lies outside the file")
+
+
+# The format of .cbddlp and .photon files. From its version 2 on, a file
+# sliced with anti-aliasing stores every layer once per pass: the table
+# holds all the layers of the first pass, then all those of the second, and
+# so on.
+_MAGIC_ONE_IMAGE_PER_PASS = 0x12FD0019
+_MAX_PASSES = 16
+
+
+def passes_stored(magic: int, version: int, anti_alias_level: int) -> int:
+    """How many times the file stores each of its layers."""
+    if (
+        magic == _MAGIC_ONE_IMAGE_PER_PASS
+        and version >= 2
+        and 1 < anti_alias_level <= _MAX_PASSES
+    ):
+        return anti_alias_level
+    return 1
 
 
 def check_layers_fit(file: BinaryIO, end_byte_offset_by_layer: List[int]) -> None:
@@ -108,6 +140,12 @@ def read_preview(
         raise MalformedFile(f"the preview claims to be {width} by {height}")
     if width * height > MAX_PREVIEW_POINTS:
         raise MalformedFile(f"the preview claims to be {width} by {height}")
+    if length > MAX_PREVIEW_BYTES_PER_POINT * width * height:
+        # Bounded by the file alone, the whole of a large file could be read
+        # into memory on the word of a few bytes.
+        raise MalformedFile(
+            f"the preview claims {length} bytes for {width} by {height}"
+        )
     return decode_preview(width, height, read_bytes(file, offset, length, "preview"))
 
 
@@ -122,30 +160,38 @@ def decode_preview(width: int, height: int, data: bytes) -> png.Image:
     whatever *data* still holds: a run can stand for thousands of points,
     so a few bytes could otherwise ask for a picture of any size.
 
+    The picture is built as bytes, three a point: as lists of numbers it
+    would take eight times the memory.
+
     Raises MalformedFile if *data* holds no complete row.
     """
-    rows: List[List[int]] = [[]]
+    row_bytes = 3 * width
+    wanted = row_bytes * height
+    points = bytearray()
     position = 0
-    while position + 2 <= len(data) and len(rows) <= height:
-        color16 = int(struct.unpack_from("<H", data, position)[0])
+    last = len(data) - 1
+    while position < last and len(points) < wanted:
+        color16 = data[position] | (data[position + 1] << 8)
         position += 2
         repeat = 1
         if color16 & _REPEAT_RGB15_MASK:
-            if position + 2 > len(data):
+            if position >= last:
                 break
-            repeat += int(struct.unpack_from("<H", data, position)[0]) & 0xFFF
+            repeat += (data[position] | (data[position + 1] << 8)) & 0xFFF
             position += 2
+        points += (
+            bytes((color16 & 0x1F, (color16 >> 6) & 0x1F, (color16 >> 11) & 0x1F))
+            * repeat
+        )
 
-        point = [(color16 >> 0) & 0x1F, (color16 >> 6) & 0x1F, (color16 >> 11) & 0x1F]
-        while repeat > 0 and len(rows) <= height:
-            rows[-1] += point
-            repeat -= 1
-            if len(rows[-1]) == 3 * width:
-                rows.append([])
-
-    # The last row is the one being filled: empty after a complete picture,
-    # partial after one that was cut short.
-    rows.pop()
+    # A last row that was cut short is dropped, and so is what a run added
+    # past the last row.
+    rows = min(len(points), wanted) // row_bytes
     if not rows:
         raise MalformedFile("the preview holds no complete row")
-    return png.from_array(rows, "RGB;5")
+    view = memoryview(points)
+    return png.from_array(
+        [view[start:][:row_bytes] for start in range(0, rows * row_bytes, row_bytes)],
+        "RGB;5",
+        info={"width": width, "height": rows},
+    )

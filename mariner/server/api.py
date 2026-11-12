@@ -36,6 +36,7 @@ from mariner.exceptions import (
     PrintJustStarted,
 )
 from mariner.file_formats import SlicedModelFile
+from mariner.file_formats.reading import MalformedFile
 from mariner.file_formats.utils import (
     UnsupportedFileFormat,
     get_file_extension,
@@ -46,6 +47,7 @@ from mariner.server.files import (
     NotPrintable,
     is_directory,
     is_hidden_entry,
+    is_macos_companion,
     modification_time,
     remove_entry,
     replacing,
@@ -178,8 +180,8 @@ def _read_or_refuse(read: Callable[[Path], _T], path: Path) -> _T:
 
     A file can be listed and still not be readable: cut short by a transfer
     that failed, damaged, or made by a slicer version Mariner does not
-    know. The client is told so in words it can show, instead of an
-    internal error.
+    know. The client is told so in words it can show, and told apart from
+    a read that failed for another reason.
     """
     try:
         return read(path)
@@ -188,8 +190,8 @@ def _read_or_refuse(read: Callable[[Path], _T], path: Path) -> _T:
         abort(404)
     except UnsupportedFileFormat:
         abort(400)
-    except Exception:
-        logger.warning("Could not read %r", path.name, exc_info=True)
+    except MalformedFile:
+        # Reported, with the reason, when the file was read.
         body = {
             "code": "file_unreadable",
             "title": "File Cannot Be Read",
@@ -198,6 +200,17 @@ def _read_or_refuse(read: Callable[[Path], _T], path: Path) -> _T:
             "from the slicer.",
         }
         abort(make_response(jsonify(body), 422))
+    except Exception:
+        # The drive or the memory, say: nothing that sending the file again
+        # would cure.
+        logger.warning("Could not read %r", path.name, exc_info=True)
+        body = {
+            "code": "file_read_failed",
+            "title": "File Could Not Be Read",
+            "description": f"Mariner failed to read {path.name}. Try again; "
+            "if it keeps failing, the logs say why.",
+        }
+        abort(make_response(jsonify(body), 500))
 
 
 def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
@@ -209,6 +222,8 @@ def _read_selected_file(selected_file: str) -> Optional[SlicedModelFile]:
         return None
     try:
         return read_cached_sliced_model_file(path)
+    except MalformedFile:
+        return None
     except Exception:
         logger.warning(
             "Could not read %r, which is being printed", selected_file, exc_info=True
@@ -402,11 +417,6 @@ def print_status() -> Union[str, Response]:
     )
 
 
-def _is_macos_metadata(path: str) -> bool:
-    with open(path, "rb") as file:
-        return b"Mac OS X" in file.read(32)
-
-
 @api.route("/list_files", methods=["GET"])
 def list_files() -> Union[str, Response]:
     path = _resolve_or_400(request.args.get("path", "."))
@@ -451,15 +461,13 @@ def list_files() -> Union[str, Response]:
                     # take down the whole listing, so it is reported as a
                     # file that cannot be printed.
                     try:
-                        if dir_entry.name.startswith("._"):
-                            if not _is_macos_metadata(dir_entry.path):
-                                sliced_model_file = read_cached_sliced_model_file(
-                                    path / dir_entry.name
-                                )
-                        else:
+                        if not is_macos_companion(dir_entry.path):
                             sliced_model_file = read_cached_sliced_model_file(
                                 path / dir_entry.name
                             )
+                    except MalformedFile:
+                        # Reported, with the reason, when it was read.
+                        sliced_model_file = None
                     except Exception:
                         logger.warning(
                             "Could not read %r; listing it as unprintable",

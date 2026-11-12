@@ -7,6 +7,7 @@ from unittest.mock import patch
 import png
 from pyexpect import expect
 
+from mariner.file_formats.reading import MalformedFile
 from mariner.server import utils
 from mariner.server.utils import retry
 
@@ -75,14 +76,32 @@ class _CountingFormat:
 
     reads = 0
 
+    lock_was_held = False
+
+    @classmethod
+    def _act_out(cls, path: Path) -> None:
+        """Some contents stand for something happening during the read."""
+        contents = path.read_bytes()
+        if contents == b"MALFORMED":
+            raise MalformedFile("it says so")
+        if contents == b"IOERROR":
+            raise OSError(5, "Input/output error")
+        if contents == b"REPLACED MEANWHILE":
+            path.write_bytes(b"the one that replaced it")
+        if contents == b"IS THE LOCK HELD":
+            cls.lock_was_held = utils._rendering.locked()
+
     @classmethod
     def read(cls, path: Path) -> str:
         cls.reads += 1
-        return path.read_bytes().decode()
+        contents = path.read_bytes().decode()
+        cls._act_out(path)
+        return contents
 
     @classmethod
     def read_preview(cls, path: Path) -> png.Image:
         cls.reads += 1
+        cls._act_out(path)
         shade = len(path.read_bytes())
         return png.from_array([[shade, shade], [shade, shade]], "L")
 
@@ -124,6 +143,23 @@ class CachedReadsTest(TestCase):
         os.utime(self.path, ns=(1_700_000_000_000_000_000, 1_700_000_000_000_000_000))
         expect(utils.read_cached_sliced_model_file(self.path)).to_equal("other")
 
+    def test_a_file_of_the_same_date_but_another_size_is_parsed_again(self) -> None:
+        utils.read_cached_sliced_model_file(self.path)
+        date = os.stat(self.path).st_mtime_ns
+        self.path.write_bytes(b"longer than the first")
+        os.utime(self.path, ns=(date, date))
+        expect(utils.read_cached_sliced_model_file(self.path)).to_equal(
+            "longer than the first"
+        )
+
+    def test_a_date_is_told_apart_below_the_second(self) -> None:
+        date = 1_700_000_000_000_000_000
+        os.utime(self.path, ns=(date, date))
+        utils.read_cached_sliced_model_file(self.path)
+        self.path.write_bytes(b"other")
+        os.utime(self.path, ns=(date + 1_000_000, date + 1_000_000))
+        expect(utils.read_cached_sliced_model_file(self.path)).to_equal("other")
+
     def test_a_preview_follows_its_file_too(self) -> None:
         first = utils.read_cached_preview(self.path)
         expect(utils.read_cached_preview(self.path)).to_equal(first)
@@ -139,6 +175,65 @@ class CachedReadsTest(TestCase):
         with self.assertRaises(FileNotFoundError):
             utils.read_cached_preview(Path(self.directory.name))
         expect(_CountingFormat.reads).to_equal(0)
+
+    def test_a_file_that_cannot_be_read_is_refused_once_per_version(self) -> None:
+        # Finding out can take as long as reading a good file. The listing
+        # asks again every few seconds.
+        self.path.write_bytes(b"MALFORMED")
+        for _ in range(3):
+            with self.assertRaises(MalformedFile) as raised:
+                utils.read_cached_sliced_model_file(self.path)
+            expect(str(raised.exception)).to_equal("it says so")
+        expect(_CountingFormat.reads).to_equal(1)
+
+        self.path.write_bytes(b"sent again, whole")
+        expect(utils.read_cached_sliced_model_file(self.path)).to_equal(
+            "sent again, whole"
+        )
+
+    def test_a_preview_that_cannot_be_made_is_refused_once_per_version(self) -> None:
+        self.path.write_bytes(b"MALFORMED")
+        for _ in range(3):
+            with self.assertRaises(MalformedFile):
+                utils.read_cached_preview(self.path)
+        expect(_CountingFormat.reads).to_equal(1)
+
+    def test_the_reason_is_logged_once_with_the_name_quoted(self) -> None:
+        odd = self.path.with_name("a\u2028b.ctb")
+        odd.write_bytes(b"MALFORMED")
+        with self.assertLogs("mariner.server.utils", level="WARNING") as logs:
+            for _ in range(2):
+                with self.assertRaises(MalformedFile):
+                    utils.read_cached_sliced_model_file(odd)
+        messages = [record.getMessage() for record in logs.records]
+        expect(messages).to_equal(["Could not read 'a\\u2028b.ctb': it says so"])
+
+    def test_another_failure_is_not_remembered(self) -> None:
+        # A read error of the drive may not happen next time.
+        self.path.write_bytes(b"IOERROR")
+        for _ in range(2):
+            with self.assertRaises(OSError):
+                utils.read_cached_sliced_model_file(self.path)
+        expect(_CountingFormat.reads).to_equal(2)
+
+    def test_a_file_replaced_while_it_was_read_is_read_again(self) -> None:
+        # What was read must not be remembered as the file that is there
+        # once the read is over.
+        self.path.write_bytes(b"REPLACED MEANWHILE")
+        expect(utils.read_cached_sliced_model_file(self.path)).to_equal(
+            "the one that replaced it"
+        )
+        expect(_CountingFormat.reads).to_equal(2)
+        expect(utils.read_cached_sliced_model_file(self.path)).to_equal(
+            "the one that replaced it"
+        )
+        expect(_CountingFormat.reads).to_equal(2)
+
+    def test_previews_are_rendered_one_at_a_time(self) -> None:
+        self.path.write_bytes(b"IS THE LOCK HELD")
+        utils.read_preview(self.path)
+        expect(_CountingFormat.lock_was_held).to_equal(True)
+        expect(utils._rendering.locked()).to_equal(False)
 
     def test_the_uncached_read_parses_every_time(self) -> None:
         expect(utils.read_sliced_model_file(self.path)).to_equal("first")

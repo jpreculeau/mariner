@@ -219,20 +219,24 @@ are protected: the file is then refused.
 
 .. rubric:: A file is listed but cannot be printed
 
-Mariner reads each file before offering to print it. A file it cannot make
-sense of stays in the list without the print action, so that it can still be
-deleted. The usual
+Mariner reads each file before the web page offers to print it. A file it
+cannot make sense of stays in the list without the print action, so that it
+can still be deleted. The usual
 cause is a transfer that stopped part of the way: the start of the file is
 there, the last layers are not, and the print would stop midway. Send the
 file again from the slicer.
 
 The other causes are a file damaged on the drive, and a file made by a
 slicer version whose format Mariner does not know yet. The reason is in the
-logs, on a line starting with ``Could not read``:
+logs, at the end of a line starting with ``Could not read``, written once
+when the file is first read:
 
 .. code-block:: shell-session
 
    $ sudo journalctl -u mariner3d.service | grep "Could not read"
+
+The check is the web page's: a print asked for by other means, from a slicer
+or the printer's own screen, is started as before.
 
 If a file that prints correctly from the printer's own screen is listed this
 way, please report it with that line.

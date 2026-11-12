@@ -16,7 +16,7 @@ import secrets
 import shutil
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
-from typing import Callable, ContextManager, Iterator, Optional
+from typing import Callable, ContextManager, Iterator, Optional, Union
 
 from mariner import config
 from mariner.file_formats.utils import get_file_extension, get_supported_extensions
@@ -263,13 +263,29 @@ def remove_entry(path: Path) -> None:
     os.remove(path)
 
 
+def is_macos_companion(path: Union[str, Path]) -> bool:
+    """Whether the file at *path* is what macOS writes beside another.
+
+    On a drive that is not in its own format, macOS keeps what it knows of
+    ``model.ctb`` in a file called ``._model.ctb``. It has the extension of
+    a model and is not one.
+    """
+    if not os.path.basename(path).startswith("._"):
+        return False
+    try:
+        with open(path, "rb") as file:
+            return b"Mac OS X" in file.read(32)
+    except OSError:
+        return False
+
+
 def printable_files() -> Iterator[Path]:
     """Every file of a supported format in the files directory, at any depth.
 
     Hidden entries are left out, with all they hold, and so is whatever a
     symbolic link leads to outside the files directory: a folder reached
     through a link is not entered, and a file is given only if it stays
-    inside.
+    inside. So are the companion files macOS leaves.
     """
     files_directory = config.get_files_directory().resolve()
     supported = get_supported_extensions()
@@ -280,6 +296,8 @@ def printable_files() -> Iterator[Path]:
                 continue
             path = Path(folder) / name
             if path.is_symlink() and not stays_in_files_directory(path):
+                continue
+            if is_macos_companion(path):
                 continue
             yield path
 
