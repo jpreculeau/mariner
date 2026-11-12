@@ -301,6 +301,39 @@ class FirstVisitTest(_WithClient):
         expect(self.state_of()).to_equal({"password_set": True, "signed_in": True})
         expect(auth.check_password(PASSWORD)).to_equal(True)
 
+    def test_signing_in_when_there_is_none_says_that_one_is_to_be_chosen(
+        self,
+    ) -> None:
+        # The page left on its form to sign in, and the password cleared
+        # since: "wrong password" would be said for ever.
+        response = self.post("/api/auth/login", password=PASSWORD)
+        expect(response.status_code).to_equal(401)
+        expect(response.get_json()["code"]).to_equal("password_not_set")
+
+    def test_one_that_cannot_be_kept_is_said_as_such(self) -> None:
+        # A drive that is full or read-only: not the words for a file
+        # that is being sent, and not "unexpected error".
+        for cause in (OSError(28, "No space left on device"), PermissionError()):
+            with patch.object(state, "write", side_effect=cause):
+                response = self.post("/api/auth/setup", password=PASSWORD)
+            expect(response.status_code).to_equal(500)
+            expect(response.get_json()["code"]).to_equal("state_not_written")
+        expect(self.state_of()["signed_in"]).to_equal(False)
+
+    def test_the_key_of_sessions_is_the_one_kept_when_one_is_chosen(self) -> None:
+        # ``mariner reset-password`` removed the key while Mariner ran:
+        # signed with the one in memory, the session would end at the
+        # next start.
+        restored = patch.dict(self.application.config, {"SECRET_KEY": b"m" * 32})
+        restored.start()
+        self.addCleanup(restored.stop)
+        state.remove("session.key")
+        self.post("/api/auth/setup", password=PASSWORD)
+        expect(state.read("session.key")).to_equal(
+            self.application.config["SECRET_KEY"]
+        )
+        expect(self.state_of()["signed_in"]).to_equal(True)
+
     def test_one_that_is_too_short_is_refused_with_the_reason(self) -> None:
         response = self.post("/api/auth/setup", password="short")
         expect(response.status_code).to_equal(400)
@@ -366,6 +399,26 @@ class SignInTest(_WithClient):
     def setUp(self) -> None:
         super().setUp()
         auth.set_password(PASSWORD)
+
+    def test_the_key_of_sessions_is_the_one_kept_when_signing_in(self) -> None:
+        # ``mariner set-password`` removed the key while Mariner ran.
+        restored = patch.dict(self.application.config, {"SECRET_KEY": b"m" * 32})
+        restored.start()
+        self.addCleanup(restored.stop)
+        state.remove("session.key")
+        self.post("/api/auth/login", password=PASSWORD)
+        expect(state.read("session.key")).to_equal(
+            self.application.config["SECRET_KEY"]
+        )
+        expect(self.state_of()["signed_in"]).to_equal(True)
+
+    def test_a_wrong_password_does_not_change_the_key_of_sessions(self) -> None:
+        restored = patch.dict(self.application.config, {"SECRET_KEY": b"m" * 32})
+        restored.start()
+        self.addCleanup(restored.stop)
+        state.remove("session.key")
+        self.post("/api/auth/login", password="not the one")
+        expect(self.application.config["SECRET_KEY"]).to_equal(b"m" * 32)
 
     def test_without_signing_in_nothing_is_answered(self) -> None:
         for path in ("/api/print_status", "/api/list_files", "/api/settings"):
@@ -492,6 +545,16 @@ class StayingSignedOutTest(_WithClient):
         self.post("/api/auth/logout")
         expect(self.state_of(other)["signed_in"]).to_equal(True)
 
+    def test_many_sessions_signed_out_of_all_stay_so(self) -> None:
+        clients = []
+        for _ in range(30):
+            client = self.application.test_client()
+            client.post("/api/auth/login", json={"password": PASSWORD})
+            with client.session_transaction() as held:
+                clients.append((dict(held), client.environ_base["HTTP_X_MARINER_KEY"]))
+            client.post("/api/auth/logout")
+        expect([auth.let_in(held, key) for held, key in clients]).to_equal([False] * 30)
+
     def test_what_is_kept_of_signed_out_sessions_does_not_grow_for_ever(self) -> None:
         for _ in range(auth._MOST_SIGNED_OUT + 20):
             client = self.application.test_client()
@@ -532,6 +595,25 @@ class ChangeTest(_WithClient):
         super().setUp()
         auth.set_password(PASSWORD)
         self.post("/api/auth/login", password=PASSWORD)
+
+    def test_one_that_cannot_be_kept_is_not_a_wrong_password(self) -> None:
+        with patch.object(state, "write", side_effect=OSError(30, "Read-only")):
+            for _ in range(4):
+                response = self.post(
+                    "/api/auth/password", current=PASSWORD, new="new password!"
+                )
+                expect(response.status_code).to_equal(500)
+                expect(response.get_json()["code"]).to_equal("state_not_written")
+        # The drive put right: no wait for wrong passwords nobody sent.
+        response = self.post(
+            "/api/auth/password", current=PASSWORD, new="new password!"
+        )
+        expect(response.status_code).to_equal(200)
+
+    def test_a_new_one_that_is_refused_is_not_a_wrong_password(self) -> None:
+        for _ in range(4):
+            response = self.post("/api/auth/password", current=PASSWORD, new="short")
+            expect(response.get_json()["code"]).to_equal("password_too_short")
 
     def test_changing_it_asks_for_the_one_in_place(self) -> None:
         response = self.post("/api/auth/password", current="wrong", new="new password!")

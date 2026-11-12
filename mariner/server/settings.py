@@ -195,6 +195,9 @@ def save() -> Response:
             "description": f"Nothing was changed: {error}.",
         }
         return make_response(jsonify(body), 400)
+    except OSError as error:
+        logger.error("Could not write to the state directory: %s", error)
+        return make_response(jsonify(state.NOT_WRITTEN), 500)
     logger.warning("Settings were changed from %s", request.remote_addr)
     return _shown()
 

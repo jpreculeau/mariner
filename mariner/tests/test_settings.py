@@ -208,6 +208,13 @@ class SettingsApiTest(_WithState):
         # The name is read at each page: no restart.
         expect(response.get_json()["restart_needed"]).to_equal(False)
 
+    def test_a_change_that_cannot_be_kept_is_said_as_such(self) -> None:
+        with patch.object(state, "write", side_effect=OSError(28, "No space left")):
+            response = self.client.post("/api/settings", json={"sdcp_enabled": False})
+        expect(response.status_code).to_equal(500)
+        expect(response.get_json()["code"]).to_equal("state_not_written")
+        expect(settings.current()["sdcp_enabled"]).to_equal(True)
+
     def test_switching_a_slicer_s_interface_asks_for_a_restart(self) -> None:
         # Its addresses and ports are opened at start.
         response = self.client.post("/api/settings", json={"sdcp_enabled": False})

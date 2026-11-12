@@ -108,6 +108,18 @@ describe("being signed out", () => {
     },
   );
 
+  it("is told when Mariner says that what it keeps is out of reach", async () => {
+    // A page that is open shows that it is shut, not that Mariner
+    // cannot be reached.
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue(
+        json(503, { code: "state_unavailable", description: "Shut." }),
+      );
+    await api.printStatus().catch(() => {});
+    expect(told).toHaveBeenCalledTimes(1);
+  });
+
   it("is not told for a wrong password, nor for another refusal", async () => {
     globalThis.fetch = vi
       .fn()
@@ -204,8 +216,8 @@ describe("the key of the page", () => {
   });
 
   it("is the one that was kept, in a page opened anew", async () => {
+    forgetPageKey();
     localStorage.setItem("mariner-page-key", "kept-key");
-    forgetPageKey({ keptToo: false });
     globalThis.fetch = vi
       .fn()
       .mockImplementation(() => Promise.resolve(json(200, {})));

@@ -26,7 +26,9 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const [refused, setRefused] = useState<{
     on: "password" | "repeat";
     why: TextKey | { failure: unknown };
+    said: number;
   } | null>(null);
+  const said = useRef(0);
   const [busy, setBusy] = useState(false);
   // Known at once, where `busy` is only once the page is drawn again.
   const underWay = useRef(false);
@@ -37,7 +39,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     on: "password" | "repeat",
     why: TextKey | { failure: unknown },
   ) => {
-    setRefused({ on, why });
+    setRefused({ on, why, said: ++said.current });
     // Back to the field, to type it again.
     (on === "repeat" ? repeatField : passwordField).current?.focus();
   };
@@ -117,6 +119,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         autoFocus
         value={password}
         error={error("password")}
+        errorSaid={refused?.said}
         onChange={(value) => {
           setPassword(value);
           setRefused(null);
@@ -130,6 +133,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
           autoComplete="new-password"
           value={repeated}
           error={error("repeat")}
+          errorSaid={refused?.said}
           onChange={(value) => {
             setRepeated(value);
             setRefused(null);

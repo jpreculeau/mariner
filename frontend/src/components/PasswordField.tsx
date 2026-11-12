@@ -12,6 +12,8 @@ interface PasswordFieldProps {
   value: string;
   /** Why it was not taken, if it was not. */
   error: string | null;
+  /** Changes each time it is said: said again, it is announced again. */
+  errorSaid?: number;
   onChange: (value: string) => void;
 }
 
@@ -27,6 +29,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
       autoFocus,
       value,
       error,
+      errorSaid,
       onChange,
     },
     ref,
@@ -62,6 +65,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
         )}
         {error && (
           <p
+            key={errorSaid}
             id={`${id}-error`}
             role="alert"
             className="text-sm leading-relaxed text-danger"

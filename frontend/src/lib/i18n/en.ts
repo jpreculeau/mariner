@@ -223,9 +223,10 @@ export const en = {
   "error.password_too_long": "A password has at most 1024 characters.",
   "error.password_missing": "No password was given.",
   "error.password_already_set":
-    "A password has already been chosen. Reload the page and sign in.",
-  "error.password_not_set":
-    "No password has been chosen yet. Reload the page to choose one.",
+    "A password has already been chosen. Sign in with it.",
+  "error.password_not_set": "No password has been chosen yet.",
+  "error.state_not_written":
+    "Mariner could not keep this: the folder it keeps its password and settings in cannot be written. The drive may be full or read-only. Nothing was changed.",
   "error.login_required": "Sign in first.",
   "error.setting_not_valid": "This setting was not taken.",
   "error.restart_not_available":

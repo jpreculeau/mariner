@@ -22,6 +22,12 @@ const KEY = ["settings"];
 const BACK_EVERY_MS = 1500;
 const BACK_WITHIN_TRIES = 40;
 
+/** Whether Mariner refused because this page is no longer signed in:
+ * the form that then shows says so itself. */
+const sessionOver = (failure: unknown) =>
+  failure instanceof ApiError &&
+  (failure.code === "login_required" || failure.code === "password_not_set");
+
 type Switch = "uvtools_enabled" | "sdcp_enabled" | "assume_printer_off";
 
 function Part({ title, children }: { title: string; children: ReactNode }) {
@@ -74,7 +80,7 @@ export default function Settings() {
       );
     } catch (failure) {
       // Shown as it stands, which is as it was.
-      toast.error(errorText(failure, t, lang));
+      if (!sessionOver(failure)) toast.error(errorText(failure, t, lang));
     } finally {
       underWay.current = false;
       setSaving(null);
@@ -88,25 +94,36 @@ export default function Settings() {
       await api.restart();
       toast.success(t("settings.restarted"));
     } catch (failure) {
-      toast.error(errorText(failure, t, lang));
+      if (!sessionOver(failure)) toast.error(errorText(failure, t, lang));
       setRestarting(false);
       return;
     }
     // Until Mariner is back, and says what it now runs with: left as
     // it was, the notice would ask for another restart.
     let back = false;
-    for (let tries = 0; tries < BACK_WITHIN_TRIES && !back; tries++) {
+    let refusing = false;
+    for (
+      let tries = 0;
+      tries < BACK_WITHIN_TRIES && !back && !refusing;
+      tries++
+    ) {
       await new Promise((resolve) => setTimeout(resolve, BACK_EVERY_MS));
       try {
         const now = await api.settings();
         queryClient.setQueryData<SettingsResponse>(KEY, now);
         back = true;
-      } catch {
-        // Not back yet.
+      } catch (failure) {
+        // An answer, even one that refuses, is Mariner being back: the
+        // session may not have outlasted the restart. No answer: not yet.
+        refusing = failure instanceof ApiError && failure.status > 0;
       }
     }
     setRestarting(false);
-    if (back) {
+    if (refusing) {
+      // What it refuses with is shown by what fetches the settings, or
+      // by the form to sign in.
+      queryClient.invalidateQueries({ queryKey: KEY });
+    } else if (back) {
       toast.success(t("settings.back"));
       // The button went with the notice it was in.
       setTimeout(() => {
@@ -193,11 +210,13 @@ export default function Settings() {
       {heading}
       <div className="grid gap-5">
         {data.restart_needed && (
-          <div
-            role="status"
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/5 p-4"
-          >
-            <p className="min-w-[min(100%,14rem)] flex-1 text-base leading-relaxed">
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
+            {/* The button is not part of what is announced: its words
+                changing would be read out with the notice again. */}
+            <p
+              role="status"
+              className="min-w-[min(100%,14rem)] flex-1 text-base leading-relaxed"
+            >
               {t("settings.restartNeeded")}{" "}
               {!data.can_restart && t("settings.restartByHand")}
             </p>
@@ -281,9 +300,11 @@ export default function Settings() {
               variant="outline"
               className="gap-2"
               onClick={() => {
-                signOut().catch((failure) =>
-                  toast.error(errorText(failure, t, lang)),
-                );
+                signOut().catch((failure) => {
+                  if (!sessionOver(failure)) {
+                    toast.error(errorText(failure, t, lang));
+                  }
+                });
               }}
             >
               <LogOut className="h-4 w-4" aria-hidden />
@@ -306,7 +327,9 @@ function ChangePassword() {
   const [refused, setRefused] = useState<{
     on: "current" | "new" | "again";
     why: TextKey | { failure: unknown };
+    said: number;
   } | null>(null);
+  const said = useRef(0);
   const [busy, setBusy] = useState(false);
   const underWay = useRef(false);
   const fields = {
@@ -319,7 +342,7 @@ function ChangePassword() {
     on: "current" | "new" | "again",
     why: TextKey | { failure: unknown },
   ) => {
-    setRefused({ on, why });
+    setRefused({ on, why, said: ++said.current });
     fields[on].current?.focus();
   };
 
@@ -377,6 +400,7 @@ function ChangePassword() {
         autoComplete="current-password"
         value={current}
         error={error("current")}
+        errorSaid={refused?.said}
         onChange={typed(setCurrent)}
       />
       <PasswordField
@@ -387,6 +411,7 @@ function ChangePassword() {
         autoComplete="new-password"
         value={next}
         error={error("new")}
+        errorSaid={refused?.said}
         onChange={typed(setNext)}
       />
       <PasswordField
@@ -396,6 +421,7 @@ function ChangePassword() {
         autoComplete="new-password"
         value={again}
         error={error("again")}
+        errorSaid={refused?.said}
         onChange={typed(setAgain)}
       />
       <div>

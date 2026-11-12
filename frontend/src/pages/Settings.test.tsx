@@ -374,4 +374,158 @@ describe("Settings", () => {
       content.remove();
     }
   }, 10000);
+
+  it("takes an answer that refuses for Mariner being back", async () => {
+    // The session did not outlast the restart: the form to sign in is
+    // what shows, and "not back yet" would be false.
+    const fetched = vi.spyOn(api, "settings").mockResolvedValue({
+      ...shown,
+      restart_needed: true,
+    });
+    vi.spyOn(api, "restart").mockResolvedValue();
+    renderSettings();
+    const button = await screen.findByRole("button", {
+      name: "Restart Mariner",
+    });
+    fetched.mockRejectedValue(
+      new ApiError(
+        401,
+        "Sign in with Mariner's password first.",
+        "login_required",
+      ),
+    );
+
+    fireEvent.click(button);
+    await screen.findByRole("button", { name: "Restarting…" });
+
+    // At the first answer, not after a minute of them.
+    await waitFor(
+      () =>
+        expect(
+          screen.queryByRole("button", { name: "Restarting…" }),
+        ).toBeNull(),
+      { timeout: 4000 },
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  }, 10000);
+
+  it("says so when Mariner is not back within a minute", async () => {
+    const fetched = vi.spyOn(api, "settings").mockResolvedValue({
+      ...shown,
+      restart_needed: true,
+    });
+    vi.spyOn(api, "restart").mockResolvedValue();
+    renderSettings();
+    const button = await screen.findByRole("button", {
+      name: "Restart Mariner",
+    });
+    fetched.mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(button);
+      await vi.advanceTimersByTimeAsync(61000);
+    } finally {
+      vi.useRealTimers();
+    }
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("Mariner is not back yet"),
+      ),
+    );
+  });
+
+  it("does not say twice that the session is over", async () => {
+    // The form to sign in says it, by the field that takes focus.
+    vi.spyOn(api, "saveSettings").mockRejectedValue(
+      new ApiError(
+        401,
+        "Sign in with Mariner's password first.",
+        "login_required",
+      ),
+    );
+    renderSettings();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "UVtools" }));
+    await waitFor(() => expect(api.saveSettings).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("says once that a restart is waited for, not at each change after", async () => {
+    vi.spyOn(api, "settings").mockResolvedValue({
+      ...shown,
+      restart_needed: true,
+    });
+    vi.spyOn(api, "saveSettings").mockResolvedValue({
+      ...shown,
+      settings: { ...shown.settings, assume_printer_off: true },
+      restart_needed: true,
+    });
+    renderSettings();
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: "Do not ask when the printer does not answer",
+      }),
+    );
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved"));
+  });
+
+  it("sends one change at a time", async () => {
+    let done: (kept: SettingsResponse) => void = () => {};
+    const save = vi.spyOn(api, "saveSettings").mockReturnValue(
+      new Promise((resolve) => {
+        done = resolve;
+      }),
+    );
+    renderSettings();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "UVtools" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "ChiTuBox (SDCP)" }));
+    expect(save).toHaveBeenCalledTimes(1);
+    done(shown);
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
+
+  it("gives the new name to the rest of the page", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "printer-display-name";
+    meta.content = "Saturn";
+    document.head.appendChild(meta);
+    try {
+      vi.spyOn(api, "saveSettings").mockResolvedValue({
+        ...shown,
+        settings: { ...shown.settings, printer_display_name: "Workshop" },
+      });
+      renderSettings();
+      await screen.findByLabelText("Name shown for the printer");
+      type("Name shown for the printer", "Workshop");
+      fireEvent.click(screen.getByRole("button", { name: "Save the name" }));
+      await waitFor(() => expect(meta.content).toBe("Workshop"));
+    } finally {
+      meta.remove();
+    }
+  });
+
+  it("says why when signing out did not work", async () => {
+    vi.mocked(access.signOut).mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    renderSettings();
+    fireEvent.click(await screen.findByRole("button", { name: "Sign out" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  });
+
+  it("keeps the button to restart out of what is announced", async () => {
+    // Inside, its words changing were read out with the notice again.
+    vi.spyOn(api, "settings").mockResolvedValue({
+      ...shown,
+      restart_needed: true,
+    });
+    renderSettings();
+    const button = await screen.findByRole("button", {
+      name: "Restart Mariner",
+    });
+    expect(screen.getByRole("status")).not.toContainElement(button);
+    expect(screen.getByRole("status")).toHaveTextContent(/started again/);
+  });
 });

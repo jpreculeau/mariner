@@ -51,7 +51,9 @@ export function Gate({ children }: { children: ReactNode }) {
 
   const named: Partial<Record<typeof access, TextKey>> = {
     checking: "access.checking",
-    unreachable: "dashboard.unreachable.title",
+    unreachable: refusedBy
+      ? "access.refused.title"
+      : "dashboard.unreachable.title",
     shut: "access.shut.title",
   };
 
@@ -84,9 +86,9 @@ export function Gate({ children }: { children: ReactNode }) {
                 className="h-8 w-8 animate-spin text-primary"
                 aria-hidden
               />
-              <p className="mt-4 text-sm text-muted-foreground">
+              <h1 className="mt-4 text-sm font-normal text-muted-foreground">
                 {t("access.checking")}
-              </p>
+              </h1>
             </div>
           )}
           {access === "unreachable" && (

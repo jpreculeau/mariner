@@ -78,7 +78,10 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   const failure = failed.current;
   const value = useMemo<AccessState>(() => {
-    const signedIn = () => {
+    const signedIn = async () => {
+      // An answer asked for before this must not come after it and
+      // say otherwise.
+      await queryClient.cancelQueries({ queryKey: KEY });
       // What was said to who was not signed in no longer holds.
       toast.dismiss();
       // What was fetched before belongs to no session, or to another.
@@ -100,14 +103,15 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       signedOutUnasked,
       choosePassword: async (password) => {
         await api.choosePassword(password);
-        signedIn();
+        await signedIn();
       },
       signIn: async (password) => {
         await api.signIn(password);
-        signedIn();
+        await signedIn();
       },
       signOut: async () => {
         await api.signOut();
+        await queryClient.cancelQueries({ queryKey: KEY });
         leftByItself.current = true;
         queryClient.setQueryData<AuthState>(KEY, {
           password_set: true,

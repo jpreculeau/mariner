@@ -131,6 +131,21 @@ class EarlyRefusalTest(TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def test_a_password_out_of_reach_is_not_said_as_one_to_give(self) -> None:
+        patcher = patch.object(
+            early,
+            "password_refusal",
+            lambda method, path, headers: {"code": "state_unavailable"},
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        status, _, body = self._exchange(
+            "POST /api/upload_file HTTP/1.1\nHost: 127.0.0.1\n"
+            "Content-Length: 500000000\n"
+        )
+        expect(status).to_equal(503)
+        expect(json.loads(body)["code"]).to_equal("state_unavailable")
+
     def test_who_is_not_signed_in_is_refused_before_the_body_is_sent(self) -> None:
         # Else anyone could have two gigabytes written to the drive, to be
         # told only then that a password is asked for.

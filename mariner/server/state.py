@@ -29,6 +29,15 @@ _directory: Optional[Path] = None
 # folder that goes at the next restart was found.
 _makeshift = False
 
+# What is answered when something could not be written here.
+NOT_WRITTEN = {
+    "code": "state_not_written",
+    "title": "Not Kept",
+    "description": "Mariner could not keep this: the folder it keeps its "
+    "password and settings in cannot be written. The drive may be full or "
+    "read-only. Nothing was changed.",
+}
+
 
 def forget() -> None:
     """Look for the folder again at the next use. For tests."""
@@ -154,10 +163,6 @@ def _existing() -> Optional[Path]:
         if os.path.isdir(fallback) and _usable(fallback):
             return Path(fallback)
     return None
-
-
-def _is_there() -> bool:
-    return _existing() is not None
 
 
 def exists(name: str) -> bool:

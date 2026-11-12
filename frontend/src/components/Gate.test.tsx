@@ -12,6 +12,7 @@ import { Gate } from "./Gate";
 import { api, ApiError } from "@/lib/api";
 import { LanguageProvider } from "@/lib/i18n";
 import { useAccess } from "@/lib/access";
+import { toast } from "@/components/ui/sonner";
 
 function renderGate() {
   return render(
@@ -421,6 +422,8 @@ describe("Gate", () => {
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("Add it to allowed_hosts");
     expect(alert).not.toHaveTextContent("switched on");
+    // The tab says the same as the page.
+    expect(document.title).toBe("Mariner did not open its page · Mariner");
   });
 
   it("tries again by itself while Mariner cannot be reached", async () => {
@@ -629,5 +632,135 @@ describe("Gate", () => {
       );
     });
     expect(await screen.findByText("the printer's page")).toBeInTheDocument();
+  });
+
+  it("gives the screen it opens on a heading", () => {
+    vi.spyOn(api, "authState").mockReturnValue(new Promise(() => {}));
+    renderGate();
+    expect(
+      screen.getByRole("heading", { level: 1, name: "Opening Mariner…" }),
+    ).toBeInTheDocument();
+  });
+
+  it("says again what it said, when the form is sent again as it was", async () => {
+    // Left in place, nothing would be announced the second time.
+    vi.spyOn(api, "authState").mockResolvedValue({
+      password_set: true,
+      signed_in: false,
+    });
+    renderGate();
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    const first = await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(screen.getByRole("alert")).not.toBe(first));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No password was given.",
+    );
+  });
+
+  it("is not put back on the form by an answer asked for before signing in", async () => {
+    let answer: (state: {
+      password_set: boolean;
+      signed_in: boolean;
+    }) => void = () => {};
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: true, signed_in: false });
+    vi.spyOn(api, "signIn").mockResolvedValue();
+    renderGate();
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+    // Asked again, and slow to answer.
+    state.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "mariner-page-key" }),
+      );
+    });
+    await waitFor(() => expect(state).toHaveBeenCalledTimes(2));
+    type("Password", "secret words");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByText("the printer's page");
+
+    await act(async () => {
+      answer({ password_set: true, signed_in: false });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.getByText("the printer's page")).toBeInTheDocument();
+  });
+
+  describe("with a way out in the page", () => {
+    let leave: () => Promise<void>;
+    function Leave() {
+      leave = useAccess().signOut;
+      return null;
+    }
+    const renderWithLeave = () =>
+      render(
+        <QueryClientProvider
+          client={
+            new QueryClient({ defaultOptions: { queries: { retry: false } } })
+          }
+        >
+          <LanguageProvider>
+            <AccessProvider>
+              <Leave />
+              <Gate>
+                <p>the printer's page</p>
+              </Gate>
+            </AccessProvider>
+          </LanguageProvider>
+        </QueryClientProvider>,
+      );
+
+    it("does not say that the session is over to who signed out", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: true,
+      });
+      vi.spyOn(api, "signOut").mockResolvedValue();
+      renderWithLeave();
+      await screen.findByText("the printer's page");
+      await act(() => leave());
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      expect(screen.queryByText(/Your session is over/)).toBeNull();
+    });
+
+    it("takes away what was said before signing in", async () => {
+      const dismiss = vi.spyOn(toast, "dismiss");
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+      });
+      vi.spyOn(api, "signIn").mockResolvedValue();
+      renderWithLeave();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "secret words");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await screen.findByText("the printer's page");
+      expect(dismiss).toHaveBeenCalled();
+    });
+  });
+
+  it("asks where it stands twice a day in a page left open", async () => {
+    // The month a session lasts starts again each time.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const state = vi
+        .spyOn(api, "authState")
+        .mockResolvedValue({ password_set: true, signed_in: true });
+      renderGate();
+      await screen.findByText("the printer's page");
+      expect(state).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(12 * 60 * 60 * 1000 + 1000);
+      expect(state).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

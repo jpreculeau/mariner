@@ -471,6 +471,28 @@ def _refuse(code: str, title: str, description: str, status: int) -> Response:
     return make_response(jsonify(body), status)
 
 
+def _not_kept(error: OSError) -> Response:
+    logger.error("Could not write to the state directory: %s", error)
+    return make_response(jsonify(state.NOT_WRITTEN), 500)
+
+
+def _use_the_key_that_is_kept() -> None:
+    """Sign what follows with the key the next start will read.
+
+    The commands about the password remove the key that is kept, and
+    cannot reach the one a running Mariner holds: signed with that one,
+    who signs in now would be signed out at the next start.
+    """
+    held = current_app.config.get("SECRET_KEY")
+    if state.read("session.key") == held:
+        return
+    kept = state.session_key()
+    # Not one that could not be written: each sign-in would end the
+    # sessions of the others.
+    if state.read("session.key") == kept:
+        current_app.config["SECRET_KEY"] = kept
+
+
 def _given(*names: str) -> Optional[Tuple[str, ...]]:
     """The texts sent under *names*, or None if any is not one."""
     body = request.get_json(silent=True)
@@ -548,7 +570,10 @@ def setup() -> Response:
     except PasswordAlreadySet:
         # Chosen by someone else in the meantime.
         return already()
+    except OSError as error:
+        return _not_kept(error)
     logger.warning("A password was chosen from %s", request.remote_addr)
+    _use_the_key_that_is_kept()
     return _sign_in(chosen)
 
 
@@ -560,6 +585,11 @@ def login() -> Response:
     given = _given("password")
     if given is None:
         return _not_a_password()
+    if not has_password():
+        # Cleared since the page showed its form: said as it is, so that
+        # the page offers to choose one.
+        body = refusal("/api/auth-login", session) or {}
+        return make_response(jsonify(body), status_of(body))
     count = count_of(request.remote_addr)
     wait = claim_attempt(count)
     if wait:
@@ -571,6 +601,7 @@ def login() -> Response:
             "wrong_password", "Wrong Password", "This is not the password.", 401
         )
     note_success(count)
+    _use_the_key_that_is_kept()
     return _sign_in(current)
 
 
@@ -606,13 +637,14 @@ def change_password() -> Response:
             "This is not the password in place.",
             401,
         )
+    # The current one was right: whatever follows is not a wrong attempt.
+    note_success("change")
     try:
         changed = set_password(new)
     except PasswordNotAllowed as error:
-        # The current one was right: not a wrong attempt.
-        note_success("change")
         return _refuse(error.code, "Password Not Taken", error.description, 400)
-    note_success("change")
+    except OSError as error:
+        return _not_kept(error)
     # A new key for sessions too: what was signed with the old one, or
     # could be forged from a copy of it, is of no use.
     current_app.config["SECRET_KEY"] = state.new_session_key()

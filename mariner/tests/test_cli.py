@@ -176,8 +176,10 @@ class CommandLineTest(TestCase):
                 "from mariner import cli",
                 "there = patch('mariner.config.get_state_directory',",
                 f"    return_value={str(self.state)!r})",
+                "apart = patch('mariner.config.STATE_FALLBACKS',",
+                f"    [{str(self.root / 'own')!r}])",
                 "asked = patch.object(sys, 'argv', ['mariner', 'reset-password'])",
-                "with there, asked:",
+                "with there, apart, asked:",
                 "    try:",
                 "        cli.main()",
                 "    except SystemExit:",
@@ -187,7 +189,12 @@ class CommandLineTest(TestCase):
             ]
         )
         done = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, timeout=60
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            # Not the home of whoever runs the tests either.
+            env={**os.environ, "HOME": str(self.root / "home")},
         )
         expect(done.stdout.strip().splitlines()[-1]).to_equal("CLEAN")
 

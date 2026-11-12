@@ -99,9 +99,9 @@ if (typeof window !== "undefined") {
 }
 
 /** Forget the key of the page: on signing out. */
-export function forgetPageKey({ keptToo = true } = {}) {
-  pageKey = keptToo ? null : undefined;
-  if (keptToo) forget(PAGE_KEY);
+export function forgetPageKey() {
+  pageKey = null;
+  forget(PAGE_KEY);
 }
 
 // The token asked for again since the page was loaded, if any.
@@ -353,8 +353,11 @@ export function onSignedOut(listener: () => void): () => void {
 /** The same error, after telling whoever listens if it is being signed out. */
 function noted(error: ApiError): ApiError {
   if (
-    error.status === 401 &&
-    (error.code === "login_required" || error.code === "password_not_set")
+    (error.status === 401 &&
+      (error.code === "login_required" || error.code === "password_not_set")) ||
+    // What Mariner keeps went out of reach under a page that is open:
+    // it is shut, which is not "cannot be reached".
+    (error.status === 503 && error.code === "state_unavailable")
   ) {
     signedOutListeners.forEach((listener) => listener());
   }

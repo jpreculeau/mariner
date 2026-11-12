@@ -28,7 +28,7 @@ export const fr: Record<TextKey, string> = {
   "signIn.submit": "Se connecter",
   "signIn.submitting": "Connexion…",
   "signIn.lost":
-    "Mot de passe perdu\u00a0? Sur l'ordinateur qui fait tourner Mariner, lancez «\u00a0sudo mariner reset-password\u00a0», ou déposez un fichier vide nommé «\u00a0reset-password\u00a0» sur la partition de démarrage de sa carte puis redémarrez-le. Un nouveau mot de passe se choisit alors ici.",
+    "Mot de passe perdu\u202f? Sur l'ordinateur qui fait tourner Mariner, lancez «\u00a0sudo mariner reset-password\u00a0», ou déposez un fichier vide nommé «\u00a0reset-password\u00a0» sur la partition de démarrage de sa carte puis redémarrez-le. Un nouveau mot de passe se choisit alors ici.",
   "choose.heading": "Choisir un mot de passe",
   "choose.intro":
     "Il sera demandé à toute personne qui ouvre cette page. Les trancheurs (UVtools, ChiTuBox) envoient leurs fichiers sans lui\u00a0: leur accès se coupe dans les réglages.",
@@ -213,9 +213,10 @@ export const fr: Record<TextKey, string> = {
   "error.password_too_long": "Un mot de passe compte au plus 1024 caractères.",
   "error.password_missing": "Aucun mot de passe n'a été donné.",
   "error.password_already_set":
-    "Un mot de passe a déjà été choisi. Rechargez la page et connectez-vous.",
-  "error.password_not_set":
-    "Aucun mot de passe n'a encore été choisi. Rechargez la page pour en choisir un.",
+    "Un mot de passe a déjà été choisi. Connectez-vous avec celui-ci.",
+  "error.password_not_set": "Aucun mot de passe n'a encore été choisi.",
+  "error.state_not_written":
+    "Mariner n'a pas pu l'enregistrer\u202f: le dossier où il garde son mot de passe et ses réglages ne peut pas être écrit. Le disque est peut-être plein ou en lecture seule. Rien n'a été modifié.",
   "error.login_required": "Connectez-vous d'abord.",
   "error.setting_not_valid": "Ce réglage n'a pas été pris en compte.",
   "error.restart_not_available":
