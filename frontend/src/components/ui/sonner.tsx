@@ -32,7 +32,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       if (
         event.key === "Escape" &&
         !event.defaultPrevented &&
-        document.querySelector("[data-sonner-toast]")
+        document.querySelector('[data-sonner-toast]:not([data-removed="true"])')
       ) {
         sonner.dismiss();
       }

@@ -20,7 +20,8 @@ export function isSupportedKind(name: string): boolean {
   const kinds = supportedKinds();
   // Not told which: the server says.
   if (kinds.length === 0) return true;
-  const lower = name.toLowerCase();
+  // As the server will store it: without the spaces around it.
+  const lower = name.trim().toLowerCase();
   return kinds.some((kind) => lower.endsWith(kind));
 }
 
@@ -29,13 +30,14 @@ export function isSupportedKind(name: string): boolean {
  * this spares sending a whole file to be told no. Its rule is in the text
  * of `error.name_not_allowed`.
  */
-export function isUsableName(name: string): boolean {
+export function isUsableName(given: string): boolean {
+  // As the server will store it: without the spaces around it.
+  const name = given.trim();
   return (
     name.length > 0 &&
     name.length <= 255 &&
     // eslint-disable-next-line no-control-regex
     !/['\\/:*?"<>|\u0000-\u001f]/.test(name) &&
-    !name.startsWith(".") &&
     !name.endsWith(".")
   );
 }

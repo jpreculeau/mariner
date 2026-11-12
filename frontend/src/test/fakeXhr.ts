@@ -37,6 +37,7 @@ export class FakeXhr {
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   onabort: (() => void) | null = null;
+  onloadend: (() => void) | null = null;
   aborted = false;
   /** Answers held back until `release()`: an upload still under way. */
   static held: (() => void)[] = [];
@@ -44,6 +45,7 @@ export class FakeXhr {
   abort() {
     this.aborted = true;
     this.onabort?.();
+    this.onloadend?.();
   }
 
   open(method: string, url: string) {
@@ -78,6 +80,7 @@ export class FakeXhr {
       this.statusText = answer.statusText ?? "";
       this.responseText = answer.body ?? "";
       this.onload?.();
+      this.onloadend?.();
     };
     if (answer.held && answer.sentBeforeHeld) this.upload.onload?.();
     if (answer.held) FakeXhr.held.push(deliver);

@@ -152,7 +152,11 @@ export const en = {
   "error.folder_too_deep": "Folders cannot be nested any deeper than this.",
   "error.folder_exists": "A folder or a file of this name is already there.",
   "error.name_not_allowed":
-    'This name cannot be used. Leave out apostrophes, slashes and the characters \\ : * ? " < > |, do not start or end it with a dot, and keep it under 255 characters.',
+    'This name cannot be used. Leave out apostrophes, slashes and the characters \\ : * ? " < > |, do not end it with a dot, and keep it under 255 characters.',
+  "error.name_is_a_folder":
+    "A folder already has this name: a file cannot take its place.",
+  "error.upload_unanswered":
+    "Mariner did not answer after the file was sent. Look at the list: the file may be there.",
   "error.type_not_supported":
     "This is not a file the printer can print. Mariner takes: {kinds}.",
   "error.folder_gone":

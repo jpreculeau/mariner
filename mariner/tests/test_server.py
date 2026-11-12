@@ -1635,6 +1635,7 @@ class MarinerServerTest(TestCase):
         ):
             response = self.client.post("/api/upload_file?path=batch", data=data)
         expect(response.status_code).to_equal(404)
+        expect(response.get_json()["code"]).to_equal("folder_gone")
         expect(self._leftovers()).to_equal([])
 
     def test_delete_file_is_refused_when_the_printer_is_silent(self) -> None:
@@ -1816,6 +1817,10 @@ class MarinerServerTest(TestCase):
         # The apostrophe, which is what most often gets a name refused.
         description = upload("bob's model.ctb").get_json()["description"]
         expect("apostrophe" in description).to_equal(True)
+        # And nothing the server does not hold to: a name may start with
+        # a dot.
+        expect("start" in description).to_equal(False)
+        expect(upload(".model.ctb").status_code).to_equal(200)
 
     def test_a_folder_that_is_gone_is_said_to_be(self) -> None:
         # Removed from another tab, or through the slicer, while the page
@@ -1846,7 +1851,9 @@ class MarinerServerTest(TestCase):
             content_type="multipart/form-data",
         )
         expect(response.status_code).to_equal(400)
-        expect(response.get_json()["code"]).to_equal("folder_exists")
+        # Not the code of a new folder whose name is taken: the words for
+        # that one would be wrong here.
+        expect(response.get_json()["code"]).to_equal("name_is_a_folder")
 
     def test_a_file_removed_as_it_is_deleted_is_said_to_be_gone(self) -> None:
         # By someone else, between the check and the removal.

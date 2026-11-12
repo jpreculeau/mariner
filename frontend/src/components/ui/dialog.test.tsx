@@ -144,4 +144,24 @@ describe("Dialog", () => {
       message.remove();
     }
   });
+
+  it("closes on Escape when the message above it is already going", async () => {
+    // It stays a moment as it fades: a quick second Escape was lost.
+    const message = document.createElement("ol");
+    message.innerHTML = '<li data-sonner-toast data-removed="true">x</li>';
+    document.body.appendChild(message);
+    vi.mocked(sonner.dismiss).mockClear();
+    try {
+      render(<Opened />);
+      fireEvent.click(screen.getByText("open"));
+      const dialog = await screen.findByRole("dialog");
+
+      fireEvent.keyDown(dialog, { key: "Escape" });
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(sonner.dismiss).not.toHaveBeenCalled();
+    } finally {
+      message.remove();
+    }
+  });
 });

@@ -140,4 +140,19 @@ describe("PowerMenu", () => {
     expect(screen.getByRole("button", { name: "Restart" })).toBe(other);
     expect(screen.getByRole("status")).toHaveTextContent("Shutting down…");
   });
+
+  it("says that it is asking the computer to restart", async () => {
+    vi.spyOn(api, "hostReboot").mockReturnValue(new Promise(() => {}));
+    render(<PowerMenu />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Shut down or restart" }),
+    );
+    fireEvent.click(await screen.findByText("Restart"));
+    fireEvent.click(await screen.findByText("Confirm restart?"));
+
+    expect(
+      await screen.findByRole("button", { name: "Restarting…" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Restarting…");
+  });
 });

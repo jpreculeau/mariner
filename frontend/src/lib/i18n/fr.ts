@@ -146,7 +146,11 @@ export const fr: Record<TextKey, string> = {
     "Les dossiers ne peuvent pas être imbriqués plus profondément.",
   "error.folder_exists": "Un dossier ou un fichier porte déjà ce nom.",
   "error.name_not_allowed":
-    'Ce nom ne peut pas être utilisé. Évitez les apostrophes, les barres obliques et ces caractères\u00a0: \\\u00a0:\u00a0*\u00a0?\u00a0"\u00a0<\u00a0>\u00a0|\u00a0; ne le commencez ni ne le terminez par un point, et restez sous 255\u00a0caractères.',
+    'Ce nom ne peut pas être utilisé. Évitez les apostrophes, les barres obliques et ces caractères\u00a0: \\\u00a0:\u00a0*\u00a0?\u00a0"\u00a0<\u00a0>\u00a0|\u00a0; ne le terminez pas par un point, et restez sous 255\u00a0caractères.',
+  "error.name_is_a_folder":
+    "Un dossier porte déjà ce nom\u00a0: un fichier ne peut pas prendre sa place.",
+  "error.upload_unanswered":
+    "Mariner n'a pas répondu après l'envoi du fichier. Regardez la liste\u00a0: le fichier y est peut-être.",
   "error.type_not_supported":
     "Ce n'est pas un fichier que l'imprimante sait imprimer. Mariner accepte\u00a0: {kinds}.",
   "error.folder_gone":

@@ -565,7 +565,7 @@ def upload_file() -> Union[str, Response]:
     if os.path.isdir(destination):
         # A folder already has that name; a file cannot take its place.
         _refuse(
-            "folder_exists",
+            "name_is_a_folder",
             "Name Taken By A Folder",
             "A folder already has this name: a file cannot take its place.",
         )
@@ -579,7 +579,7 @@ def upload_file() -> Union[str, Response]:
         _abort_file_in_use(error, replacing_it=True)
     except FileNotFoundError:
         # The folder was removed while the file was being written.
-        abort(404)
+        _refuse_folder_gone()
     except OSError as error:
         # No room left on the drive, most often.
         logger.warning("Could not store %r: %s", filename, error)
@@ -632,7 +632,7 @@ def _refuse_name() -> NoReturn:
         "name_not_allowed",
         "Name Not Allowed",
         "This name cannot be used. Leave out apostrophes, slashes and the "
-        'characters \\ : * ? " < > |, do not start or end it with a dot, '
+        'characters \\ : * ? " < > |, do not end it with a dot, '
         "and keep it under 255 characters.",
     )
 

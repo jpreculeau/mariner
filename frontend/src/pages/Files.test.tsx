@@ -758,7 +758,7 @@ describe("Files", () => {
       }
     });
 
-    it.each(["bob's model.ctb", "what?.ctb", ".hidden.ctb", "a/b.ctb"])(
+    it.each(["bob's model.ctb", "what?.ctb", "a/b.ctb"])(
       "is not sent under a name that cannot be used: %s",
       (name) => {
         const send = vi.spyOn(api, "uploadFile").mockResolvedValue();
@@ -803,6 +803,25 @@ describe("Files", () => {
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("dragon.ctb envoyé"),
+    );
+  });
+
+  it("fetches the list again when no answer came after the file had gone", async () => {
+    // The file may well be there.
+    vi.spyOn(api, "uploadFile").mockRejectedValue(
+      new ApiError(0, "No answer.", "upload_unanswered"),
+    );
+    const input = renderFiles();
+    await screen.findByText("This folder is empty.");
+    const before = vi.mocked(api.listFiles).mock.calls.length;
+
+    pick(input, new File(["x"], "dragon.ctb"));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(vi.mocked(api.listFiles).mock.calls.length).toBeGreaterThan(
+        before,
+      ),
     );
   });
 });

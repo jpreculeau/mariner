@@ -166,6 +166,29 @@ describe("sending a file", () => {
     expect(FakeXhr.requests[0].aborted).toBe(false);
   });
 
+  it("does not wait for ever for the answer once the file has gone", async () => {
+    // The computer may have lost power: nothing more can be given up by
+    // then, and no other file is taken meanwhile.
+    const timers = vi.spyOn(globalThis, "setTimeout");
+    FakeXhr.answers = [{ status: 200, held: true, sentBeforeHeld: true }];
+    const sent = api.uploadFile(file()).catch((error) => error);
+    await vi.waitFor(() =>
+      expect(timers.mock.calls.some(([, wait]) => wait === 5 * 60_000)).toBe(
+        true,
+      ),
+    );
+    const expire = timers.mock.calls.find(
+      ([, wait]) => wait === 5 * 60_000,
+    )![0] as () => void;
+
+    expire();
+
+    const outcome = await sent;
+    expect(outcome).toBeInstanceOf(ApiError);
+    expect(outcome.code).toBe("upload_unanswered");
+    expect(FakeXhr.requests[0].aborted).toBe(true);
+  });
+
   it("says that all has gone only when all has", async () => {
     // The last report of progress can come before the last of the file.
     FakeXhr.answers = [{ status: 200, held: true, progress: [1] }];

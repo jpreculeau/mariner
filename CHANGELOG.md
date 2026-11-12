@@ -112,10 +112,11 @@ Web interface
 - Do not ask again, three times over, what the server has refused
 - Leave a dialog open when a message shown above it is dismissed
 - No longer offer to give up an upload once the whole file has gone: the server stores it then, and the page said "upload cancelled" of a file that was there
-- Do not send a file whose name or kind the server would refuse: it was told so only once all of it had been sent
+- Do not send a file whose name or kind the server would plainly refuse: it was told so only once all of it had been sent
+- Stop waiting after five minutes for the answer to a file that has all gone, say that it may be there, and fetch the list again
 - Say what the printer did not take in the page's own words in English too, instead of "unexpected response: ''"
 - Shutting down or restarting: when nothing answers, say that the computer may be going down or may not have been asked, instead of that it is going down; ask once however often the button is pressed, and say that it is being asked
-- Say that a folder is no longer there (`folder_gone`) instead of "error 404", and that a folder has the name a file was sent under (`folder_exists`)
+- Say that a folder is no longer there (`folder_gone`) instead of "error 404", and that a folder has the name a file was sent under (`name_is_a_folder`)
 - Show messages at the top of a phone's screen: at the bottom they sat on the buttons they were about
 - Close the messages with Escape from anywhere in the page, show all of them rather than a stack whose hidden ones took focus unseen, set them in the typeface the reader chose, and move on to the next when one of several is closed
 - Keep the name of a file being sent readable on a narrow screen: the button to give up goes under it

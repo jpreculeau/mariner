@@ -160,6 +160,9 @@ async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
  * Not with `fetch`, which cannot tell: files are hundreds of megabytes,
  * and minutes long over a slow link.
  */
+/** How long the answer is waited for once the whole file has gone. */
+const ANSWER_WAIT_MS = 5 * 60_000;
+
 function sendFile(
   url: string,
   body: FormData,
@@ -185,9 +188,19 @@ function sendFile(
       },
       { once: true },
     );
-    request.onabort = () => reject(givenUp());
-    // Cut short by the browser: taken for a connection that dropped.
-    request.ontimeout = () => reject(unreachable());
+    // Given up by the reader, unless it is the wait for the answer that
+    // ran out.
+    let unanswered = false;
+    request.onabort = () =>
+      reject(
+        unanswered
+          ? new ApiError(
+              0,
+              "Mariner did not answer after the file was sent. Look at the list: the file may be there.",
+              "upload_unanswered",
+            )
+          : givenUp(),
+      );
     request.open("POST", url);
     const csrf = getCsrfToken();
     if (csrf) request.setRequestHeader("X-CSRFToken", csrf);
@@ -200,6 +213,14 @@ function sendFile(
     request.upload.onload = () => {
       allSent = true;
       onProgress?.(1);
+      // The server has it to check, copy and write out, which takes a
+      // while on a small computer; but not for ever. Without an end the
+      // page would show the upload, and take no other, until reloaded.
+      const wait = setTimeout(() => {
+        unanswered = true;
+        request.abort();
+      }, ANSWER_WAIT_MS);
+      request.onloadend = () => clearTimeout(wait);
     };
     request.onload = () => {
       // An answer without content cannot carry any: 204, 304.

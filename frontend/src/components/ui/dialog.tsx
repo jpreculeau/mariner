@@ -90,7 +90,11 @@ const DialogContent = React.forwardRef<
             // A message above the dialog goes first: the keyboard cannot
             // reach it while the dialog holds focus, and it can cover the
             // dialog's buttons.
-            if (document.querySelector("[data-sonner-toast]")) {
+            if (
+              document.querySelector(
+                '[data-sonner-toast]:not([data-removed="true"])',
+              )
+            ) {
               event.preventDefault();
               sonner.dismiss();
             }

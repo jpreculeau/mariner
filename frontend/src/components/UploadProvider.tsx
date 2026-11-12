@@ -62,6 +62,10 @@ export function UploadProvider({ children }: { children: ReactNode }) {
         } else {
           // The server says why, e.g. the file is being printed.
           toast.error(errorText(err, t, lang));
+          if (err instanceof ApiError && err.code === "upload_unanswered") {
+            // The file may well be there.
+            queryClient.invalidateQueries({ queryKey: ["files", path] });
+          }
         }
       } finally {
         underWay.current = null;
