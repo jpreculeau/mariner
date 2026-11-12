@@ -39,16 +39,20 @@ class Sparingly:
                 return None
             if known is None and len(self._kinds) >= self._remembered:
                 # A client can give itself any number of addresses. The
-                # oldest known makes room.
+                # one written longest ago makes room.
                 del self._kinds[next(iter(self._kinds))]
+            # Put last: they are kept in the order they were written in.
+            self._kinds.pop(kind, None)
             self._kinds[kind] = (now, 0)
             return known[1] if known is not None else 0
 
     def clear(self) -> None:
-        self._kinds.clear()
+        with self._lock:
+            self._kinds.clear()
 
     def __len__(self) -> int:
-        return len(self._kinds)
+        with self._lock:
+            return len(self._kinds)
 
 
 said = Sparingly()
@@ -86,7 +90,7 @@ def log(
         "Sec-Fetch-Site %s, User-Agent %s, also sent: %s; %d more like it not "
         "written here since the last)",
         interface,
-        method or "a request",
+        (method or "a request")[:16],
         _quoted(path) if path is not None else "",
         peer,
         code,
@@ -108,9 +112,14 @@ def _site_of(page: Optional[str]) -> Optional[str]:
         parts = urlsplit(page)
     except ValueError:
         return "unreadable"
-    if not parts.scheme or not parts.netloc:
+    try:
+        name, port = parts.hostname, parts.port
+    except ValueError:
         return "unreadable"
-    return f"{parts.scheme}://{parts.netloc}"
+    if not parts.scheme or not name:
+        return "unreadable"
+    # Without the name and password an address can carry.
+    return f"{parts.scheme}://{name}" + (f":{port}" if port else "")
 
 
 def _quoted(value: Optional[str]) -> str:
@@ -118,6 +127,7 @@ def _quoted(value: Optional[str]) -> str:
 
     In that order, so that the mark that ends it is always there; and in
     one way whatever it holds, so that marks inside it are told from it.
+    The method alone is only cut: the web server takes capitals only.
     """
     if value is None:
         return "none"

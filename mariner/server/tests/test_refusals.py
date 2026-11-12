@@ -28,6 +28,17 @@ class SparinglyTest(TestCase):
         expect(self.said.unwritten(key)).to_equal(5)
         expect(self.said.unwritten(key)).to_equal(None)
 
+    def test_the_one_to_make_room_is_the_one_written_longest_ago(self) -> None:
+        # Not the one first seen: that one may have been written just now.
+        for kind in ("a", "b", "c", "d"):
+            self.said.unwritten(kind)
+        self.now += 60
+        expect(self.said.unwritten("a")).to_equal(0)
+        self.said.unwritten("e")
+        # "b" made room; "a", written last, is still kept quiet.
+        expect(self.said.unwritten("a")).to_equal(None)
+        expect(self.said.unwritten("b")).to_equal(0)
+
     def test_another_client_or_reason_is_another_kind(self) -> None:
         self.said.unwritten(("192.168.1.9", "a"))
         expect(self.said.unwritten(("192.168.1.10", "a"))).to_equal(0)
@@ -95,6 +106,19 @@ class LogTest(TestCase):
         with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
             refusals.log("Web", "192.168.1.99", "x", {"Referer": "http://[x/a"})
         expect("unreadable" in logs.records[0].getMessage()).to_equal(True)
+
+    def test_the_method_is_cut_like_the_rest(self) -> None:
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log("Web", "192.168.1.99", "x", {}, "M" * 60000, "/api/x")
+        expect(len(logs.records[0].getMessage()) < 700).to_equal(True)
+
+    def test_a_name_and_password_in_the_page_address_are_left_out(self) -> None:
+        headers = {"Referer": "http://user:secretpw@evil.example:8080/page"}
+        with self.assertLogs("mariner.server.refusals", level="WARNING") as logs:
+            refusals.log("Web", "192.168.1.99", "x", headers)
+        message = logs.records[0].getMessage()
+        expect("http://evil.example:8080" in message).to_equal(True)
+        expect("secretpw" in message or "user" in message).to_equal(False)
 
     def test_what_only_browsers_and_players_say_is_named(self) -> None:
         # Else a script refused for it looks like any other in the log.

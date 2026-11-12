@@ -338,7 +338,7 @@ def csrf_token() -> Response:
 
     For a page whose own went stale while it was open: Mariner restarted,
     or the browser's session ended. Another site's page cannot read the
-    answer, and would be given a token for a session of its own.
+    answer.
     """
     return jsonify({"csrf_token": generate_csrf()})
 
@@ -641,8 +641,12 @@ def create_directory() -> Union[str, Response]:
     return jsonify({"success": True})
 
 
-def _attachment(name: str) -> str:
-    """A ``Content-Disposition`` header naming a download *name*.
+def _shown_as(name: str) -> str:
+    """A ``Content-Disposition`` header for what is shown, named *name*.
+
+    Shown where it was asked for, and named for whoever saves it. Not sent
+    as a file to save: a download starts or not as the file exists or not,
+    and a page of another site that has the browser ask could tell which.
 
     A header carries plain characters only. The name is given in full in
     the form made for any script, and in plain characters, with the others
@@ -653,7 +657,7 @@ def _attachment(name: str) -> str:
         for character in name
     )
     encoded = urllib.parse.quote(name, safe="")
-    return f"attachment; filename=\"{plain}\"; filename*=UTF-8''{encoded}"
+    return f"inline; filename=\"{plain}\"; filename*=UTF-8''{encoded}"
 
 
 @api.route("/file_preview", methods=["GET"])
@@ -667,7 +671,7 @@ def file_preview() -> Response:
 
     response = make_response(preview_bytes)
     response.headers.set("Content-Type", "image/png")
-    response.headers.set("Content-Disposition", _attachment(f"{path.name}.png"))
+    response.headers.set("Content-Disposition", _shown_as(f"{path.name}.png"))
 
     return response
 

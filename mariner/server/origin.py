@@ -300,8 +300,9 @@ def unusable_entries() -> List[str]:
             continue
         found.append(
             f"[http] allowed_hosts entry {host!r} can match nothing: a name "
-            'is given alone, without scheme or port, and "*" stands only by '
-            "itself"
+            'is given alone, without scheme or port, "*" stands only by '
+            "itself, and a name with accents is written as browsers send it "
+            '("xn--...")'
         )
     for address in config.get_http_allowed_origins():
         if _site(address) is None:

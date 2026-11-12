@@ -893,7 +893,10 @@ class MarinerServerTest(TestCase):
         expect(
             "filename*=UTF-8''%E6%A8%A1%E5%9E%8B%20%C3%A9.ctb.png" in disposition
         ).to_equal(True)
-        expect(disposition.startswith("attachment; ")).to_equal(True)
+        # Shown where it is asked for, not saved: a page of another site
+        # that had the browser ask could tell, from a download starting
+        # or not, whether a file of that name exists.
+        expect(disposition.startswith("inline; ")).to_equal(True)
         # An ordinary name is given both ways, for clients that know one.
         response = self.client.get("/api/file_preview?filename=foobar.ctb")
         expect(
