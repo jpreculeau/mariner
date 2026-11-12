@@ -9,7 +9,7 @@ __pycache__/
 coverage
 coverage.xml
 frontend/dist/
-frontend/node_modules/
+frontend/node_modules
 *.deb
 .direnv/
 
