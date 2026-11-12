@@ -233,7 +233,8 @@ def _check_signature(
 
     The signature is the encrypted SHA-256 of the checksum stored in the
     settings block. It is compared byte for byte: comparing the two as
-    sets of byte values, as was done before, accepts nearly anything.
+    sets of byte values, as was done before, accepts the right bytes in
+    any order and any number.
     """
     checksum_bytes = ctb_slicer.checksum_value.to_bytes(8, "little")
     expected = _aes_crypt(computeSHA256Hash(checksum_bytes), True)
@@ -291,19 +292,21 @@ class CTBEncryptedFile(SlicedModelFile):
                 ctb_slicer.layer_count * pointer.size,
                 "layer table",
             )
-            last_start = size_of(file) - described.size
             end_byte_offset_by_layer = []
             stored_ends = []
             for (layer_offset,) in pointer.iter_unpack(table):
-                if layer_offset > last_start:
-                    raise MalformedFile("layer lies outside the file")
                 file.seek(layer_offset)
+                description = file.read(described.size)
+                if len(description) != described.size:
+                    # Described past the end of the file, or the file is
+                    # shorter than when the read began.
+                    raise MalformedFile("layer lies outside the file")
                 (
                     layer_def_offset,
                     data_length,
                     encrypted_data_offset,
                     encrypted_data_length,
-                ) = described.unpack(file.read(described.size))
+                ) = described.unpack(description)
                 # Where the layer ends in the file, whether or not part of
                 # it is stored encrypted.
                 stored_ends.append(layer_def_offset + data_length)

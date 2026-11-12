@@ -109,8 +109,8 @@ app.config.from_mapping(
         # No limit to the number of entries. Past one, the cache drops
         # entries in no useful order, and a file whose entry was dropped is
         # read again in full at every listing. What is kept is bounded
-        # otherwise: by its size, and emptied at each start (see
-        # mariner.server.utils).
+        # otherwise: by its size and by a number of entries of Mariner's
+        # own, and emptied at each start (see mariner.server.utils).
         "CACHE_THRESHOLD": 0,
         "SECRET_KEY": os.urandom(16),
     }

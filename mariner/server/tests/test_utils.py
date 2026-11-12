@@ -126,8 +126,12 @@ class CachedReadsTest(TestCase):
         )
         patcher.start()
         self.addCleanup(patcher.stop)
+        # A cache of the test's own: not the one a running service uses.
+        kept = Path(self.directory.name) / "cache"
+        kept.mkdir()
+        patch.object(utils.cache.cache, "_path", str(kept)).start()
+        patch.dict(utils.app.config, {"CACHE_DIR": str(kept)}).start()
         utils.empty_cache()
-        self.addCleanup(utils.empty_cache)
         # Room is made after every write here; in use, every so many.
         self.every_write = patch.object(utils, "_WRITES_PER_SCAN", 1)
         self.every_write.start()
@@ -470,9 +474,10 @@ class CachedReadsTest(TestCase):
 
     def test_emptying_leaves_the_files_directory_alone(self) -> None:
         # Should the cache be set to a place that holds the models.
-        models = Path(self.directory.name)
+        models = Path(self.directory.name) / "models"
         inside = models / "parsed"
-        inside.mkdir()
+        inside.mkdir(parents=True)
+        (models / "model.ctb").write_bytes(b"first")
         (inside / "model.ctb").write_bytes(b"x")
         for folder in (models, inside):
             with patch.dict(utils.app.config, {"CACHE_DIR": str(folder)}), patch(

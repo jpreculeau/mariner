@@ -235,6 +235,9 @@ file is first read:
 
    $ sudo journalctl -u mariner3d.service | grep "Could not read .*: "
 
+The line is written once for each version of the file. If it is no longer in
+the logs, restart Mariner or send the file again.
+
 The check is the web page's: a print asked for by other means, from a slicer
 or the printer's own screen, is started as before.
 

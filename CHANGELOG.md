@@ -56,10 +56,10 @@ Reading files
 - Limit the preview picture to the size of a thumbnail and to the bytes such a picture can need, decode it in a fraction of the memory, and render one at a time, so that a damaged or crafted file costs a request about ten megabytes at most
 - List a file whose transfer stopped part of the way as one that cannot be printed, so that the web page does not offer to print it; that covers every anti-aliasing pass of a `.cbddlp` or `.photon` file, and a file that holds no layer
 - Find out once per version of a file that it cannot be read, and log the reason then, instead of at every listing
-- Keep one remembered entry of each kind per file, replaced with the file, with no limit on the number of files; before, past 500 entries, files were read again at every listing
+- Keep one remembered entry of each kind per file, replaced with the file; before, every version of a file added entries, and past 500 of them files were read again at every listing
 - Start from an empty cache, keep it near 64 MB and 4096 entries by dropping the oldest, and keep working when it cannot be written
 - Read the layer table of a file in blocks, and of each layer only what is needed: the longest table allowed took seconds, during which other requests waited
-- Do not use a cache directory that is reached through a link, is where the models are, or belongs to another account; use a folder of the service's own instead
+- Do not use a cache folder that is reached through a link, is where the models are, or belongs to another account; use a folder of the service's own instead. The folders above it are not checked: keep the cache directory out of places other accounts can write to
 - Let requests that arrive together for the same file share one read
 - Do not remember what was read of a file that was replaced during the read
 - Compare the signature of an encrypted CTB file in full
