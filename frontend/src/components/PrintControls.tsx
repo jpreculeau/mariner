@@ -1,50 +1,139 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Pause, Play, X } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Loader2, Pause, Play, X } from "lucide-react";
 import type { PrinterStatus } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 interface PrintControlsProps {
   status: PrinterStatus;
-  onPause: () => void;
-  onResume: () => void;
-  onCancel: () => void;
+  /** The file being printed and how far it is, for the question asked
+   * before cancelling. */
+  fileName: string;
+  progress: number;
+  onPause: () => Promise<void>;
+  onResume: () => Promise<void>;
+  onCancel: () => Promise<void>;
 }
+
+type Command = "pause" | "resume" | "cancel";
 
 export function PrintControls({
   status,
+  fileName,
+  progress,
   onPause,
   onResume,
   onCancel,
 }: PrintControlsProps) {
+  const { t } = useI18n();
+  // The command under way: one at a time, and each sent once however
+  // often its button is pressed.
+  const [busy, setBusy] = useState<Command | null>(null);
+  const [asking, setAsking] = useState(false);
+
+  const run = async (command: Command, send: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(command);
+    try {
+      await send();
+    } catch {
+      // Whoever sends the command says what went wrong.
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  if (status !== "printing" && status !== "paused") return null;
+
+  const spinner = <Loader2 className="h-4 w-4 animate-spin" aria-hidden />;
+
   return (
-    <div className="flex items-center justify-center gap-3">
+    // Cancelling is set apart from pausing: one cannot be undone.
+    <div className="flex flex-wrap items-center justify-between gap-3">
       {status === "printing" ? (
         <Button
-          onClick={onPause}
+          onClick={() => run("pause", onPause)}
+          disabled={busy !== null}
           variant="secondary"
           size="lg"
           className="gap-2"
         >
-          <Pause className="h-4 w-4" />
-          Pause
+          {busy === "pause" ? (
+            spinner
+          ) : (
+            <Pause className="h-4 w-4" aria-hidden />
+          )}
+          {busy === "pause" ? t("print.pausing") : t("print.pause")}
         </Button>
-      ) : status === "paused" ? (
-        <Button onClick={onResume} size="lg" className="gap-2">
-          <Play className="h-4 w-4" />
-          Resume
-        </Button>
-      ) : null}
-
-      {(status === "printing" || status === "paused") && (
+      ) : (
         <Button
-          onClick={onCancel}
-          variant="destructive"
+          onClick={() => run("resume", onResume)}
+          disabled={busy !== null}
           size="lg"
           className="gap-2"
         >
-          <X className="h-4 w-4" />
-          Cancel
+          {busy === "resume" ? (
+            spinner
+          ) : (
+            <Play className="h-4 w-4" aria-hidden />
+          )}
+          {busy === "resume" ? t("print.resuming") : t("print.resume")}
         </Button>
       )}
+
+      <Button
+        onClick={() => setAsking(true)}
+        disabled={busy !== null}
+        variant="destructive"
+        size="lg"
+        className="gap-2"
+      >
+        {busy === "cancel" ? spinner : <X className="h-4 w-4" aria-hidden />}
+        {busy === "cancel" ? t("print.cancelling") : t("print.cancel")}
+      </Button>
+
+      <Dialog open={asking} onOpenChange={setAsking}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t("print.cancel.title")}</DialogTitle>
+            <DialogDescription>
+              {t("print.cancel.text", {
+                file: fileName,
+                progress: `${progress.toFixed(1)}%`,
+              })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            {/* First, and so the one a hasty Enter lands on. */}
+            <Button
+              type="button"
+              variant="ghost"
+              autoFocus
+              onClick={() => setAsking(false)}
+            >
+              {t("print.cancel.keep")}
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                setAsking(false);
+                run("cancel", onCancel);
+              }}
+            >
+              {t("print.cancel.confirm")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -27,6 +27,7 @@
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
+    --danger: 0 72% 45%;
 
     --warning: 38 92% 50%;
     --warning-foreground: 38 92% 14%;
@@ -74,13 +75,15 @@
     --secondary-foreground: 220 14% 90%;
 
     --muted: 220 16% 14%;
-    --muted-foreground: 220 10% 54%;
+    /* Light enough to be read on every ground of the page (4.5:1). */
+    --muted-foreground: 220 10% 64%;
 
     --accent: 175 70% 45%;
     --accent-foreground: 220 20% 6%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
+    --danger: 0 90% 70%;
 
     --warning: 38 92% 50%;
     --warning-foreground: 38 92% 14%;
@@ -89,7 +92,9 @@
     --success-foreground: 142 71% 10%;
 
     --border: 220 16% 18%;
-    --input: 220 16% 18%;
+    /* The edge of a field or of an outlined button: what shows where
+       it is (3:1). */
+    --input: 220 14% 46%;
     --ring: 175 70% 45%;
 
     --sidebar-background: 220 20% 8%;
@@ -119,6 +124,19 @@
   h5,
   h6 {
     @apply font-display;
+  }
+}
+
+/* For a reader who asked their system for stillness: nothing turns or
+   pulses without end, nothing slides. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 

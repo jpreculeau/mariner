@@ -101,6 +101,16 @@ Web interface
 - Serve the page's typefaces with the page instead of fetching them from Google Fonts: nothing is asked of another site any more, which told it who opened the printer's page and left the page without its typeface where there is no way out to the internet
 - Set the page in Atkinson Hyperlegible, drawn so that letters and digits that look alike are told apart, and let the reader choose OpenDyslexic instead (palette button, "Typeface"); both are free (SIL Open Font License), and their licences are shipped under `/licenses/`
 - Keep the page working in a browser set to keep nothing: it showed a blank page
+- Read the page in English or French: the browser's language at first, the reader's choice afterwards (palette button, "Language"). What the server refuses is said in the page's language too
+- Ask before cancelling a print, naming the file and how far it is, and before deleting a file; set the button that cancels apart from the one that pauses
+- Say how every action went: a command the printer did not take, a print that could not be started, a list of files that could not be fetched no longer pass in silence. Tell "Mariner cannot be reached" from "the printer does not answer", and say what to check for each
+- Show how far an upload is, offer only the kinds of file the printer takes, and say when the file is in
+- Send a command once however often its button is pressed, and say that it is under way
+- Say why a folder could not be made (`folder_exists`, `name_not_allowed`, `folder_not_created`)
+- Call the two times of a print what they are: estimates
+- Make the page usable without seeing it: name every button and link at every width of screen, announce the state of the printer and what is loading, label the field of a new folder, give the page a main area, a link to skip to it, a title of its own in the browser's tab, and say which page and which choices are the current ones other than by colour
+- Make it readable: text, the red of errors and the Elegoo Mars theme are set apart from their ground (4.5:1), the edge of fields can be seen (3:1), no text is smaller than 12 px, and dialogs and menus are dark like the page they open on
+- Stop what turns or pulses without end for a reader who asked their system for stillness
 
 ### 🚜 Refactor
 

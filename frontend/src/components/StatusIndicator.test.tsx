@@ -3,23 +3,21 @@ import { render, screen } from "@testing-library/react";
 import { StatusIndicator } from "./StatusIndicator";
 
 describe("StatusIndicator", () => {
-  it("shows Ready for idle status", () => {
-    render(<StatusIndicator status="idle" />);
-    expect(screen.getByText("Ready")).toBeInTheDocument();
+  it.each([
+    ["idle", "Ready"],
+    ["printing", "Printing"],
+    ["paused", "Paused"],
+    ["offline", "Offline"],
+  ] as const)("shows %s as %s", (status, label) => {
+    render(<StatusIndicator status={status} />);
+    expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  it("shows Printing for printing status", () => {
-    render(<StatusIndicator status="printing" />);
-    expect(screen.getByText("Printing")).toBeInTheDocument();
-  });
-
-  it("shows Paused for paused status", () => {
-    render(<StatusIndicator status="paused" />);
-    expect(screen.getByText("Paused")).toBeInTheDocument();
-  });
-
-  it("shows Offline for offline status", () => {
-    render(<StatusIndicator status="offline" />);
-    expect(screen.getByText("Offline")).toBeInTheDocument();
+  it("is announced when it changes, with what it is the state of", () => {
+    const { rerender } = render(<StatusIndicator status="printing" />);
+    const indicator = screen.getByRole("status");
+    expect(indicator).toHaveAccessibleName("Printer: Printing");
+    rerender(<StatusIndicator status="paused" />);
+    expect(indicator).toHaveAccessibleName("Printer: Paused");
   });
 });

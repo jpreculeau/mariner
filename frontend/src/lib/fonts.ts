@@ -7,8 +7,6 @@ import { remember, remembered } from "@/lib/storage";
 export interface ReadingFont {
   id: string;
   name: string;
-  /** What it is for, in a few words. */
-  hint: string;
   body: string;
   display: string;
   mono: string;
@@ -27,7 +25,6 @@ export const fonts: ReadingFont[] = [
     name: "Atkinson Hyperlegible",
     // Drawn by the Braille Institute so that letters and digits that look
     // alike (b d p q, I l 1, O 0) cannot be taken for one another.
-    hint: "Letters drawn to be told apart",
     body: HYPERLEGIBLE,
     display: HYPERLEGIBLE,
     mono: MONO,
@@ -37,7 +34,6 @@ export const fonts: ReadingFont[] = [
     name: "OpenDyslexic",
     // Heavy at the foot of each letter, which some dyslexic readers find
     // keeps letters from turning and swapping.
-    hint: "Weighted letters, for dyslexic readers",
     body: OPENDYSLEXIC,
     display: OPENDYSLEXIC,
     mono: MONO,

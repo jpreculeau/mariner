@@ -47,17 +47,32 @@ function renderDialog(onOpenChange = vi.fn()) {
 
 let showOther: () => void;
 
+/** Ask to delete the file on screen and say yes to the question. */
+async function deleteConfirmed() {
+  fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Delete the file" }),
+  );
+}
+
+const printable = {
+  filename: "dragon.ctb",
+  path: "dragon.ctb",
+  can_be_printed: true,
+};
+
 describe("FileDetailDialog", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.success).mockClear();
   });
 
   it("closes once the file is deleted", async () => {
     vi.spyOn(api, "deleteFile").mockResolvedValue();
     const onOpenChange = renderDialog();
 
-    fireEvent.click(screen.getByText("Delete"));
+    await deleteConfirmed();
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(api.deleteFile).toHaveBeenCalledWith("model.txt", {
@@ -71,7 +86,7 @@ describe("FileDetailDialog", () => {
     const refresh = vi.spyOn(queryClient, "invalidateQueries");
     const onOpenChange = renderDialog();
 
-    fireEvent.click(screen.getByText("Delete"));
+    await deleteConfirmed();
 
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(refresh).toHaveBeenCalledWith({ queryKey: ["files"] });
@@ -87,7 +102,7 @@ describe("FileDetailDialog", () => {
     );
     const onOpenChange = renderDialog();
 
-    fireEvent.click(screen.getByText("Delete"));
+    await deleteConfirmed();
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
@@ -110,7 +125,7 @@ describe("FileDetailDialog", () => {
       vi.spyOn(api, "deleteFile").mockRejectedValue(refusal);
       const onOpenChange = renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
 
       expect(await screen.findByText("Delete anyway")).toBeTruthy();
       expect(screen.getByText("The printer is not answering.")).toBeTruthy();
@@ -125,7 +140,7 @@ describe("FileDetailDialog", () => {
         .mockResolvedValueOnce();
       const onOpenChange = renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       fireEvent.click(await screen.findByText("Delete anyway"));
 
       await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
@@ -138,7 +153,7 @@ describe("FileDetailDialog", () => {
       vi.spyOn(api, "deleteFile").mockRejectedValue(refusal);
       const onOpenChange = renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       fireEvent.click(await screen.findByText("Cancel"));
 
       await waitFor(() =>
@@ -154,7 +169,7 @@ describe("FileDetailDialog", () => {
         .mockResolvedValue();
       renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       await screen.findByText("Delete anyway");
       showOther();
 
@@ -175,7 +190,7 @@ describe("FileDetailDialog", () => {
       );
       const onOpenChange = renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       showOther();
       refuse(refusal);
 
@@ -198,7 +213,7 @@ describe("FileDetailDialog", () => {
       );
       const onOpenChange = renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       showOther();
       finish();
 
@@ -213,7 +228,7 @@ describe("FileDetailDialog", () => {
       vi.spyOn(api, "deleteFile").mockRejectedValue(refusal);
       renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       fireEvent.click(await screen.findByText("Delete anyway"));
 
       await waitFor(() =>
@@ -233,7 +248,7 @@ describe("FileDetailDialog", () => {
         );
       const onOpenChange = renderDialog();
 
-      fireEvent.click(screen.getByText("Delete"));
+      await deleteConfirmed();
       fireEvent.click(await screen.findByText("Delete anyway"));
 
       await waitFor(() =>
@@ -241,6 +256,147 @@ describe("FileDetailDialog", () => {
       );
       expect(screen.queryByText("Delete anyway")).toBeNull();
       expect(onOpenChange).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("before deleting", () => {
+    it("asks, naming the file", async () => {
+      vi.spyOn(api, "deleteFile").mockResolvedValue();
+      renderDialog();
+
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+
+      const question = await screen.findByRole("dialog", {
+        name: "Delete this file?",
+      });
+      expect(question).toHaveTextContent("model.txt will be deleted for good.");
+      // Nothing is deleted by the first press.
+      expect(api.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it("deletes nothing when the reader backs out", async () => {
+      vi.spyOn(api, "deleteFile").mockResolvedValue();
+      const onOpenChange = renderDialog();
+
+      fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await screen.findByRole("dialog", { name: "Delete this file?" });
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      await waitFor(() =>
+        expect(screen.queryByText("Delete this file?")).toBeNull(),
+      );
+      expect(api.deleteFile).not.toHaveBeenCalled();
+      // The file's own dialog stays.
+      expect(onOpenChange).not.toHaveBeenCalled();
+    });
+
+    it("says that the file was deleted", async () => {
+      vi.spyOn(api, "deleteFile").mockResolvedValue();
+      renderDialog();
+
+      await deleteConfirmed();
+
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith("model.txt deleted"),
+      );
+    });
+
+    it("deletes once however often the button is pressed", async () => {
+      let done: () => void = () => {};
+      vi.spyOn(api, "deleteFile").mockReturnValue(
+        new Promise<void>((resolve) => (done = resolve)),
+      );
+      renderDialog();
+
+      await deleteConfirmed();
+      const waiting = await screen.findByRole("button", { name: "Deleting…" });
+      expect(waiting).toBeDisabled();
+      fireEvent.click(waiting);
+
+      expect(api.deleteFile).toHaveBeenCalledTimes(1);
+      done();
+    });
+  });
+
+  describe("starting a print", () => {
+    function renderPrintable(onOpenChange = vi.fn()) {
+      vi.spyOn(api, "fileDetails").mockResolvedValue({
+        filename: "dragon.ctb",
+        path: "dragon.ctb",
+        bed_size_mm: [68, 120, 150],
+        height_mm: 42.5,
+        layer_count: 850,
+        layer_height_mm: 0.05,
+        resolution: [1440, 2560],
+        print_time_secs: 7200,
+      });
+      render(dialogFor(printable, onOpenChange));
+      return onOpenChange;
+    }
+
+    it("says that the print was started and closes", async () => {
+      vi.spyOn(api, "printerCommand").mockResolvedValue();
+      const onOpenChange = renderPrintable();
+
+      fireEvent.click(screen.getByRole("button", { name: "Start print" }));
+
+      await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+      expect(api.printerCommand).toHaveBeenCalledWith(
+        "start_print",
+        "dragon.ctb",
+      );
+      expect(toast.success).toHaveBeenCalledWith("Print started");
+    });
+
+    it("says why the print was not started, and stays open", async () => {
+      vi.spyOn(api, "printerCommand").mockRejectedValue(
+        new ApiError(409, "A print is already under way.", "print_in_progress"),
+      );
+      const onOpenChange = renderPrintable();
+
+      fireEvent.click(screen.getByRole("button", { name: "Start print" }));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(
+          "A print is already under way.",
+        ),
+      );
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(toast.success).not.toHaveBeenCalled();
+      await waitFor(() =>
+        expect(
+          screen.getByRole("button", { name: "Start print" }),
+        ).toBeEnabled(),
+      );
+    });
+
+    it("starts one print however often the button is pressed", async () => {
+      let done: () => void = () => {};
+      vi.spyOn(api, "printerCommand").mockReturnValue(
+        new Promise<void>((resolve) => (done = resolve)),
+      );
+      renderPrintable();
+
+      fireEvent.click(screen.getByRole("button", { name: "Start print" }));
+      const waiting = await screen.findByRole("button", { name: "Starting…" });
+      expect(waiting).toBeDisabled();
+      // Nor can the file be deleted while its print is being started.
+      expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+      fireEvent.click(waiting);
+
+      expect(api.printerCommand).toHaveBeenCalledTimes(1);
+      done();
+    });
+
+    it("says what its figures are", async () => {
+      renderPrintable();
+      expect(await screen.findByText("Layers")).toBeInTheDocument();
+      expect(screen.getByText("850")).toBeInTheDocument();
+      expect(screen.getByText("Print time")).toBeInTheDocument();
+      expect(screen.getByText("42.5 mm")).toBeInTheDocument();
+      expect(
+        screen.getByRole("img", { name: "Preview of the print" }),
+      ).toBeInTheDocument();
     });
   });
 });

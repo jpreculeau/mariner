@@ -39,6 +39,9 @@ export default {
           DEFAULT: "hsl(var(--secondary))",
           foreground: "hsl(var(--secondary-foreground))",
         },
+        // Red for text and outlines on the page's dark ground, where the
+        // red of a button's fill is too dark to read.
+        danger: "hsl(var(--danger))",
         destructive: {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",

@@ -7,12 +7,15 @@ import {
 } from "@/components/ui/popover";
 import { themes, getStoredThemeId, applyTheme } from "@/lib/themes";
 import { fonts, getStoredFontId, applyFont } from "@/lib/fonts";
+import { languages, useI18n, type TextKey } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export function ThemeSwitcher() {
   const [activeId, setActiveId] = useState(getStoredThemeId);
 
   const [fontId, setFontId] = useState(getStoredFontId);
+  const { t, lang, setLang } = useI18n();
+  const heading = "mb-2 px-2 text-xs font-medium text-muted-foreground";
 
   useEffect(() => {
     applyTheme(activeId);
@@ -27,15 +30,13 @@ export function ThemeSwitcher() {
       <PopoverTrigger asChild>
         <button
           className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Appearance"
+          aria-label={t("appearance.open")}
         >
-          <Palette className="h-4 w-4" />
+          <Palette className="h-4 w-4" aria-hidden />
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 p-2">
-        <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">
-          Printer Theme
-        </p>
+        <p className={heading}>{t("appearance.theme")}</p>
         <div className="space-y-0.5">
           {themes.map((theme) => (
             <button
@@ -52,14 +53,13 @@ export function ThemeSwitcher() {
               <span
                 className="h-3.5 w-3.5 rounded-full border border-border"
                 style={{ backgroundColor: theme.accent }}
+                aria-hidden
               />
               {theme.name}
             </button>
           ))}
         </div>
-        <p className="mb-2 mt-3 px-2 text-xs font-medium text-muted-foreground">
-          Typeface
-        </p>
+        <p className={cn(heading, "mt-3")}>{t("appearance.typeface")}</p>
         <div className="space-y-0.5">
           {fonts.map((font) => (
             <button
@@ -77,8 +77,28 @@ export function ThemeSwitcher() {
             >
               {font.name}
               <span className="text-xs font-normal text-muted-foreground">
-                {font.hint}
+                {t(`font.${font.id}.hint` as TextKey)}
               </span>
+            </button>
+          ))}
+        </div>
+        <p className={cn(heading, "mt-3")}>{t("appearance.language")}</p>
+        <div className="space-y-0.5">
+          {languages.map((language) => (
+            <button
+              key={language.id}
+              onClick={() => setLang(language.id)}
+              aria-pressed={lang === language.id}
+              // Each under its own name, read aloud in its own voice.
+              lang={language.id}
+              className={cn(
+                "flex w-full items-center rounded-md px-2 py-2 text-sm transition-colors",
+                lang === language.id
+                  ? "bg-muted font-medium text-foreground"
+                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
+              )}
+            >
+              {language.name}
             </button>
           ))}
         </div>

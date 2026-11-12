@@ -9,6 +9,8 @@ const Progress = React.forwardRef<
 >(({ className, value, ...props }, ref) => (
   <ProgressPrimitive.Root
     ref={ref}
+    // Passed on: it is what tells a screen reader how far the bar is.
+    value={value}
     className={cn(
       "relative h-4 w-full overflow-hidden rounded-full bg-secondary",
       className,

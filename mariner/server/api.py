@@ -611,33 +611,53 @@ def delete_file() -> Union[str, Response]:
     return jsonify({"success": True})
 
 
+def _refuse_folder(code: str, title: str, description: str) -> NoReturn:
+    """Answer 400 to a folder that cannot be made, saying why."""
+    body = {"code": code, "title": title, "description": description}
+    abort(make_response(jsonify(body), 400))
+
+
 @api.route("/create_directory", methods=["POST"])
 def create_directory() -> Union[str, Response]:
     safe_name = safe_filename(request.args.get("name", type=str))
     if safe_name is None:
-        abort(400)
+        _refuse_folder(
+            "name_not_allowed",
+            "Name Not Allowed",
+            "A folder cannot have this name. Leave out slashes, and names "
+            "made of dots only.",
+        )
 
     parent = _resolve_or_400(request.args.get("path", "."))
     if not os.path.isdir(parent):
         abort(400)
     new_path = parent / safe_name
     if folder_depth(new_path) > MAX_FOLDER_DEPTH:
-        body = {
-            "code": "folder_too_deep",
-            "title": "Too Many Folders Deep",
-            "description": f"Folders can be {MAX_FOLDER_DEPTH} deep at most. "
-            "Make this one higher up.",
-        }
-        abort(make_response(jsonify(body), 400))
+        _refuse_folder(
+            "folder_too_deep",
+            "Too Many Folders Deep",
+            f"Folders can be {MAX_FOLDER_DEPTH} deep at most. Make this one "
+            "higher up.",
+        )
 
     try:
         os.mkdir(new_path)
     except FileExistsError:
-        abort(400)
+        _refuse_folder(
+            "folder_exists",
+            "Name Already Taken",
+            "A folder or a file of this name is already there. Give the "
+            "folder another name.",
+        )
     except OSError as error:
         # A path longer than the system takes, a drive that is full.
         logger.warning("Could not make the folder %r: %s", safe_name, error)
-        abort(400)
+        _refuse_folder(
+            "folder_not_created",
+            "Folder Not Made",
+            "The folder could not be made: its name may be too long, or "
+            "the drive full. Mariner's log says more.",
+        )
     return jsonify({"success": True})
 
 

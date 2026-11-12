@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { LanguageProvider } from "@/lib/i18n";
 
 describe("ThemeSwitcher", () => {
   beforeEach(() => {
@@ -49,5 +50,29 @@ describe("ThemeSwitcher", () => {
     fireEvent.click(saturn);
     expect(saturn).toHaveAttribute("aria-pressed", "true");
     expect(localStorage.getItem("mariner-theme")).toBe("saturn");
+  });
+
+  it("lets the reader choose the language, each under its own name", async () => {
+    render(
+      <LanguageProvider>
+        <ThemeSwitcher />
+      </LanguageProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Appearance" }));
+    const french = await screen.findByRole("button", { name: "Français" });
+    expect(french).toHaveAttribute("lang", "fr");
+    expect(screen.getByRole("button", { name: "English" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    fireEvent.click(french);
+
+    expect(french).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Langue")).toBeInTheDocument();
+    expect(
+      screen.getByText("Des lettres dessinées pour ne pas se confondre"),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem("mariner-language")).toBe("fr");
   });
 });

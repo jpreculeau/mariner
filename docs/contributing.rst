@@ -113,6 +113,12 @@ the Flask backend::
 
    $ npm run dev
 
+Every text of the page is in ``frontend/src/lib/i18n/en.ts``, and in French
+in ``fr.ts``; a test fails when the two do not hold the same texts. To add a
+language, add its file next to them and list it in ``core.ts``. A refusal of
+the server is put into the page's language by its code (``error.<code>``): a
+test reads the server's source and fails when a code has no text.
+
 The page fetches nothing from another site. Its typefaces come from the
 ``@fontsource`` packages, are imported in ``frontend/src/main.tsx`` and
 listed in ``frontend/src/lib/fonts.ts``; the build copies them next to the

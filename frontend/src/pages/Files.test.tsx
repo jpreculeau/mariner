@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import Files from "./Files";
@@ -12,7 +18,11 @@ vi.mock("@/components/ui/sonner", () => ({
 
 function renderFiles() {
   const { container } = render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
       <MemoryRouter>
         <Files />
       </MemoryRouter>
@@ -29,6 +39,7 @@ describe("Files", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.success).mockClear();
     vi.spyOn(api, "listFiles").mockResolvedValue({
       directories: [],
       files: [],
@@ -43,9 +54,12 @@ describe("Files", () => {
     pick(input, new File(["x"], "model.ctb"));
 
     await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(2));
-    expect(api.uploadFile).toHaveBeenCalledWith(expect.any(File), ".", {
-      ignoreUnreachablePrinter: false,
-    });
+    expect(api.uploadFile).toHaveBeenCalledWith(
+      expect.any(File),
+      ".",
+      { ignoreUnreachablePrinter: false },
+      expect.any(Function),
+    );
     expect(toast.error).not.toHaveBeenCalled();
   });
 
@@ -82,7 +96,7 @@ describe("Files", () => {
     );
     const input = renderFiles();
     await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
-    const button = screen.getByRole("button", { name: "Upload" });
+    const button = screen.getByRole("button", { name: "Upload a file" });
 
     pick(input, new File(["x"], "first.ctb"));
     await waitFor(() => expect(button).toHaveProperty("disabled", true));
@@ -146,9 +160,12 @@ describe("Files", () => {
       fireEvent.click(await screen.findByText("Replace anyway"));
 
       await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(2));
-      expect(api.uploadFile).toHaveBeenLastCalledWith(file, ".", {
-        ignoreUnreachablePrinter: true,
-      });
+      expect(api.uploadFile).toHaveBeenLastCalledWith(
+        file,
+        ".",
+        { ignoreUnreachablePrinter: true },
+        expect.any(Function),
+      );
       expect(screen.queryByText("Replace anyway")).toBeNull();
     });
 
@@ -180,7 +197,7 @@ describe("Files", () => {
         );
       const input = renderFiles();
       await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
-      const button = screen.getByRole("button", { name: "Upload" });
+      const button = screen.getByRole("button", { name: "Upload a file" });
 
       pick(input, new File(["x"], "model.ctb"));
       fireEvent.click(await screen.findByText("Replace anyway"));
@@ -232,9 +249,12 @@ describe("Files", () => {
       fireEvent.click(confirm);
 
       await waitFor(() => expect(api.uploadFile).toHaveBeenCalledTimes(2));
-      expect(api.uploadFile).toHaveBeenLastCalledWith(file, ".", {
-        ignoreUnreachablePrinter: true,
-      });
+      expect(api.uploadFile).toHaveBeenLastCalledWith(
+        file,
+        ".",
+        { ignoreUnreachablePrinter: true },
+        expect.any(Function),
+      );
     });
 
     it("shows why the confirmed upload was refused after all", async () => {
@@ -254,5 +274,160 @@ describe("Files", () => {
       );
       expect(screen.queryByText("Replace anyway")).toBeNull();
     });
+  });
+
+  describe("while a file is being sent", () => {
+    it("shows how far the upload is, and says when it is done", async () => {
+      let report: (fraction: number) => void = () => {};
+      let finish: () => void = () => {};
+      vi.spyOn(api, "uploadFile").mockImplementation(
+        (_file, _path, _options, onProgress) => {
+          report = onProgress!;
+          return new Promise<void>((resolve) => (finish = resolve));
+        },
+      );
+      const input = renderFiles();
+      pick(input, new File(["x"], "dragon.ctb"));
+
+      const bar = await screen.findByRole("progressbar", {
+        name: "Upload progress",
+      });
+      act(() => report(0.42));
+      expect(bar).toHaveAttribute("aria-valuenow", "42");
+      expect(screen.getByText("Uploading dragon.ctb: 42%")).toBeInTheDocument();
+
+      await act(async () => finish());
+
+      await waitFor(() =>
+        expect(toast.success).toHaveBeenCalledWith("dragon.ctb uploaded"),
+      );
+      expect(screen.queryByRole("progressbar")).toBeNull();
+    });
+
+    it("removes the bar when the upload is refused", async () => {
+      vi.spyOn(api, "uploadFile").mockRejectedValue(
+        new ApiError(507, "No room.", "upload_not_stored"),
+      );
+      const input = renderFiles();
+      pick(input, new File(["x"], "dragon.ctb"));
+
+      await waitFor(() => expect(toast.error).toHaveBeenCalledWith("No room."));
+      expect(screen.queryByRole("progressbar")).toBeNull();
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+  });
+
+  it("offers only the kinds of file the printer takes", () => {
+    const meta = document.createElement("meta");
+    meta.name = "supported-extensions";
+    meta.content = "ctb,cbddlp,fdg";
+    document.head.appendChild(meta);
+    try {
+      const input = renderFiles();
+      expect(input.accept).toBe(".ctb,.cbddlp,.fdg");
+    } finally {
+      meta.remove();
+    }
+  });
+
+  it("offers every file when it was not told which kinds", () => {
+    // Opened through the dev server: the placeholder is still there.
+    const meta = document.createElement("meta");
+    meta.name = "supported-extensions";
+    meta.content = "{{ supported_extensions }}";
+    document.head.appendChild(meta);
+    try {
+      expect(renderFiles().accept).toBe("");
+    } finally {
+      meta.remove();
+    }
+  });
+
+  it("says that the files could not be listed, and lets the reader try again", async () => {
+    vi.spyOn(api, "listFiles").mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    renderFiles();
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("The files could not be listed");
+    expect(alert).toHaveTextContent("cannot be reached");
+
+    vi.mocked(api.listFiles).mockResolvedValue({
+      directories: [],
+      files: [],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(
+      await screen.findByText("This folder is empty."),
+    ).toBeInTheDocument();
+  });
+
+  it("names its buttons whatever the width of the screen", () => {
+    // On a phone only the icons show.
+    renderFiles();
+    expect(
+      screen.getByRole("button", { name: "New folder" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Upload a file" }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the name of a new folder", async () => {
+    renderFiles();
+    fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+    expect(await screen.findByLabelText("Folder name")).toBeInTheDocument();
+  });
+
+  it("says why a folder could not be made", async () => {
+    vi.spyOn(api, "createDirectory").mockRejectedValue(
+      new ApiError(
+        400,
+        "A folder of this name is already there.",
+        "folder_exists",
+      ),
+    );
+    renderFiles();
+    fireEvent.click(screen.getByRole("button", { name: "New folder" }));
+    fireEvent.change(await screen.findByLabelText("Folder name"), {
+      target: { value: "prints" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "A folder of this name is already there.",
+      ),
+    );
+  });
+
+  it("tells a file that can be printed from one that cannot, in words", async () => {
+    vi.mocked(api.listFiles).mockResolvedValue({
+      directories: [{ dirname: "batch" }],
+      files: [
+        {
+          filename: "dragon.ctb",
+          path: "dragon.ctb",
+          can_be_printed: true,
+          print_time_secs: 7200,
+        },
+        { filename: "notes.txt", path: "notes.txt", can_be_printed: false },
+      ],
+    });
+    renderFiles();
+
+    const printable = await screen.findByRole("button", {
+      name: /dragon\.ctb/,
+    });
+    expect(printable).toHaveTextContent("Printable");
+    expect(printable).toHaveAccessibleName(/Print time: 2h 0m/);
+    expect(
+      screen.getByRole("button", { name: /notes\.txt/ }),
+    ).not.toHaveTextContent("Printable");
+    expect(
+      screen.getByRole("button", { name: "Open folder batch" }),
+    ).toBeInTheDocument();
   });
 });

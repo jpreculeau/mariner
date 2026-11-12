@@ -131,12 +131,26 @@ export const fr: Record<TextKey, string> = {
   "error.folder_too_deep":
     "Les dossiers ne peuvent pas être imbriqués plus profondément.",
   "error.folder_exists": "Un dossier ou un fichier porte déjà ce nom.",
+  "error.name_not_allowed":
+    "Un dossier ne peut pas porter ce nom. Évitez les barres obliques et les noms faits seulement de points.",
+  "error.folder_not_created":
+    "Le dossier n'a pas pu être créé\u00a0: son nom est peut-être trop long, ou le disque plein.",
+  "error.printer_not_answering":
+    "L'imprimante n'a pas répondu\u00a0: impossible de savoir si ce fichier est en cours d'impression. Il n'a pas été modifié.",
+  "error.printer_answer_unclear":
+    "Mariner n'a pas obtenu de réponse claire de l'imprimante\u00a0: ce fichier n'a pas été modifié. Réessayez dans un instant.",
   "error.host_command_refused":
     "L'ordinateur qui fait tourner Mariner n'a pas accepté la commande.",
   "error.print_in_progress":
     "Ce fichier est en cours d'impression : il ne peut pas être modifié avant la fin.",
   "error.print_just_started":
     "Une impression vient d'être lancée : attendez que l'imprimante indique ce qu'elle imprime.",
+  "error.file_in_use":
+    "Ce fichier est en cours d'impression\u00a0: il ne peut pas être modifié avant la fin.",
+  "error.print_file_unknown":
+    "L'imprimante imprime mais n'indique pas quel fichier\u00a0: celui-ci n'a pas été modifié. Réessayez dans un instant.",
+  "error.browser_not_served":
+    "Cette adresse est réservée aux trancheurs, pas à un navigateur web.",
   "error.printer_error":
     "L'imprimante n'a pas accepté la commande. Vérifiez qu'elle est allumée et que son câble est branché.",
   "error.file_unreadable":

@@ -43,4 +43,23 @@ describe("PrintProgress", () => {
     render(<PrintProgress job={mockJob} />);
     expect(screen.getByText("dragon.ctb")).toBeInTheDocument();
   });
+
+  it("names its bar, and says how far it is", () => {
+    render(<PrintProgress job={mockJob} />);
+    const bar = screen.getByRole("progressbar", { name: "Print progress" });
+    expect(bar).toHaveAttribute("aria-valuenow", "39.6");
+    expect(bar).toHaveAttribute("aria-valuetext", "39.6%");
+  });
+
+  it("says that its times are estimates", () => {
+    // Both come from the same percentage: neither is measured.
+    render(<PrintProgress job={mockJob} />);
+    expect(screen.getByText("Elapsed (estimate)")).toBeInTheDocument();
+    expect(screen.getByText("Remaining (estimate)")).toBeInTheDocument();
+  });
+
+  it("says what the file name shown is the name of", () => {
+    render(<PrintProgress job={mockJob} />);
+    expect(screen.getByText("File being printed")).toBeInTheDocument();
+  });
 });

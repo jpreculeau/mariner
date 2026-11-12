@@ -1,95 +1,116 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PrintControls } from "./PrintControls";
 
+function controls(
+  overrides: Partial<Parameters<typeof PrintControls>[0]> = {},
+) {
+  const props = {
+    status: "printing" as const,
+    fileName: "dragon.ctb",
+    progress: 39.6,
+    onPause: vi.fn().mockResolvedValue(undefined),
+    onResume: vi.fn().mockResolvedValue(undefined),
+    onCancel: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  };
+  render(<PrintControls {...props} />);
+  return props;
+}
+
+const button = (name: string | RegExp) => screen.getByRole("button", { name });
+
 describe("PrintControls", () => {
-  it("shows Pause button when printing", () => {
-    render(
-      <PrintControls
-        status="printing"
-        onPause={vi.fn()}
-        onResume={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Pause")).toBeInTheDocument();
-    expect(screen.queryByText("Resume")).not.toBeInTheDocument();
+  it("offers to pause a print under way", () => {
+    controls();
+    expect(button("Pause")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
   });
 
-  it("shows Resume button when paused", () => {
-    render(
-      <PrintControls
-        status="paused"
-        onPause={vi.fn()}
-        onResume={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Resume")).toBeInTheDocument();
-    expect(screen.queryByText("Pause")).not.toBeInTheDocument();
+  it("offers to resume a paused print", () => {
+    controls({ status: "paused" });
+    expect(button("Resume")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
   });
 
-  it("shows Cancel button when printing or paused", () => {
-    const { rerender } = render(
-      <PrintControls
-        status="printing"
-        onPause={vi.fn()}
-        onResume={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Cancel")).toBeInTheDocument();
-
-    rerender(
-      <PrintControls
-        status="paused"
-        onPause={vi.fn()}
-        onResume={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    expect(screen.getByText("Cancel")).toBeInTheDocument();
+  it("offers to cancel a print under way or paused", () => {
+    controls({ status: "paused" });
+    expect(button("Cancel print")).toBeInTheDocument();
   });
 
-  it("calls onPause when Pause is clicked", () => {
-    const onPause = vi.fn();
-    render(
-      <PrintControls
-        status="printing"
-        onPause={onPause}
-        onResume={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText("Pause"));
-    expect(onPause).toHaveBeenCalledOnce();
+  it("pauses when asked", async () => {
+    const { onPause } = controls();
+    fireEvent.click(button("Pause"));
+    await waitFor(() => expect(onPause).toHaveBeenCalledTimes(1));
   });
 
-  it("calls onResume when Resume is clicked", () => {
-    const onResume = vi.fn();
-    render(
-      <PrintControls
-        status="paused"
-        onPause={vi.fn()}
-        onResume={onResume}
-        onCancel={vi.fn()}
-      />,
-    );
-    fireEvent.click(screen.getByText("Resume"));
-    expect(onResume).toHaveBeenCalledOnce();
+  it("resumes when asked", async () => {
+    const { onResume } = controls({ status: "paused" });
+    fireEvent.click(button("Resume"));
+    await waitFor(() => expect(onResume).toHaveBeenCalledTimes(1));
   });
 
-  it("calls onCancel when Cancel is clicked", () => {
-    const onCancel = vi.fn();
-    render(
-      <PrintControls
-        status="printing"
-        onPause={vi.fn()}
-        onResume={vi.fn()}
-        onCancel={onCancel}
-      />,
+  it("asks before cancelling, naming the file and what would be lost", async () => {
+    const { onCancel } = controls();
+    fireEvent.click(button("Cancel print"));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Cancel this print?");
+    expect(dialog).toHaveTextContent("dragon.ctb");
+    expect(dialog).toHaveTextContent("39.6%");
+    expect(dialog).toHaveTextContent("cannot be resumed");
+    // Nothing is cancelled by the first press.
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("cancels nothing when the reader backs out", async () => {
+    const { onCancel } = controls();
+    fireEvent.click(button("Cancel print"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Keep printing" }),
     );
-    fireEvent.click(screen.getByText("Cancel"));
-    expect(onCancel).toHaveBeenCalledOnce();
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("cancels once confirmed", async () => {
+    const { onCancel } = controls();
+    fireEvent.click(button("Cancel print"));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel the print" }),
+    );
+
+    await waitFor(() => expect(onCancel).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("sends a command once however often the button is pressed", async () => {
+    let done: () => void = () => {};
+    const onPause = vi.fn(
+      () => new Promise<void>((resolve) => (done = resolve)),
+    );
+    controls({ onPause });
+
+    fireEvent.click(button("Pause"));
+    // Said while it lasts, and nothing else can be asked meanwhile.
+    const waiting = await screen.findByRole("button", { name: "Pausing…" });
+    expect(waiting).toBeDisabled();
+    expect(button("Cancel print")).toBeDisabled();
+    fireEvent.click(waiting);
+    expect(onPause).toHaveBeenCalledTimes(1);
+
+    done();
+    await waitFor(() => expect(button("Pause")).toBeEnabled());
+  });
+
+  it("can be used again after a command that failed", async () => {
+    const onPause = vi.fn().mockRejectedValue(new Error("refused"));
+    controls({ onPause });
+
+    fireEvent.click(button("Pause"));
+
+    await waitFor(() => expect(onPause).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(button("Pause")).toBeEnabled());
   });
 });

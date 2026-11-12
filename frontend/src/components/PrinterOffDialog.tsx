@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 
 interface PrinterOffDialogProps {
   /** Why the server refused; shown as is. Null keeps the dialog closed. */
@@ -31,6 +32,7 @@ export function PrinterOffDialog({
   onConfirm,
   onCancel,
 }: PrinterOffDialogProps) {
+  const { t } = useI18n();
   return (
     <Dialog
       open={reason !== null}
@@ -40,16 +42,13 @@ export function PrinterOffDialog({
     >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Printer not answering</DialogTitle>
+          <DialogTitle>{t("printerOff.title")}</DialogTitle>
           <DialogDescription>{reason}</DialogDescription>
         </DialogHeader>
-        <p className="text-sm">
-          Go ahead only if the printer is switched off. If it is printing this
-          file, the print will be ruined.
-        </p>
+        <p className="text-sm">{t("printerOff.text")}</p>
         <DialogFooter className="gap-2 sm:gap-0">
           <Button type="button" variant="ghost" onClick={onCancel}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button type="button" variant="destructive" onClick={onConfirm}>
             {confirmLabel}

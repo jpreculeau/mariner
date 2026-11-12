@@ -10,9 +10,9 @@ vi.mock("@/components/ui/sonner", () => ({
 
 async function confirmShutdown() {
   render(<PowerMenu />);
-  fireEvent.click(screen.getByRole("button"));
-  fireEvent.click(await screen.findByText("Shut Down"));
-  fireEvent.click(await screen.findByText("Confirm Shutdown?"));
+  fireEvent.click(screen.getByRole("button", { name: "Power" }));
+  fireEvent.click(await screen.findByText("Shut down"));
+  fireEvent.click(await screen.findByText("Confirm shutdown?"));
 }
 
 describe("PowerMenu", () => {

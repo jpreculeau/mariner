@@ -136,12 +136,26 @@ export const en = {
     "There is not enough room to store this file. Free some room and send it again.",
   "error.folder_too_deep": "Folders cannot be nested any deeper than this.",
   "error.folder_exists": "A folder or a file of this name is already there.",
+  "error.name_not_allowed":
+    "A folder cannot have this name. Leave out slashes, and names made of dots only.",
+  "error.folder_not_created":
+    "The folder could not be made: its name may be too long, or the drive full.",
+  "error.printer_not_answering":
+    "The printer did not answer, so there is no telling whether this file is being printed. It was left untouched.",
+  "error.printer_answer_unclear":
+    "Mariner could not get a clear answer from the printer, so this file was left untouched. Try again in a moment.",
   "error.host_command_refused":
     "The computer running Mariner did not accept the command.",
   "error.print_in_progress":
     "This file is being printed: it cannot be changed until the print is over.",
   "error.print_just_started":
     "A print was started a moment ago: wait until the printer says what it is printing.",
+  "error.file_in_use":
+    "This file is being printed: it cannot be changed until the print is over.",
+  "error.print_file_unknown":
+    "The printer is printing but does not say which file, so this one was left untouched. Try again in a moment.",
+  "error.browser_not_served":
+    "This address is for slicers, not for a web browser.",
   "error.printer_error":
     "The printer did not accept the command. Check that it is switched on and that its cable is plugged in.",
   "error.file_unreadable": "This file cannot be read as a file to print.",

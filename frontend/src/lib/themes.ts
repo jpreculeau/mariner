@@ -35,13 +35,15 @@ export const themes: PrinterTheme[] = [
     name: "Elegoo Mars",
     accent: "#dc2626",
     vars: {
-      primary: "0 72% 51%",
-      "primary-foreground": "0 0% 100%",
-      accent: "0 72% 51%",
-      "accent-foreground": "0 0% 100%",
-      ring: "0 72% 51%",
-      "sidebar-primary": "0 72% 51%",
-      "sidebar-ring": "0 72% 51%",
+      // Lighter than the red of the swatch: as text on the page's dark
+      // grounds that red could not be read.
+      primary: "0 80% 66%",
+      "primary-foreground": "0 0% 7%",
+      accent: "0 80% 66%",
+      "accent-foreground": "0 0% 7%",
+      ring: "0 80% 66%",
+      "sidebar-primary": "0 80% 66%",
+      "sidebar-ring": "0 80% 66%",
     },
   },
   {
@@ -82,15 +84,11 @@ export function getStoredThemeId(): string {
 
 export function applyTheme(themeId: string) {
   const theme = themes.find((t) => t.id === themeId) || themes[0];
-  // Apply to both :root and the .dark container so variables aren't shadowed
-  const targets = [
-    document.documentElement,
-    document.querySelector(".dark"),
-  ].filter(Boolean) as HTMLElement[];
-  targets.forEach((el) => {
-    Object.entries(theme.vars).forEach(([key, value]) => {
-      el.style.setProperty(`--${key}`, value);
-    });
+  // On the document itself: dialogs and menus are drawn at its root,
+  // outside the page's frame.
+  const style = document.documentElement.style;
+  Object.entries(theme.vars).forEach(([key, value]) => {
+    style.setProperty(`--${key}`, value);
   });
   remember(THEME_KEY, theme.id);
 }

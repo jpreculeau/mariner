@@ -1764,6 +1764,27 @@ class MarinerServerTest(TestCase):
             True
         )
 
+    def test_create_directory_says_why_it_could_not(self) -> None:
+        # In words the page can show, with a code it can translate.
+        self.fs.create_dir("/mnt/usb_share/there")
+        self.fs.create_file("/mnt/usb_share/taken.ctb")
+        for name, code in (
+            ("there", "folder_exists"),
+            ("taken.ctb", "folder_exists"),
+            ("..", "name_not_allowed"),
+            ("a/b", "name_not_allowed"),
+            ("", "name_not_allowed"),
+        ):
+            response = self.client.post(f"/api/create_directory?path=.&name={name}")
+            expect(response.status_code).to_equal(400)
+            body = response.get_json()
+            expect(body["code"]).to_equal(code)
+            expect(len(body["description"]) > 10).to_equal(True)
+        with patch("os.mkdir", side_effect=OSError(36, "File name too long")):
+            response = self.client.post("/api/create_directory?path=.&name=new")
+        expect(response.status_code).to_equal(400)
+        expect(response.get_json()["code"]).to_equal("folder_not_created")
+
     def test_create_directory_keeps_the_name_it_was_given(self) -> None:
         response = self.client.post(
             "/api/create_directory?path=.&name=mes%20pi%C3%A8ces"

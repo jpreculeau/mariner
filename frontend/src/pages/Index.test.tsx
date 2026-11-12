@@ -1,0 +1,175 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
+import Index from "./Index";
+import { api, ApiError, type PrintStatusResponse } from "@/lib/api";
+import { toast } from "@/components/ui/sonner";
+import { LanguageProvider } from "@/lib/i18n";
+
+vi.mock("@/components/ui/sonner", () => ({
+  toast: { error: vi.fn(), success: vi.fn() },
+}));
+
+const printing: PrintStatusResponse = {
+  state: "PRINTING",
+  selected_file: "dragon.ctb",
+  progress: 39.6,
+  current_layer: 847,
+  layer_count: 2140,
+  print_time_secs: 12160,
+  time_left_secs: 7340,
+};
+
+function renderIndex() {
+  return render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <MemoryRouter>
+        <LanguageProvider>
+          <Index />
+        </LanguageProvider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("Index", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.success).mockClear();
+    localStorage.clear();
+  });
+
+  it("names the page in the browser's tab", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    renderIndex();
+    await screen.findByText("39.6%");
+    expect(document.title).toBe("Dashboard · Mariner");
+  });
+
+  it("has a heading while it waits for the printer", () => {
+    vi.spyOn(api, "printStatus").mockReturnValue(new Promise(() => {}));
+    renderIndex();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(
+      "Printer dashboard",
+    );
+    // Said to those who cannot see the spinner turn.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Connecting to the printer…",
+    );
+  });
+
+  it("says that Mariner cannot be reached, and what to check", async () => {
+    vi.spyOn(api, "printStatus").mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    renderIndex();
+    expect(
+      await screen.findByRole("heading", { name: "Mariner cannot be reached" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toBeInTheDocument();
+    expect(
+      screen.getByText(/switched on and on the network/),
+    ).toBeInTheDocument();
+  });
+
+  it("says that the printer does not answer, and what to check", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue({
+      ...printing,
+      state: "CLOSED",
+    });
+    renderIndex();
+    expect(
+      await screen.findByRole("heading", { name: "Printer not answering" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/its cable/)).toBeInTheDocument();
+  });
+
+  it("announces the state of the printer", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    renderIndex();
+    await screen.findByText("39.6%");
+    expect(screen.getByRole("status")).toHaveAccessibleName(
+      "Printer: Printing",
+    );
+  });
+
+  it("says that a print was paused", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    vi.spyOn(api, "printerCommand").mockResolvedValue();
+    renderIndex();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Print paused"),
+    );
+    expect(api.printerCommand).toHaveBeenCalledWith("pause_print");
+  });
+
+  it("says why a command was not taken", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    vi.spyOn(api, "printerCommand").mockRejectedValue(
+      new ApiError(500, "The printer did not answer.", "printer_error"),
+    );
+    renderIndex();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("The printer did not answer."),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    // And the button can be pressed again.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Pause" })).toBeEnabled(),
+    );
+  });
+
+  it("cancels a print only once confirmed, and says so", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    vi.spyOn(api, "printerCommand").mockResolvedValue();
+    renderIndex();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel print" }),
+    );
+    expect(api.printerCommand).not.toHaveBeenCalled();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Cancel the print" }),
+    );
+
+    await waitFor(() =>
+      expect(api.printerCommand).toHaveBeenCalledWith("cancel_print"),
+    );
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Print cancelled"),
+    );
+  });
+
+  it("is read in French by a French reader", async () => {
+    vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    vi.spyOn(api, "printerCommand").mockRejectedValue(
+      new ApiError(500, "The printer did not answer.", "printer_error"),
+    );
+    renderIndex();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Mettre en pause" }),
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(toast.error).mock.calls[0][0]).toContain(
+        "n'a pas accepté la commande",
+      ),
+    );
+    expect(document.title).toBe("Tableau de bord · Mariner");
+    expect(screen.getByText("Couche en cours")).toBeInTheDocument();
+  });
+});

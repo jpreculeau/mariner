@@ -7,6 +7,8 @@ import {
 } from "@/components/ui/popover";
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError } from "@/lib/api";
+import { errorText } from "@/lib/errors";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export function PowerMenu() {
@@ -14,6 +16,7 @@ export function PowerMenu() {
     null,
   );
   const [open, setOpen] = useState(false);
+  const { t, lang } = useI18n();
 
   function reset() {
     setConfirming(null);
@@ -34,7 +37,7 @@ export function PowerMenu() {
       // A dropped connection is the host going down. An answer is the
       // host saying no.
       if (error instanceof ApiError) {
-        toast.error(error.message);
+        toast.error(errorText(error, t, lang));
       }
     }
     setOpen(false);
@@ -52,14 +55,14 @@ export function PowerMenu() {
       <PopoverTrigger asChild>
         <button
           className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          aria-label="Power menu"
+          aria-label={t("power.open")}
         >
-          <Power className="h-4 w-4" />
+          <Power className="h-4 w-4" aria-hidden />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-48 p-2">
+      <PopoverContent align="end" className="w-64 p-2">
         <p className="mb-2 px-2 text-xs font-medium text-muted-foreground">
-          Host Power
+          {t("power.heading")}
         </p>
         <div className="space-y-0.5">
           <button
@@ -67,24 +70,28 @@ export function PowerMenu() {
             className={cn(
               "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
               confirming === "reboot"
-                ? "bg-destructive/10 font-medium text-destructive"
+                ? "bg-destructive/10 font-medium text-danger"
                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
             )}
           >
-            <RotateCcw className="h-4 w-4" />
-            {confirming === "reboot" ? "Confirm Reboot?" : "Reboot"}
+            <RotateCcw className="h-4 w-4" aria-hidden />
+            {confirming === "reboot"
+              ? t("power.rebootConfirm")
+              : t("power.reboot")}
           </button>
           <button
             onClick={() => handleAction("shutdown")}
             className={cn(
               "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
               confirming === "shutdown"
-                ? "bg-destructive/10 font-medium text-destructive"
+                ? "bg-destructive/10 font-medium text-danger"
                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
             )}
           >
-            <PowerOff className="h-4 w-4" />
-            {confirming === "shutdown" ? "Confirm Shutdown?" : "Shut Down"}
+            <PowerOff className="h-4 w-4" aria-hidden />
+            {confirming === "shutdown"
+              ? t("power.shutdownConfirm")
+              : t("power.shutdown")}
           </button>
         </div>
       </PopoverContent>
