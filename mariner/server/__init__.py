@@ -120,6 +120,9 @@ def keep_requests_on_one_line() -> None:
             handler.addFilter(_OneLine())
 
 
+CONNECTION_LIMIT = 32
+
+
 def use_spool_directory() -> None:
     """Have uploads wait on a drive while they arrive, not in memory.
 
@@ -160,6 +163,8 @@ def main() -> None:
     CacheBootstrapper().start()
     start_providers()
 
+    for ignored in config.ignored_settings():
+        logger.warning("Configuration: %s", ignored)
     use_spool_directory()
     serve(
         flask_app,
@@ -167,4 +172,6 @@ def main() -> None:
         port=config.get_http_port(),
         # Left to itself the web server refuses anything over a gigabyte.
         max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
+        # Each connection can hold an upload waiting on the drive.
+        connection_limit=CONNECTION_LIMIT,
     )

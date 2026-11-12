@@ -49,6 +49,15 @@ spool_directory = "/srv/spool"
         expect(config.get_uvtools_enabled()).to_equal(False)
         expect(config.get_sdcp_enabled()).to_equal(False)
 
+    def test_a_switch_set_to_something_else_than_true_or_false_is_off(self) -> None:
+        # Written "false" between quotes, it would otherwise count as on.
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents='[uvtools]\nenabled = "false"\n[sdcp]\nenabled = "no"\n',
+        )
+        expect(config.get_uvtools_enabled()).to_equal(False)
+        expect(config.get_sdcp_enabled()).to_equal(False)
+
     def test_host_names_can_be_allowed(self) -> None:
         expect(config.get_http_allowed_hosts()).to_equal([])
         config._get_config.cache_clear()
@@ -75,6 +84,18 @@ spool_directory = "/srv/spool"
             )
             expect(config.get_max_upload_bytes()).to_equal(2048 * 1024 * 1024)
             self.fs.remove("/etc/mariner/config.toml")
+
+    def test_settings_that_are_passed_over_are_named(self) -> None:
+        expect(config.ignored_settings()).to_equal([])
+        config._get_config.cache_clear()
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents='[http]\nmax_upload_size_mb = "4096"\n'
+            '[uvtools]\nenabled = "false"\n[sdcp]\nenabled = 1\n',
+        )
+        named = " ".join(config.ignored_settings())
+        for setting in ("max_upload_size_mb", "[uvtools] enabled", "[sdcp] enabled"):
+            expect(setting in named).to_equal(True)
 
     def test_can_customize_files_directory(self) -> None:
         self.fs.create_file(

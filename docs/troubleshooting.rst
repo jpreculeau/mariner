@@ -220,10 +220,12 @@ are protected: the file is then refused.
 .. rubric:: Mariner answers "Name Not Allowed" (error 403, ``host_not_allowed``)
 
 Mariner answers to its IP address and to names that only exist on a local
-network: a single word such as ``mariner``, or a name ending in ``.local``,
-``.lan``, ``.home``, ``.home.arpa`` or ``.internal``. If you reach it under
-another name, one of your own domain or of a VPN for instance, add that name
-under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
+network: a single word such as ``mariner``, the name of the computer it
+runs on, or a name ending in ``.local``, ``.lan``, ``.home``,
+``.home.arpa``, ``.internal`` or ``.localdomain``. If you reach it under
+another name, one your router gives (``mariner.fritz.box``), one of a VPN
+(Tailscale's ``.ts.net``) or of your own domain, add that name, without a
+port, under ``[http]`` in ``/etc/mariner/config.toml`` and restart Mariner:
 
 .. code-block:: toml
 
@@ -236,23 +238,43 @@ and have your browser read and drive it.
 
 .. rubric:: A request is refused as coming from another site (error 403, ``cross_site_request``)
 
-Browsers say which site a request comes from, and Mariner serves only its
-own pages' requests. A bookmark, a typed address and a link to Mariner all
-work. Slicers and scripts are not affected: they are not browsers and say
-nothing of a site. A script that sends an ``Origin`` header must send
-Mariner's own address in it, or none.
+When a browser says which page a request comes from, Mariner serves only
+its own pages' requests. A bookmark, a typed address and a link to Mariner
+all work. Slicers and scripts are not affected: they are not browsers and
+say nothing of a page. A script that sends an ``Origin`` or ``Referer``
+header must send Mariner's own address in it, or none.
+
+The addresses under ``/uvtools`` are for slicers. Opened in a browser they
+answer with this error, whatever page they are opened from: they act on a
+plain request, which any page can have a browser send.
+
+Behind a relay such as nginx, the page is refused its own requests when the
+relay asks Mariner under another name or port than the browser used. Have
+the relay pass the name on as it came (``proxy_set_header Host
+$http_host;``), or list the name the browser uses in ``allowed_hosts``.
+
+Mariner can no longer be shown inside another page, a dashboard for
+instance: a page able to do that could lay its own buttons over Mariner's.
 
 .. rubric:: A file is refused as too large (error 413)
 
 Files can be 2048 MB at most, from the web page and from slicers. To accept
 larger ones, set ``max_upload_size_mb`` under ``[http]`` in
-``/etc/mariner/config.toml`` and restart Mariner.
+``/etc/mariner/config.toml`` and restart Mariner. The answer comes from the
+web server itself, as plain text.
 
-While it arrives, a file is kept in ``/var/tmp``, which must have room for
-it, twice over for a file sent from the web page. Another place on a drive
-can be set as ``spool_directory``. If that place cannot be used, Mariner
+.. rubric:: A file is refused for want of room (error 507, ``upload_not_stored``)
+
+While it arrives, a file is kept in ``/var/tmp``, on the drive of the
+computer Mariner runs on, which must have room for it: twice over for a
+file sent from the web page. Mariner refuses beforehand a file larger than
+the room there is. Free some, or set another place on a drive as
+``spool_directory`` under ``[http]``. If that place cannot be used, Mariner
 says so in the logs at start and falls back on ``/tmp``; where ``/tmp`` is
-held in memory, large files then fail to upload.
+held in memory there is little room in it.
+
+The same code with error 500 means the file did arrive and the printer's
+drive, where files are stored, had no room for it.
 
 .. rubric:: A folder cannot be made (error 400, ``folder_too_deep``)
 

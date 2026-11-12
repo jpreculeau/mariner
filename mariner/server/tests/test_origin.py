@@ -58,9 +58,64 @@ class CrossSiteTest(TestCase):
         headers = {"Sec-Fetch-Site": "same-origin", "Origin": "http://localhost:3000"}
         expect(_refusal(headers, "localhost:5050")).to_equal(None)
 
+    def test_a_page_that_only_shows_where_it_was_followed_from(self) -> None:
+        # A link followed or a picture loaded over plain HTTP: no word of
+        # the site, but often the address of the page that asked.
+        expect(_refusal({"Referer": "http://192.168.1.20:5050/files"})).to_equal(None)
+        for elsewhere in ("http://evil.example/page", "http://192.168.1.20:8080/"):
+            refusal = _refusal({"Referer": elsewhere})
+            expect(none_throws(refusal).code).to_equal("cross_site_request")
+        # What the browser says of the site still counts first.
+        headers = {"Sec-Fetch-Site": "same-origin", "Referer": "http://x.example/"}
+        expect(_refusal(headers)).to_equal(None)
+
+    def test_an_origin_that_is_not_a_web_page_s_is_let_through(self) -> None:
+        # A slicer built as a desktop application can give one of its own
+        # kind. No page on the web can.
+        for own in ("app://slicer", "file://", "chrome-extension://abcdef"):
+            expect(_refusal({"Origin": own})).to_equal(None)
+
+    def test_a_page_served_under_an_allowed_name_is_let_through(self) -> None:
+        # Behind a relay that asks Mariner under another name or port than
+        # the browser used.
+        with patch.object(
+            origin.config, "get_http_allowed_hosts", return_value=["printer.lan"]
+        ):
+            expect(
+                _refusal({"Origin": "http://printer.lan:8080"}, "127.0.0.1:5050")
+            ).to_equal(None)
+            refusal = _refusal({"Origin": "http://evil.example"}, "127.0.0.1:5050")
+            expect(none_throws(refusal).code).to_equal("cross_site_request")
+        # Allowing any name to be asked for does not make every page a friend.
+        with patch.object(origin.config, "get_http_allowed_hosts", return_value=["*"]):
+            refusal = _refusal({"Origin": "http://evil.example"}, "127.0.0.1:5050")
+            expect(none_throws(refusal).code).to_equal("cross_site_request")
+
     def test_a_program_that_is_not_a_browser_is_let_through(self) -> None:
         # Slicers and scripts send neither.
         expect(_refusal({})).to_equal(None)
+
+
+class BrowserTest(TestCase):
+    def test_what_browsers_call_themselves(self) -> None:
+        for agent in (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/153.0",
+            "Mozilla/5.0 (Macintosh; rv:140.0) Gecko/20100101 Firefox/140.0",
+            "  mozilla/4.0 (compatible)",
+            "Opera/9.80 (Windows NT 6.1) Presto/2.12 Version/12.16",
+        ):
+            expect(origin.is_browser({"User-Agent": agent})).to_equal(True)
+
+    def test_what_slicers_and_scripts_call_themselves(self) -> None:
+        for headers in (
+            {},
+            {"User-Agent": ""},
+            {"User-Agent": "UVtools/5.0"},
+            {"User-Agent": "curl/8.5.0"},
+            {"User-Agent": "python-requests/2.32"},
+            {"User-Agent": "Not Mozilla/5.0"},
+        ):
+            expect(origin.is_browser(headers)).to_equal(False)
 
 
 class HostTest(TestCase):
@@ -78,6 +133,8 @@ class HostTest(TestCase):
             "printer.lan",
             "printer.home.arpa:5050",
             "printer.internal",
+            "my_pi",
+            "my_pi.local",
             "mariner.local.:5050",
         ):
             expect(_refusal({}, host)).to_equal(None)
@@ -86,7 +143,14 @@ class HostTest(TestCase):
         # A site can have its own name answer with the address of the
         # printer; the browser then takes its pages and Mariner for one
         # site. The name it asks for gives it away.
-        for host in ("evil.example", "evil.example:5050", "local.evil.example", "a.b"):
+        for host in (
+            "evil.example",
+            "evil.example:5050",
+            "local.evil.example",
+            "a.b",
+            "evil.com",
+            "mariner.fritz.box",
+        ):
             refusal = _refusal({"Sec-Fetch-Site": "same-origin"}, host)
             expect(none_throws(refusal).code).to_equal("host_not_allowed")
             expect("allowed_hosts" in none_throws(refusal).description).to_equal(True)

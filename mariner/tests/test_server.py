@@ -1,5 +1,7 @@
 import hashlib
+import errno
 import io
+import shutil
 import os
 import subprocess
 import pathlib
@@ -923,6 +925,88 @@ class MarinerServerTest(TestCase):
         ):
             response = self.client.get("/api/list_files", headers=headers)
             expect(response.status_code).to_equal(200)
+
+    def test_the_page_s_own_requests_come_from_a_browser(self) -> None:
+        # Over plain HTTP they say nothing of the site either.
+        browser = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/153.0"}
+        response = self.client.get("/api/list_files", headers=browser)
+        expect(response.status_code).to_equal(200)
+
+    def test_a_folder_that_cannot_be_made_is_refused_not_an_error(self) -> None:
+        # A path longer than the system takes, say.
+        with patch(
+            "mariner.server.api.os.mkdir", side_effect=OSError(36, "File name too long")
+        ), self.assertLogs("mariner.server.api", level="WARNING"):
+            response = self.client.post("/api/create_directory?path=.&name=sub")
+        expect(response.status_code).to_equal(400)
+
+    def test_an_upload_with_no_room_to_wait_in_says_so(self) -> None:
+        # Raised while the form is read, before the upload route runs.
+        with patch(
+            "mariner.server.api.safe_filename",
+            side_effect=OSError(errno.ENOSPC, "No space left on device"),
+        ), self.assertLogs("mariner.server.app", level="WARNING"):
+            data = {"file": (io.BytesIO(b"abcdef"), "myfile.ctb")}
+            response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(507)
+        expect(response.get_json()["code"]).to_equal("upload_not_stored")
+
+    def test_an_upload_announced_larger_than_the_room_to_wait_in(self) -> None:
+        # Refused before a byte is taken: twice its size for a form, which
+        # is kept once by the web server and once more as the form is read.
+        usage = shutil.disk_usage("/")
+        data = {"file": (io.BytesIO(b"x" * 600), "myfile.ctb")}
+        with patch(
+            "mariner.server.app.shutil.disk_usage",
+            return_value=usage._replace(free=1000),
+        ):
+            response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(507)
+        body = response.get_json()
+        expect(body["code"]).to_equal("upload_not_stored")
+        expect(os.path.exists("/mnt/usb_share/myfile.ctb")).to_equal(False)
+        with patch(
+            "mariner.server.app.shutil.disk_usage",
+            return_value=usage._replace(free=100_000),
+        ):
+            data = {"file": (io.BytesIO(b"x" * 600), "myfile.ctb")}
+            response = self.client.post("/api/upload_file", data=data)
+        expect(response.status_code).to_equal(200)
+
+    def test_the_site_is_checked_before_anything_of_the_request_is_read(self) -> None:
+        # Before the check of the token a form carries, which reads the
+        # whole form, file included.
+        application = self.client.application
+        first = application.before_request_funcs[None][0]
+        expect(first.__name__).to_equal("refuse_other_sites")
+        with patch.dict(application.config, {"WTF_CSRF_ENABLED": True}):
+            response = self.client.post(
+                "/api/delete_file?filename=foobar.ctb",
+                headers={"Origin": "http://evil.example"},
+            )
+        expect(response.status_code).to_equal(403)
+        expect(response.get_json()["code"]).to_equal("cross_site_request")
+
+    def test_a_browser_under_a_name_not_allowed_is_told_what_to_do(self) -> None:
+        # A page to read, not data, where a page was asked for.
+        response = self.client.get(
+            "/", headers={"Host": "pi.tailnet.ts.net", "Accept": "text/html"}
+        )
+        expect(response.status_code).to_equal(403)
+        expect(response.mimetype).to_equal("text/html")
+        page = response.get_data(as_text=True)
+        expect("allowed_hosts" in page).to_equal(True)
+        expect("pi.tailnet.ts.net" in page).to_equal(True)
+        # The name is the client's text.
+        response = self.client.get(
+            "/", headers={"Host": "<script>x</script>.example", "Accept": "text/html"}
+        )
+        expect("<script>" in response.get_data(as_text=True)).to_equal(False)
+        # What a program asks for stays data.
+        response = self.client.get(
+            "/api/list_files", headers={"Host": "x.example", "Accept": "text/html"}
+        )
+        expect(response.mimetype).to_equal("application/json")
 
     def test_following_a_link_to_the_page_from_another_site_works(self) -> None:
         # Only what acts or tells is refused, not the page.

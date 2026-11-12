@@ -624,6 +624,10 @@ class ScratchFilesTest(TestCase):
         # A folder that was being deleted, and an unfinished SDCP transfer.
         self.fs.create_file("/mnt/usb_share/.upload-cccc.part/old.ctb", contents=b"x")
         self.fs.create_file("/mnt/usb_share/.sdcp_uploads/dddd.part", contents=b"x")
+        # What a folder being deleted holds goes with it, and is not counted.
+        self.fs.create_file(
+            "/mnt/usb_share/.upload-cccc.part/.upload-eeee.part", contents=b"x"
+        )
 
         expect(remove_stale_scratch_files()).to_equal(4)
 

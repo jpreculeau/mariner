@@ -1495,6 +1495,20 @@ class UploadManagerTest(TestCase):
         ]
         expect(leftovers).to_equal([])
 
+    def test_a_file_of_no_announced_size_is_refused(self) -> None:
+        # It could never be complete, and would be written without end.
+        result = self.manager.handle_chunk(
+            upload_uuid="abc",
+            filename="model.ctb",
+            offset=0,
+            total_size=0,
+            expected_md5="",
+            verify=False,
+            data=b"x" * 100,
+        )
+        expect(result.ok).to_equal(False)
+        expect(os.listdir("/mnt/usb_share")).to_equal([])
+
     def test_a_file_announced_larger_than_allowed_is_refused_at_once(self) -> None:
         with patch(
             "mariner.server.providers.sdcp.uploads.config.get_max_upload_bytes",
@@ -1642,6 +1656,7 @@ class _BrowserRequest:
     def __init__(self, headers: Any) -> None:
         self.headers = headers
         self.path = "/websocket"
+        self.remote = "192.168.1.99"
 
 
 class ServiceOddMessagesTest(IsolatedAsyncioTestCase):
@@ -1660,13 +1675,51 @@ class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
     async def _answered(self, headers: Any) -> Any:
         from mariner.server.providers.sdcp.service import refuse_other_sites
 
-        async def handler(request: Any) -> str:
-            return "served"
+        from aiohttp import web
+
+        async def handler(request: Any) -> Any:
+            return web.Response(text="served")
 
         return await refuse_other_sites(cast(Any, _BrowserRequest(headers)), handler)
 
     async def test_a_slicer_is_served(self) -> None:
-        expect(await self._answered({"Host": "192.168.1.20:3030"})).to_equal("served")
+        for headers in (
+            {"Host": "192.168.1.20:3030"},
+            # One built as a desktop application may give an origin of its
+            # own kind.
+            {"Host": "192.168.1.20:3030", "Origin": "app://slicer"},
+        ):
+            response = await self._answered(headers)
+            expect(response.status).to_equal(200)
+
+    async def test_a_refusal_says_who_was_refused(self) -> None:
+        # Should a slicer be turned away, the log must tell enough to see it.
+        headers = {"Host": "192.168.1.20:3030", "Origin": "http://evil.example\nX"}
+        with self.assertLogs(
+            "mariner.server.providers.sdcp.service", level="WARNING"
+        ) as logs:
+            await self._answered(headers)
+        message = logs.records[0].getMessage()
+        expect("evil.example" in message).to_equal(True)
+        expect("192.168.1.99" in message).to_equal(True)
+        expect("\n" in message).to_equal(False)
+
+    async def test_answers_are_not_for_other_sites_to_load(self) -> None:
+        from aiohttp import web
+
+        from mariner.server.providers.sdcp.service import refuse_other_sites
+
+        async def handler(request: Any) -> Any:
+            return web.Response(body=b"picture", content_type="image/png")
+
+        for headers in ({"Host": "192.168.1.20:3030"}, {"Host": "evil.example"}):
+            response = await refuse_other_sites(
+                cast(Any, _BrowserRequest(headers)), handler
+            )
+            expect(response.headers["Cross-Origin-Resource-Policy"]).to_equal(
+                "same-origin"
+            )
+            expect(response.headers["X-Content-Type-Options"]).to_equal("nosniff")
 
     async def test_every_route_of_the_service_goes_through_the_check(self) -> None:
         from mariner.server.providers.sdcp.service import refuse_other_sites

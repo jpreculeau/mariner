@@ -34,6 +34,7 @@ Uploads
 - Refuse an SDCP transfer whose last bytes could not be stored, instead of replacing the previous file with a short one
 - Treat a bare string in an SDCP delete request as one path, and report entries that are not paths as failures
 - Accept files up to 2 GB by default, from the web page and from slicers, and make the limit a setting (`max_upload_size_mb`); before, the web page and UVtools stopped at 1 GB, and SDCP had no limit
+- Refuse an SDCP transfer that announces no size: it could never be complete, and was written without end
 - Keep a file on a drive while it arrives (`spool_directory`, `/var/tmp` by default) instead of in `/tmp`, which on current systems is held in memory
 - Write a file sent by UVtools as it arrives instead of holding it whole in memory
 
@@ -56,12 +57,13 @@ Printer and prints
 
 Requests from the web
 
-- Refuse, on the web API, UVtools and SDCP, what a page of another web site has a browser send (`cross_site_request`): such a page could start, stop or delete without anyone asking
-- Add a setting to switch the UVtools routes off (`[uvtools] enabled`), beside the one SDCP has
-- Send with every answer the headers that keep the page from being shown inside another site, its scripts to Mariner's own, and its data and pictures from being loaded by other sites
+- Refuse, on the web API and SDCP, what a page of another web site has a browser send when the browser says where it comes from (`cross_site_request`): a form posted, a WebSocket, a request whose answer a script reads. Such a page could start, stop or delete without anyone asking
+- Refuse browsers on the UVtools routes, which act on a plain GET: a link or a picture on any page was enough to start or stop a print or delete a file, and over plain HTTP a browser says nothing of where such a request comes from
+- Answer only to an IP address or a name of the local network, unless told otherwise (`allowed_hosts`), so that a web site pointing its own name at the printer cannot read or drive it (`host_not_allowed`); a browser is shown what to add to the configuration
+- Send with Mariner's answers the headers that keep the page from being shown inside another site, its scripts to Mariner's own, and its data and pictures from being loaded by other sites. Mariner can therefore no longer be embedded in another page, a home automation dashboard for one
+- Add a setting to switch the UVtools routes off (`[uvtools] enabled`), beside the one SDCP has; a switch set to anything but `true` or `false` counts as off, and settings that are passed over are named in the logs at start
 - Keep what went wrong inside out of error answers: no call trace for a printer error (`printer_error`), a plain answer for an error nobody planned for (`internal_error`), debug mode off; the cause goes to the logs
-- Say that a file could not be stored (`upload_not_stored`) when an upload from the web page fails for want of room, instead of failing without a word
-- Answer only to an IP address or a name of the local network, unless told otherwise (`allowed_hosts`), so that a web site pointing its own name at the printer cannot read or drive it (`host_not_allowed`)
+- Say that a file could not be stored (`upload_not_stored`) when an upload fails for want of room, on the printer's drive or where uploads wait, and refuse beforehand an upload larger than that room
 
 Reading files
 

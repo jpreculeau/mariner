@@ -82,6 +82,21 @@ class StartupTest(TestCase):
             serve.call_args.kwargs["max_request_body_size"], 3 * 1024**3 + 1024**2
         )
 
+    def test_settings_passed_over_are_said_at_start(self) -> None:
+        with patch.object(
+            server.config, "ignored_settings", return_value=["one thing"]
+        ), patch.object(server, "use_spool_directory"), self.assertLogs(
+            "mariner.server", level="WARNING"
+        ) as logs:
+            self._started()
+        self.assertTrue(any("one thing" in r.getMessage() for r in logs.records))
+
+    def test_the_web_server_takes_a_bounded_number_of_connections(self) -> None:
+        # Each can hold an upload waiting on the drive.
+        with patch.object(server, "use_spool_directory"):
+            serve = self._started()
+        self.assertLessEqual(serve.call_args.kwargs["connection_limit"], 32)
+
     def test_uploads_wait_on_the_drive_not_in_memory(self) -> None:
         # The web server keeps an upload in a temporary file until it is
         # whole, and on current systems /tmp is memory.

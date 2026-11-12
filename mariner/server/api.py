@@ -622,6 +622,10 @@ def create_directory() -> Union[str, Response]:
         os.mkdir(new_path)
     except FileExistsError:
         abort(400)
+    except OSError as error:
+        # A path longer than the system takes, a drive that is full.
+        logger.warning("Could not make the folder %r: %s", safe_name, error)
+        abort(400)
     return jsonify({"success": True})
 
 

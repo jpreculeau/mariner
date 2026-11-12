@@ -121,6 +121,34 @@ def get_max_upload_bytes() -> int:
     return megabytes * 1024 * 1024
 
 
+def ignored_settings() -> List[str]:
+    """What the configuration sets in a way that is passed over, in words.
+
+    For the log at start: a setting quietly taken for its default, or for
+    off, looks like one that was applied.
+    """
+    found = []
+    http_config = _get_config().get("http")
+    if isinstance(http_config, dict) and "max_upload_size_mb" in http_config:
+        megabytes = http_config["max_upload_size_mb"]
+        whole = isinstance(megabytes, int) and not isinstance(megabytes, bool)
+        if not (whole and megabytes > 0):
+            found.append(
+                f"[http] max_upload_size_mb = {megabytes!r} is not a whole "
+                f"number above zero: {DEFAULT_MAX_UPLOAD_SIZE_MB} is used"
+            )
+    for section in ("uvtools", "sdcp"):
+        section_config = _get_config().get(section)
+        if isinstance(section_config, dict) and "enabled" in section_config:
+            value = section_config["enabled"]
+            if not isinstance(value, bool):
+                found.append(
+                    f"[{section}] enabled = {value!r} is neither true nor "
+                    "false: it is taken for false"
+                )
+    return found
+
+
 def get_spool_directory() -> str:
     """Where an upload is kept while it arrives: a place on a drive.
 
@@ -144,12 +172,21 @@ def get_cache_directory() -> str:
     return str(cache_config.get("directory", default_directory))
 
 
+def _switch(value: object) -> bool:
+    """Whether a setting that switches something on says so.
+
+    Only ``true`` does. Anything else is taken for off: ``"false"`` between
+    quotes is text, which would otherwise count as on.
+    """
+    return value is True
+
+
 def get_uvtools_enabled() -> bool:
     """Whether the routes UVtools sends files and commands to are served."""
     uvtools_config = _get_config().get("uvtools")
     if not isinstance(uvtools_config, dict):
         return True
-    return bool(uvtools_config.get("enabled", True))
+    return _switch(uvtools_config.get("enabled", True))
 
 
 def _sdcp_config() -> Dict[str, Any]:
@@ -162,7 +199,7 @@ def _sdcp_config() -> Dict[str, Any]:
 
 
 def get_sdcp_enabled() -> bool:
-    return bool(_sdcp_config().get("enabled", True))
+    return _switch(_sdcp_config().get("enabled", True))
 
 
 def get_sdcp_brand_name() -> str:

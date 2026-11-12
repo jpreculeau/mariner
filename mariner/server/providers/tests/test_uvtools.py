@@ -118,6 +118,31 @@ class UVToolsProviderTest(TestCase):
         expect(len(logs.records)).to_equal(1)
         expect("\u2028" in logs.records[0].getMessage()).to_equal(False)
 
+    def test_a_browser_is_refused_whatever_it_says_of_the_site(self) -> None:
+        # Over plain HTTP, which is how the printer is reached, a browser
+        # says nothing of the site for a link followed or a picture
+        # loaded: such a request looks like a slicer's but for the name
+        # the browser gives itself, which a page cannot change. Mariner's
+        # own page never asks for these addresses.
+        browser = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) Chrome/153.0"}
+        for url in (
+            "/uvtools/delete/foobar.ctb",
+            "/uvtools/print/foobar.ctb",
+            "/uvtools/stop",
+            "/uvtools/pause",
+            "/uvtools/resume",
+            "/uvtools/files",
+            "/uvtools/status",
+        ):
+            response = self.client.get(url, headers=browser)
+            expect(response.status_code).to_equal(403)
+            expect(response.get_json()["code"]).to_equal("cross_site_request")
+        expect(os.path.isfile(config.get_files_directory() / "foobar.ctb")).to_equal(
+            True
+        )
+        self.printer_mock.start_printing.assert_not_called()
+        self.printer_mock.stop_printing.assert_not_called()
+
     def test_a_slicer_is_served(self) -> None:
         response = self.client.get("/uvtools/delete/foobar.ctb")
         expect(response.status_code).to_equal(200)

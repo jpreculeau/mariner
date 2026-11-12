@@ -61,6 +61,12 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         transport.sendto(json.dumps(payload).encode("utf-8"), addr)
 
 
+_ANSWER_HEADERS = {
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
 @web.middleware
 async def refuse_other_sites(request: web.Request, handler: Any) -> Any:
     """Turn away what a page from elsewhere has a browser send.
@@ -71,9 +77,23 @@ async def refuse_other_sites(request: web.Request, handler: Any) -> Any:
     """
     refusal = origin.refusal_for(request.headers)
     if refusal is not None:
-        logger.warning("SDCP: refused a request: %s", refusal.code)
-        return web.json_response(refusal.body(), status=403)
-    return await handler(request)
+        # Enough to tell a slicer turned away from a page that was.
+        logger.warning(
+            "SDCP: refused a request from %s: %s (Host %r, Origin %r)",
+            request.remote,
+            refusal.code,
+            request.headers.get("Host"),
+            request.headers.get("Origin"),
+        )
+        response = web.json_response(refusal.body(), status=403)
+    else:
+        response = await handler(request)
+    # A browser asks for a picture without a word of the site. It is then
+    # served, and these keep the page that asked from showing it.
+    for name, value in _ANSWER_HEADERS.items():
+        if name not in response.headers:
+            response.headers[name] = value
+    return response
 
 
 def silence_upload_parser() -> None:

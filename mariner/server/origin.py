@@ -7,11 +7,21 @@ anywhere on the web.
 
 A request from another site
     The page has the browser fetch an address of Mariner's: an image
-    address is enough for the routes that act on a GET, a form or a
-    WebSocket for the others. Browsers say what site a request comes from
-    (``Sec-Fetch-Site``, and ``Origin`` before that existed), which is
-    checked here. Programs that are not browsers, slicers among them, send
-    neither and are let through.
+    address or a link is enough for the routes that act on a GET, a form
+    or a WebSocket for the others. Browsers say what site a request comes
+    from, but not always. ``Sec-Fetch-Site`` is only sent to addresses
+    reached over HTTPS, which Mariner's is not; ``Origin`` is sent with a
+    form posted, a WebSocket and a request a script reads the answer of,
+    and not with a link followed or a picture loaded. Both are checked
+    here when they are there. Programs that are not browsers, slicers
+    among them, send neither and are let through.
+
+A browser on the routes made for slicers
+    That leaves the GET a browser sends without a word of the site. On
+    the routes made for slicers, which act on a GET, a browser is turned
+    away as such: it gives itself a name no page can change, and Mariner's
+    own page never asks for those routes. The web API acts on POST only,
+    for which ``Origin`` is there.
 
 A request under a foreign name
     The site has its own name answer with the address of the printer, so
@@ -63,8 +73,10 @@ _FOREIGN_NAME = Refusal(
 
 # Names that only resolve within a local network.
 _LOCAL_SUFFIXES = (".local", ".lan", ".home", ".home.arpa", ".internal", ".localdomain")
-_NAME = re.compile(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*")
+_LABEL = r"[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?"
+_NAME = re.compile(rf"{_LABEL}(\.{_LABEL})*")
 _DEFAULT_PORTS = {"http": "80", "https": "443"}
+_SCHEME = re.compile(r"[a-z][a-z0-9+.-]*")
 
 
 def _name_and_port(host: str) -> Optional[Tuple[str, str]]:
@@ -111,16 +123,57 @@ def _allowed_hosts() -> list:
     return config.get_http_allowed_hosts()
 
 
-def _same_origin(origin: str, host: str) -> bool:
-    """Whether the page at *origin* is served under the name *host*."""
-    parts = urlsplit(origin.strip().lower())
+def _is_own_page(address: str, host: str) -> bool:
+    """Whether the page at *address* is one of Mariner's.
+
+    Served under the name and port the request asks for; or under a name
+    listed in ``allowed_hosts``, for a relay in front of Mariner that asks
+    it under another name or port than the browser used. ``"*"`` there
+    lets any name be asked for and does not make every page Mariner's.
+    """
+    parts = urlsplit(address.strip().lower())
     if parts.scheme not in _DEFAULT_PORTS or not parts.netloc:
         return False
     page, asked = _name_and_port(parts.netloc), _name_and_port(host)
-    if page is None or asked is None:
+    if page is None:
+        return False
+    listed = [entry.strip().lower().rstrip(".") for entry in _allowed_hosts()]
+    if page[0].rstrip(".") in listed:
+        return True
+    if asked is None:
         return False
     default = _DEFAULT_PORTS[parts.scheme]
     return page[0] == asked[0] and (page[1] or default) == (asked[1] or default)
+
+
+def _is_a_program_s(origin: str) -> bool:
+    """Whether an ``Origin`` is of a kind no page on the web can give.
+
+    A slicer built as a desktop application can give one of its own, such
+    as ``app://name``. A page gives ``http``, ``https`` or, when it hides
+    where it is from, ``null``.
+    """
+    scheme, separator, _ = origin.strip().lower().partition("://")
+    return (
+        bool(separator)
+        and _SCHEME.fullmatch(scheme) is not None
+        and scheme not in _DEFAULT_PORTS
+    )
+
+
+def is_browser(headers: Mapping[str, str]) -> bool:
+    """Whether a request says it comes from a web browser.
+
+    By the name every browser has given itself since the first ones. A
+    page cannot change it on a link, a picture or a form.
+    """
+    agent = headers.get("User-Agent", "").lstrip().lower()
+    return agent.startswith(("mozilla/", "opera/"))
+
+
+def browser_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
+    """Why a request to a route made for slicers is not served to a browser."""
+    return _OTHER_SITE if is_browser(headers) else None
 
 
 def host_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
@@ -143,8 +196,16 @@ def site_refusal(headers: Mapping[str, str]) -> Optional[Refusal]:
         if site.strip().lower() in ("same-origin", "none"):
             return None
         return _OTHER_SITE
+    host = headers.get("Host", "")
     origin = headers.get("Origin")
-    if origin is not None and not _same_origin(origin, headers.get("Host", "")):
+    if origin is not None:
+        if _is_own_page(origin, host) or _is_a_program_s(origin):
+            return None
+        return _OTHER_SITE
+    # Neither: a program, or a browser following a link or loading a
+    # picture over plain HTTP. The second often says which page asked.
+    referer = headers.get("Referer")
+    if referer is not None and not _is_own_page(referer, host):
         return _OTHER_SITE
     return None
 

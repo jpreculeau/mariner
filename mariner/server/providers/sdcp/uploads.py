@@ -182,7 +182,9 @@ class UploadManager:
         data: bytes,
     ) -> ChunkResult:
         upload_uuid = key[1]
-        if offset < 0 or total_size < 0:
+        # A file of no announced size could never be complete, and would be
+        # written without end.
+        if offset < 0 or total_size <= 0:
             return ChunkResult(ok=False, error=constants.UploadError.OFFSET_ERROR)
         if total_size > config.get_max_upload_bytes():
             logger.warning(

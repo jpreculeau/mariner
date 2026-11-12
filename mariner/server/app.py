@@ -1,11 +1,14 @@
+import errno
+import html
 import logging
 import os
+import shutil
 import stat
 import tempfile
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, Union, cast
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, make_response, request
 from werkzeug.exceptions import HTTPException
 from flask_wtf.csrf import CSRFProtect
 from whitenoise import WhiteNoise
@@ -151,6 +154,8 @@ app.config.from_mapping(
 
 # What acts on the printer or the files, or tells about them.
 _GUARDED_PREFIXES = ("/api/", "/uvtools/")
+# What is made for slicers, and acts on a GET.
+_SLICER_PREFIXES = ("/uvtools/",)
 
 
 @app.before_request
@@ -161,13 +166,87 @@ def refuse_other_sites() -> Optional[Tuple[Response, int]]:
     request from another site only where it would act or tell, so that a
     link to Mariner on another page still opens it.
     """
-    guarded = request.path.startswith(_GUARDED_PREFIXES)
-    refusal = origin.host_refusal(request.headers) or (
-        origin.site_refusal(request.headers) if guarded else None
-    )
+    refusal = origin.host_refusal(request.headers)
+    if refusal is None and request.path.startswith(_GUARDED_PREFIXES):
+        refusal = origin.site_refusal(request.headers)
+    if refusal is None and request.path.startswith(_SLICER_PREFIXES):
+        refusal = origin.browser_refusal(request.headers)
     if refusal is None:
         return None
+    if refusal.code == "host_not_allowed" and _wants_a_page():
+        return _name_not_allowed_page(), 403
     return jsonify(refusal.body()), 403
+
+
+# First of all: before the check of the token a form carries, which reads
+# the whole form, file included.
+app.before_request_funcs.setdefault(None, []).remove(refuse_other_sites)
+app.before_request_funcs[None].insert(0, refuse_other_sites)
+
+
+def _wants_a_page() -> bool:
+    return (
+        not request.path.startswith(_GUARDED_PREFIXES)
+        and request.accept_mimetypes.best_match(["application/json", "text/html"])
+        == "text/html"
+    )
+
+
+def _name_not_allowed_page() -> Response:
+    """What to do about it, for someone who opened Mariner in a browser."""
+    name = html.escape(request.host.rsplit(":", 1)[0])
+    page = f"""<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Mariner: name not allowed</title></head>
+<body>
+<h1>Mariner does not answer to this name</h1>
+<p>You reached Mariner as <code>{name}</code>. It answers to its IP address
+and to names of a local network, so that a web site cannot point a name of
+its own at your printer and drive it through your browser.</p>
+<p>To use this name, add it to <code>/etc/mariner/config.toml</code> and
+restart Mariner:</p>
+<pre>[http]
+allowed_hosts = ["{name}"]</pre>
+<p>Or open Mariner by its IP address.</p>
+</body>
+</html>
+"""
+    response = make_response(page)
+    response.mimetype = "text/html"
+    return response
+
+
+def _no_room(what: str) -> Tuple[Response, int]:
+    megabytes = shutil.disk_usage(tempfile.gettempdir()).free // (1024 * 1024)
+    logger.warning("No room to keep an upload in while it arrives: %s", what)
+    body = {
+        "code": "upload_not_stored",
+        "title": "File Not Stored",
+        "description": "There is not enough room on Mariner's own drive to "
+        f"take this file in: {megabytes} MB are free where uploads wait. A "
+        "file sent from the web page needs twice its size there.",
+    }
+    return jsonify(body), 507
+
+
+@app.before_request
+def refuse_what_cannot_wait() -> Optional[Tuple[Response, int]]:
+    """Turn away an upload larger than the room it would wait in.
+
+    Before a byte of it is read. A form is kept twice while it arrives:
+    once by the web server, once more as it is taken apart.
+    """
+    length = request.content_length or 0
+    if length == 0:
+        return None
+    copies = 2 if request.mimetype == "multipart/form-data" else 1
+    try:
+        free = shutil.disk_usage(tempfile.gettempdir()).free
+    except OSError:
+        return None
+    if length * copies > free:
+        return _no_room(f"{length} bytes announced, {free} free")
+    return None
 
 
 @app.after_request
@@ -190,6 +269,9 @@ def unexpected_error(error: Exception) -> Union[Response, Tuple[Response, int]]:
     if isinstance(error, HTTPException):
         # A refusal that was meant: 400, 404 and the like.
         return cast(Response, error)
+    if isinstance(error, OSError) and error.errno == errno.ENOSPC:
+        # While a form was being taken apart, most likely.
+        return _no_room(str(error))
     logger.error("Unexpected error while serving %r", request.path, exc_info=error)
     body = {
         "code": "internal_error",
