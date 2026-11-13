@@ -39,9 +39,23 @@ export function Gate({ children }: { children: ReactNode }) {
 
   // From one of its screens to another, focus has a place to go when
   // what had it went: the button to try again.
+  const againButton = useRef<HTMLButtonElement>(null);
+  const before = useRef(access);
   useEffect(() => {
+    const was = before.current;
+    before.current = access;
+    const nowhere =
+      !document.activeElement || document.activeElement === document.body;
+    if (was === "in" && (access === "shut" || access === "unreachable")) {
+      // The page went, with what had focus in it.
+      if (nowhere) document.getElementById("content")?.focus();
+      return;
+    }
     if (access === "in" || !askedAgain.current) return;
-    if (!document.activeElement || document.activeElement === document.body) {
+    if (access === "unreachable") {
+      // Still not reached: back on the button, to press it again.
+      againButton.current?.focus();
+    } else if (nowhere) {
       document.getElementById("content")?.focus();
     }
     if (access !== "checking") askedAgain.current = false;
@@ -111,6 +125,7 @@ export function Gate({ children }: { children: ReactNode }) {
               </p>
               {/* Asking again shows "Opening Mariner…" meanwhile. */}
               <Button
+                ref={againButton}
                 variant="outline"
                 className="mt-4"
                 onClick={() => {

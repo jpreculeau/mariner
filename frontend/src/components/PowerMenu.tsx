@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/popover";
 import { toast } from "@/components/ui/sonner";
 import { api, ApiError } from "@/lib/api";
-import { errorText } from "@/lib/errors";
+import { errorText, saidByThePage } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -49,7 +49,11 @@ export function PowerMenu() {
       // going down all the same, or it never having been asked: said as
       // such, so that it is not unplugged while running.
       const unanswered = error instanceof ApiError && error.code === "network";
-      toast.error(unanswered ? t("power.noAnswer") : errorText(error, t, lang));
+      if (!saidByThePage(error)) {
+        toast.error(
+          unanswered ? t("power.noAnswer") : errorText(error, t, lang),
+        );
+      }
     } finally {
       underWay.current = false;
       setAsking(null);

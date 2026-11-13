@@ -208,6 +208,15 @@ class DegradedTest(TestCase):
                 state.directory()
         expect(state.is_makeshift()).to_equal(True)
 
+    def test_a_folder_that_changes_hands_while_mariner_runs_is_one(self) -> None:
+        # Given to another account by a restore made as an administrator,
+        # after Mariner wrote into it: what it holds is out of reach.
+        self._configured(self.root / "state")
+        state.write("anything", b"x")
+        expect(state.is_makeshift()).to_equal(False)
+        with patch("mariner.server.state._usable", return_value=False):
+            expect(state.is_makeshift()).to_equal(True)
+
     def test_none_that_can_be_made_is_known_before_one_is_looked_for(self) -> None:
         # The slicers' switches are read before the folder is made.
         blocked = self.root / "a-file"

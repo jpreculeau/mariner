@@ -56,7 +56,9 @@ def is_makeshift() -> bool:
     must not open the door: see ``mariner.server.auth``.
     """
     if _directory is not None:
-        return _makeshift
+        # Looked at each time: given to another account while Mariner
+        # runs, by a restore say, it is out of reach from then on.
+        return _makeshift or not _usable(str(_directory))
     # Not yet looked for, and not made for the sake of asking: the one
     # asked for is there and cannot be used.
     wanted = os.path.expanduser(config.get_state_directory())

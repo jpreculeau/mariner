@@ -614,6 +614,12 @@ describe("Gate", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(document.getElementById("content")),
     );
+    // Still not reached: back on the button, to press it again.
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Try again" }),
+      ),
+    );
   });
 
   it("enters when another tab of the browser signs in", async () => {
@@ -762,5 +768,189 @@ describe("Gate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("marks no field as wrong for what is not about the password", async () => {
+    vi.spyOn(api, "authState").mockResolvedValue({
+      password_set: true,
+      signed_in: false,
+    });
+    vi.spyOn(api, "signIn").mockRejectedValue(
+      new ApiError(0, "Mariner cannot be reached.", "network"),
+    );
+    renderGate();
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+    type("Password", "secret words");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /cannot be reached/,
+    );
+    expect(screen.getByLabelText("Password")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    // Read with the field all the same, where focus is.
+    expect(screen.getByLabelText("Password")).toHaveAccessibleDescription(
+      /cannot be reached/,
+    );
+    expect(document.activeElement).toBe(screen.getByLabelText("Password"));
+  });
+
+  it("empties the form when it becomes the other one", async () => {
+    // What was typed to sign in is not a password being chosen.
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: true, signed_in: false });
+    vi.spyOn(api, "signIn").mockRejectedValue(
+      new ApiError(401, "No password has been chosen yet.", "password_not_set"),
+    );
+    renderGate();
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+    type("Password", "secret words");
+    state.mockResolvedValue({ password_set: false, signed_in: false });
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByRole("heading", { name: "Choose a password" });
+    expect(screen.getByLabelText("New password")).toHaveValue("");
+    expect(screen.getByLabelText("New password")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+  });
+
+  describe("under a page that is open", () => {
+    const realFetch = globalThis.fetch;
+    afterEach(() => {
+      globalThis.fetch = realFetch;
+    });
+    const refuseWith = (status: number, code: string) => {
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code, description: "No." }), {
+          status,
+        }),
+      );
+    };
+
+    it("says that the password was cleared, to who is asked to choose one", async () => {
+      const state = vi
+        .spyOn(api, "authState")
+        .mockResolvedValue({ password_set: true, signed_in: true });
+      refuseWith(401, "password_not_set");
+      renderGate();
+      await screen.findByText("the printer's page");
+      state.mockResolvedValue({ password_set: false, signed_in: false });
+      fireEvent.click(screen.getByRole("button", { name: "ask" }));
+      await screen.findByRole("heading", { name: "Choose a password" });
+      expect(
+        screen.getByText("Mariner's password was cleared. Choose a new one."),
+      ).toBeInTheDocument();
+      expect(screen.getByLabelText("New password")).toHaveAccessibleDescription(
+        /was cleared/,
+      );
+    });
+
+    it("does not say so at a first visit", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: false,
+        signed_in: false,
+      });
+      renderGate();
+      await screen.findByRole("heading", { name: "Choose a password" });
+      expect(screen.queryByText(/was cleared/)).toBeNull();
+    });
+
+    it("gives the keyboard a place when Mariner shuts", async () => {
+      const state = vi
+        .spyOn(api, "authState")
+        .mockResolvedValue({ password_set: true, signed_in: true });
+      refuseWith(503, "state_unavailable");
+      renderGate();
+      await screen.findByText("the printer's page");
+      state.mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        unavailable: true,
+      });
+      const ask = screen.getByRole("button", { name: "ask" });
+      ask.focus();
+      fireEvent.click(ask);
+      await screen.findByText(/Mariner cannot open its page/);
+      await waitFor(() =>
+        expect(document.activeElement).toBe(document.getElementById("content")),
+      );
+    });
+
+    it("takes away what was said while it was shut, once it opens again", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const dismiss = vi.spyOn(toast, "dismiss");
+        const state = vi.spyOn(api, "authState").mockResolvedValue({
+          password_set: true,
+          signed_in: false,
+          unavailable: true,
+        });
+        renderGate();
+        await screen.findByRole("alert");
+        dismiss.mockClear();
+        state.mockResolvedValue({ password_set: true, signed_in: true });
+        await vi.advanceTimersByTimeAsync(5500);
+        await screen.findByText("the printer's page");
+        expect(dismiss).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it("is not let back in by an answer asked for before signing out", async () => {
+    let answer: (state: {
+      password_set: boolean;
+      signed_in: boolean;
+    }) => void = () => {};
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: true, signed_in: true });
+    vi.spyOn(api, "signOut").mockResolvedValue();
+    let leave: () => Promise<void> = async () => {};
+    function Leave() {
+      leave = useAccess().signOut;
+      return null;
+    }
+    render(
+      <QueryClientProvider
+        client={
+          new QueryClient({ defaultOptions: { queries: { retry: false } } })
+        }
+      >
+        <LanguageProvider>
+          <AccessProvider>
+            <Leave />
+            <Gate>
+              <p>the printer's page</p>
+            </Gate>
+          </AccessProvider>
+        </LanguageProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByText("the printer's page");
+    state.mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "mariner-page-key" }),
+      );
+    });
+    await waitFor(() => expect(state).toHaveBeenCalledTimes(2));
+    await act(() => leave());
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+
+    await act(async () => {
+      answer({ password_set: true, signed_in: true });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(screen.queryByText("the printer's page")).toBeNull();
   });
 });

@@ -79,6 +79,24 @@ describe("Files", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it("leaves it to the form to say that the session is over", async () => {
+    const sent = vi
+      .spyOn(api, "uploadFile")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    const input = renderFiles();
+    await waitFor(() => expect(api.listFiles).toHaveBeenCalledTimes(1));
+    pick(input, new File(["x"], "model.ctb"));
+    await waitFor(() => expect(sent).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("shows why an upload was refused", async () => {
     vi.spyOn(api, "uploadFile").mockRejectedValue(
       new ApiError(

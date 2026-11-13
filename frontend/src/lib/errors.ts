@@ -47,3 +47,19 @@ export function errorText(error: unknown, t: Translate, lang: Lang): string {
   }
   return t("error.unknown", { status: "?" });
 }
+
+/**
+ * Whether the page itself says what this failure is: its session is
+ * over, no password is set any more, or Mariner is shut. The screen that
+ * then replaces the page says so; a message beside it would say it
+ * twice, and stay there.
+ */
+export function saidByThePage(failure: unknown): boolean {
+  if (!(failure instanceof ApiError)) return false;
+  return (
+    (failure.status === 401 &&
+      (failure.code === "login_required" ||
+        failure.code === "password_not_set")) ||
+    (failure.status === 503 && failure.code === "state_unavailable")
+  );
+}

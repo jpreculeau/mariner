@@ -12,7 +12,7 @@ import {
   type SettingsResponse,
 } from "@/lib/api";
 import { useAccess } from "@/lib/access";
-import { errorText } from "@/lib/errors";
+import { errorText, saidByThePage } from "@/lib/errors";
 import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
 
@@ -21,12 +21,6 @@ const KEY = ["settings"];
 // from a restart: a minute in all.
 const BACK_EVERY_MS = 1500;
 const BACK_WITHIN_TRIES = 40;
-
-/** Whether Mariner refused because this page is no longer signed in:
- * the form that then shows says so itself. */
-const sessionOver = (failure: unknown) =>
-  failure instanceof ApiError &&
-  (failure.code === "login_required" || failure.code === "password_not_set");
 
 type Switch = "uvtools_enabled" | "sdcp_enabled" | "assume_printer_off";
 
@@ -80,7 +74,7 @@ export default function Settings() {
       );
     } catch (failure) {
       // Shown as it stands, which is as it was.
-      if (!sessionOver(failure)) toast.error(errorText(failure, t, lang));
+      if (!saidByThePage(failure)) toast.error(errorText(failure, t, lang));
     } finally {
       underWay.current = false;
       setSaving(null);
@@ -94,7 +88,7 @@ export default function Settings() {
       await api.restart();
       toast.success(t("settings.restarted"));
     } catch (failure) {
-      if (!sessionOver(failure)) toast.error(errorText(failure, t, lang));
+      if (!saidByThePage(failure)) toast.error(errorText(failure, t, lang));
       setRestarting(false);
       return;
     }
@@ -211,12 +205,9 @@ export default function Settings() {
       <div className="grid gap-5">
         {data.restart_needed && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
-            {/* The button is not part of what is announced: its words
-                changing would be read out with the notice again. */}
-            <p
-              role="status"
-              className="min-w-[min(100%,14rem)] flex-1 text-base leading-relaxed"
-            >
+            {/* Not announced from here: the message that says "Saved"
+                says it, and this would have it read out twice. */}
+            <p className="min-w-[min(100%,14rem)] flex-1 text-base leading-relaxed">
               {t("settings.restartNeeded")}{" "}
               {!data.can_restart && t("settings.restartByHand")}
             </p>
@@ -300,11 +291,9 @@ export default function Settings() {
               variant="outline"
               className="gap-2"
               onClick={() => {
-                signOut().catch((failure) => {
-                  if (!sessionOver(failure)) {
-                    toast.error(errorText(failure, t, lang));
-                  }
-                });
+                signOut().catch((failure) =>
+                  toast.error(errorText(failure, t, lang)),
+                );
               }}
             >
               <LogOut className="h-4 w-4" aria-hidden />
@@ -325,7 +314,7 @@ function ChangePassword() {
   // Kept as it came, and worded when drawn: in the language the page is
   // in by then.
   const [refused, setRefused] = useState<{
-    on: "current" | "new" | "again";
+    on: "current" | "new" | "again" | "form";
     why: TextKey | { failure: unknown };
     said: number;
   } | null>(null);
@@ -339,11 +328,12 @@ function ChangePassword() {
   };
 
   const refuse = (
-    on: "current" | "new" | "again",
+    on: "current" | "new" | "again" | "form",
     why: TextKey | { failure: unknown },
   ) => {
     setRefused({ on, why, said: ++said.current });
-    fields[on].current?.focus();
+    // What is about no field is read from the first one.
+    fields[on === "form" ? "current" : on].current?.focus();
   };
 
   const submit = async (event: FormEvent) => {
@@ -373,14 +363,19 @@ function ChangePassword() {
         (failure.code === "password_too_short" ||
           failure.code === "password_too_long" ||
           failure.code === "password_too_common");
-      refuse(aboutTheNew ? "new" : "current", { failure });
+      const aboutTheCurrent =
+        failure instanceof ApiError && failure.code === "wrong_password";
+      // Anything else is about no field: none is marked as wrong.
+      refuse(aboutTheNew ? "new" : aboutTheCurrent ? "current" : "form", {
+        failure,
+      });
     } finally {
       underWay.current = false;
       setBusy(false);
     }
   };
 
-  const error = (on: "current" | "new" | "again") =>
+  const error = (on: "current" | "new" | "again" | "form") =>
     refused?.on !== on
       ? null
       : typeof refused.why === "string"
@@ -397,6 +392,7 @@ function ChangePassword() {
         ref={fields.current}
         id="current-password"
         label={t("settings.password.current")}
+        describedBy={error("form") ? "change-password-error" : undefined}
         autoComplete="current-password"
         value={current}
         error={error("current")}
@@ -424,6 +420,16 @@ function ChangePassword() {
         errorSaid={refused?.said}
         onChange={typed(setAgain)}
       />
+      {error("form") && (
+        <p
+          key={refused?.said}
+          id="change-password-error"
+          role="alert"
+          className="text-sm leading-relaxed text-danger"
+        >
+          {error("form")}
+        </p>
+      )}
       <div>
         <Button
           type="submit"

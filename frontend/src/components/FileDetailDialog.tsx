@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Play, Layers, Clock, Ruler, Trash2, Loader2 } from "lucide-react";
 import { api, ApiError, type FileEntry } from "@/lib/api";
-import { errorText } from "@/lib/errors";
+import { errorText, saidByThePage } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import { PrinterOffDialog } from "@/components/PrinterOffDialog";
 import { toast } from "@/components/ui/sonner";
@@ -68,7 +68,9 @@ export function FileDetailDialog({
   // Say why something was refused. True when the file is no longer there:
   // nothing more can be done with it, and the list that showed it is old.
   const refused = (failure: unknown, path: string): boolean => {
-    toast.error(errorText(failure, words.current.t, words.current.lang));
+    if (!saidByThePage(failure)) {
+      toast.error(errorText(failure, words.current.t, words.current.lang));
+    }
     if (!(failure instanceof ApiError) || failure.code !== "file_gone") {
       return false;
     }

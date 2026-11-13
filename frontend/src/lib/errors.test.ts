@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ApiError } from "./api";
-import { errorText } from "./errors";
+import { errorText, saidByThePage } from "./errors";
 import { translate, type Lang, type Translate } from "./i18n";
 
 const t =
@@ -116,5 +116,29 @@ describe("errorText", () => {
     expect(errorText(wait, t("fr"), "fr")).toBe(
       "Trop de mots de passe erronés. Réessayez dans 16\u00a0s.",
     );
+  });
+});
+
+describe("saidByThePage", () => {
+  // The screen that replaces the page says it: a message beside it
+  // would say it twice, and stay.
+  it.each([
+    [401, "login_required"],
+    [401, "password_not_set"],
+    [503, "state_unavailable"],
+  ])("is so for %i %s", (status, code) => {
+    expect(saidByThePage(new ApiError(status, "x", code))).toBe(true);
+  });
+
+  it.each([
+    [401, "wrong_password"],
+    [409, "file_in_use"],
+    [0, "network"],
+  ])("is not for %i %s", (status, code) => {
+    expect(saidByThePage(new ApiError(status, "x", code))).toBe(false);
+  });
+
+  it("is not for what is no refusal of Mariner's", () => {
+    expect(saidByThePage(new TypeError("Failed to fetch"))).toBe(false);
   });
 });

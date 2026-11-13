@@ -98,6 +98,23 @@ describe("FileDetailDialog", () => {
     expect(refresh).toHaveBeenCalledWith({ queryKey: ["files"] });
   });
 
+  it("leaves it to the form to say that the session is over", async () => {
+    const sent = vi
+      .spyOn(api, "deleteFile")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    renderDialog();
+    await deleteConfirmed();
+    await waitFor(() => expect(sent).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("shows why a deletion was refused and stays open", async () => {
     vi.spyOn(api, "deleteFile").mockRejectedValue(
       new ApiError(

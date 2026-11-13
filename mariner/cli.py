@@ -123,8 +123,14 @@ def _set_password() -> int:
         print("run this command again with sudo. If Mariner runs by hand under")
         print("an account of yours, run this command as that account.")
         return 1
-    first = getpass.getpass("New password for Mariner: ")
-    second = getpass.getpass("Again: ")
+    try:
+        first = getpass.getpass("New password for Mariner: ")
+        second = getpass.getpass("Again: ")
+    except (EOFError, KeyboardInterrupt):
+        # Left at the prompt.
+        print()
+        print("Nothing was changed.")
+        return 1
     if first != second:
         print("The two are not the same. Nothing was changed.")
         return 1

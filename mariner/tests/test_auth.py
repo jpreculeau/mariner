@@ -422,6 +422,37 @@ class SignInTest(_WithClient):
         self.post("/api/auth/login", password="not the one")
         expect(self.application.config["SECRET_KEY"]).to_equal(b"m" * 32)
 
+    def _spoil_the_record(self) -> None:
+        # Put back from a copy with the wrong rights: it is not read.
+        import os
+
+        os.chmod(self.root / "s" / "password", 0o644)
+
+    def test_a_password_that_cannot_be_read_shuts_the_page(self) -> None:
+        # Not "wrong password" for ever to who types the right one.
+        self._spoil_the_record()
+        with self.assertLogs("mariner.server.state", level="WARNING"):
+            expect(self.state_of()).to_equal(
+                {"password_set": True, "signed_in": False, "unavailable": True}
+            )
+            response = self.client.get("/api/print_status")
+            expect(response.status_code).to_equal(503)
+            expect(response.get_json()["code"]).to_equal("state_unavailable")
+
+    def test_signing_in_then_is_not_a_wrong_password(self) -> None:
+        self._spoil_the_record()
+        with self.assertLogs("mariner.server.state", level="WARNING"):
+            for _ in range(5):
+                response = self.post("/api/auth/login", password=PASSWORD)
+                expect(response.status_code).to_equal(503)
+                expect(response.get_json()["code"]).to_equal("state_unavailable")
+
+    def test_signing_in_while_the_folder_is_out_of_reach_says_so(self) -> None:
+        with patch.object(state, "is_makeshift", return_value=True):
+            response = self.post("/api/auth/login", password=PASSWORD)
+        expect(response.status_code).to_equal(503)
+        expect(response.get_json()["code"]).to_equal("state_unavailable")
+
     def test_without_signing_in_nothing_is_answered(self) -> None:
         for path in ("/api/print_status", "/api/list_files", "/api/settings"):
             response = self.client.get(path)

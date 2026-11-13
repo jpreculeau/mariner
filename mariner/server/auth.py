@@ -74,6 +74,16 @@ def generation() -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def out_of_reach() -> bool:
+    """Whether the password cannot be told: the page then stays shut.
+
+    The folder cannot be used, or a password is kept that cannot be
+    read (put back from a copy under another account, or damaged): the
+    right one would be called wrong for ever.
+    """
+    return state.is_makeshift() or (has_password() and generation() is None)
+
+
 # One at a time: of several set at once, one is kept, and each is told
 # whether it was its own.
 _password_lock = threading.Lock()
@@ -412,9 +422,10 @@ def _unavailable() -> Dict[str, str]:
         "code": "state_unavailable",
         "title": "Password Out Of Reach",
         "description": "Mariner cannot use the folder it keeps its password "
-        f"in ({config.get_state_directory()}), so its page stays shut. On the "
-        "computer it runs on, give that folder to the account Mariner runs "
-        "under and make sure it can be written, then restart Mariner.",
+        f"in ({config.get_state_directory()}), or the password kept there, "
+        "so its page stays shut. On the computer it runs on, give that "
+        "folder and what it holds to the account Mariner runs under and "
+        "make sure it can be written, then restart Mariner.",
     }
 
 
@@ -436,7 +447,7 @@ def refusal(
         return None
     if path in _OPEN_PATHS or path.startswith(_OPEN_PREFIXES):
         return None
-    if state.is_makeshift():
+    if out_of_reach():
         return _unavailable()
     if let_in(held, key):
         return None
@@ -521,7 +532,7 @@ def _not_a_password() -> Response:
 
 @auth_api.route("/state", methods=["GET"])
 def auth_state() -> Response:
-    if state.is_makeshift():
+    if out_of_reach():
         # Shut, and not for want of a password.
         return jsonify({"password_set": True, "signed_in": False, "unavailable": True})
     signed_in = is_signed_in()
@@ -534,7 +545,7 @@ def auth_state() -> Response:
 
 def _shut() -> Optional[Response]:
     """The answer when what is kept is out of reach; None when it is not."""
-    if state.is_makeshift():
+    if out_of_reach():
         return make_response(jsonify(_unavailable()), 503)
     return None
 

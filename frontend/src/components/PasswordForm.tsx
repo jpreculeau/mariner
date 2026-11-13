@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   // Kept as it came, and worded when drawn: in the language the page is
   // in by then.
   const [refused, setRefused] = useState<{
-    on: "password" | "repeat";
+    on: "password" | "repeat" | "form";
     why: TextKey | { failure: unknown };
     said: number;
   } | null>(null);
@@ -35,8 +35,19 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const passwordField = useRef<HTMLInputElement>(null);
   const repeatField = useRef<HTMLInputElement>(null);
 
+  // The form became the other one: what was typed for one is not for
+  // the other. What was said of the form as a whole stays.
+  const shownAs = useRef(mode);
+  useEffect(() => {
+    if (shownAs.current === mode) return;
+    shownAs.current = mode;
+    setPassword("");
+    setRepeated("");
+    setRefused((was) => (was?.on === "form" ? was : null));
+  }, [mode]);
+
   const refuse = (
-    on: "password" | "repeat",
+    on: "password" | "repeat" | "form",
     why: TextKey | { failure: unknown },
   ) => {
     setRefused({ on, why, said: ++said.current });
@@ -62,12 +73,23 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     try {
       await (choosing ? choosePassword(password) : signIn(password));
     } catch (failure) {
-      refuse("password", { failure });
+      // Only what is about the password marks its field as wrong.
+      const aboutThePassword =
+        failure instanceof ApiError &&
+        [
+          "wrong_password",
+          "password_too_short",
+          "password_too_long",
+          "password_too_common",
+        ].includes(failure.code ?? "");
+      refuse(aboutThePassword ? "password" : "form", { failure });
       if (
         failure instanceof ApiError &&
-        failure.code === "password_already_set"
+        (failure.code === "password_already_set" ||
+          failure.code === "password_not_set")
       ) {
-        // Chosen from elsewhere meanwhile: the form to show is another.
+        // Chosen from elsewhere meanwhile, or cleared: the form to show
+        // is another.
         retry();
       }
     } finally {
@@ -76,7 +98,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     }
   };
 
-  const error = (on: "password" | "repeat") =>
+  const error = (on: "password" | "repeat" | "form") =>
     refused?.on !== on
       ? null
       : typeof refused.why === "string"
@@ -98,12 +120,12 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
             {t("choose.intro")}
           </p>
         )}
-        {!choosing && signedOutUnasked && (
+        {signedOutUnasked && (
           <p
             id="session-over"
             className="mt-2 text-base leading-relaxed text-muted-foreground"
           >
-            {t("signIn.signedOut")}
+            {t(choosing ? "choose.cleared" : "signIn.signedOut")}
           </p>
         )}
       </div>
@@ -114,7 +136,14 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         label={t(choosing ? "choose.new" : "signIn.password")}
         hint={choosing ? t("choose.hint") : undefined}
         // Focus lands in the field: what happened is read with it.
-        describedBy={!choosing && signedOutUnasked ? "session-over" : undefined}
+        describedBy={
+          [
+            signedOutUnasked ? "session-over" : null,
+            error("form") ? "form-error" : null,
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined
+        }
         autoComplete={choosing ? "new-password" : "current-password"}
         autoFocus
         value={password}
@@ -139,6 +168,17 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
             setRefused(null);
           }}
         />
+      )}
+
+      {error("form") && (
+        <p
+          key={refused?.said}
+          id="form-error"
+          role="alert"
+          className="text-sm leading-relaxed text-danger [overflow-wrap:anywhere]"
+        >
+          {error("form")}
+        </p>
       )}
 
       {/* Its words wrap: on one line they pushed the page wider than a

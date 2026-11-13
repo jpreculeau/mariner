@@ -44,6 +44,22 @@ describe("PowerMenu", () => {
     );
   });
 
+  it("leaves it to the form to say that the session is over", async () => {
+    const sent = vi
+      .spyOn(api, "hostShutdown")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    await confirmShutdown();
+    await waitFor(() => expect(sent).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("never says that the computer is going down on a failure", async () => {
     vi.spyOn(api, "hostShutdown").mockRejectedValue(
       new TypeError("Failed to fetch"),

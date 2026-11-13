@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
-import { errorText } from "@/lib/errors";
+import { errorText, saidByThePage } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import { isSupportedKind, isUsableName, supportedKinds } from "@/lib/kinds";
 import {
@@ -61,7 +61,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
           setRefused({ file, path, reason: errorText(err, t, lang) });
         } else {
           // The server says why, e.g. the file is being printed.
-          toast.error(errorText(err, t, lang));
+          if (!saidByThePage(err)) toast.error(errorText(err, t, lang));
           if (
             err instanceof ApiError &&
             (err.code === "upload_unanswered" || err.code === "folder_gone")

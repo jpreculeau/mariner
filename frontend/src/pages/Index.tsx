@@ -4,7 +4,7 @@ import { PrintProgress } from "@/components/PrintProgress";
 import { PrintControls } from "@/components/PrintControls";
 import { StatusIndicator } from "@/components/StatusIndicator";
 import { api, mapPrinterState, type PrinterStatus } from "@/lib/api";
-import { errorText } from "@/lib/errors";
+import { errorText, saidByThePage } from "@/lib/errors";
 import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
 import { focusContent, useFocusWithin } from "@/hooks/use-focus-within";
@@ -53,7 +53,9 @@ export default function Index() {
       await api.printerCommand(command);
       toast.success(words.current.t(done));
     } catch (failure) {
-      toast.error(errorText(failure, words.current.t, words.current.lang));
+      if (!saidByThePage(failure)) {
+        toast.error(errorText(failure, words.current.t, words.current.lang));
+      }
       throw failure;
     } finally {
       queryClient.invalidateQueries({ queryKey: ["printStatus"] });

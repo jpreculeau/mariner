@@ -110,9 +110,11 @@ describe("Settings", () => {
       await screen.findByRole("checkbox", { name: "ChiTuBox (SDCP)" }),
     );
 
-    expect(await screen.findByRole("status")).toHaveTextContent(
-      "This change takes effect when Mariner is started again.",
-    );
+    expect(
+      await screen.findByText(
+        /This change takes effect when Mariner is started again\./,
+      ),
+    ).toBeInTheDocument();
     // Said with "Saved" too, where it is sure to be heard and seen: the
     // notice is at the top of the page, and the switch is one of safety.
     expect(toast.success).toHaveBeenCalledWith(
@@ -137,9 +139,9 @@ describe("Settings", () => {
     });
     renderSettings();
     await screen.findByLabelText("Name shown for the printer");
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Restart Mariner the way it was started",
-    );
+    expect(
+      screen.getByText(/Restart Mariner the way it was started/),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Restart Mariner" }),
     ).toBeNull();
@@ -515,17 +517,77 @@ describe("Settings", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
   });
 
-  it("keeps the button to restart out of what is announced", async () => {
-    // Inside, its words changing were read out with the notice again.
+  it("says that a restart is waited for in one place that is announced", async () => {
+    // The message that says "Saved" says it: the notice, put in the
+    // page at the same moment, would have it read out twice.
     vi.spyOn(api, "settings").mockResolvedValue({
       ...shown,
       restart_needed: true,
     });
     renderSettings();
-    const button = await screen.findByRole("button", {
-      name: "Restart Mariner",
+    await screen.findByRole("button", { name: "Restart Mariner" });
+    expect(screen.getByText(/started again/)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("leaves it to the form to say that the session is over, on restarting", async () => {
+    vi.spyOn(api, "settings").mockResolvedValue({
+      ...shown,
+      restart_needed: true,
     });
-    expect(screen.getByRole("status")).not.toContainElement(button);
-    expect(screen.getByRole("status")).toHaveTextContent(/started again/);
+    const sent = vi
+      .spyOn(api, "restart")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    renderSettings();
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Restart Mariner" }),
+    );
+    await waitFor(() => expect(sent).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("leaves it to the screen that says Mariner is shut to say so", async () => {
+    vi.spyOn(api, "saveSettings").mockRejectedValue(
+      new ApiError(503, "Mariner cannot use the folder.", "state_unavailable"),
+    );
+    renderSettings();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "UVtools" }));
+    await waitFor(() => expect(api.saveSettings).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("marks no field as wrong for what is not about a field", async () => {
+    vi.spyOn(api, "changePassword").mockRejectedValue(
+      new ApiError(500, "Mariner could not keep this.", "state_not_written"),
+    );
+    renderSettings();
+    await screen.findByLabelText("Current password");
+    type("Current password", "old words");
+    type("New password", "new words!");
+    type("Repeat the new password", "new words!");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change the password" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Mariner could not keep this.",
+    );
+    for (const label of [
+      "Current password",
+      "New password",
+      "Repeat the new password",
+    ]) {
+      expect(screen.getByLabelText(label)).toHaveAttribute(
+        "aria-invalid",
+        "false",
+      );
+    }
   });
 });

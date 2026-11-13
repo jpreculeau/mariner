@@ -23,6 +23,7 @@ Mariner runs on, before opening the page at all:
    New password for Mariner:
    Again:
    The password was set (in /var/lib/mariner).
+   Every browser that was signed in has to sign in again.
 
 The same command replaces a password at any time, and signs every browser
 out. Where Mariner is not installed as a service but run by hand under your
@@ -175,8 +176,9 @@ you would keep the password. If a copy may have got out, change the password
 (from the page or with ``mariner set-password``): Mariner then makes a new
 key and every session made with the old one is refused.
 
-If Mariner cannot use this directory (it belongs to another account, after
-a copy made as ``root`` or a Docker mount; or the drive has gone read-only),
+If Mariner cannot use this directory, or the password kept in it (they
+belong to another account, after a copy made as ``root`` or a Docker mount;
+or the drive has gone read-only),
 it does not fall back on "no password yet": its page says that it cannot
 open and lets nobody in, and the slicers' interfaces stay off, until the
 directory is put right and Mariner restarted. The log names the directory.
@@ -222,4 +224,8 @@ The answer to signing in carries the key to send with every request from
 then on (``X-Mariner-Key``), and the token to send with those that change
 something (``X-CSRFToken``). Without both the cookie and the key the page's
 addresses answer ``401`` with the code ``login_required``, or
-``password_not_set`` when no password has been chosen yet.
+``password_not_set`` when no password has been chosen yet. Other answers a
+script should expect: ``429`` ``too_many_attempts`` after wrong passwords,
+with the seconds to wait in ``Retry-After``; ``503`` ``state_unavailable``
+while Mariner cannot use its state directory; ``500`` ``state_not_written``
+when a password or a setting could not be kept there.

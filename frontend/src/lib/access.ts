@@ -15,7 +15,8 @@ export interface AccessState {
   /** Why Mariner could not be asked, when `access` is "unreachable". */
   failure: unknown;
   /** Whether the page was signed in and no longer is, not by its own
-   * doing: its session ended, or the password changed elsewhere. */
+   * doing: its session ended, or the password was changed or cleared
+   * elsewhere. */
   signedOutUnasked: boolean;
   /** Choose the password, at the first visit. Rejects with the reason. */
   choosePassword: (password: string) => Promise<void>;

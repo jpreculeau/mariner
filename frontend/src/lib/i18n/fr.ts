@@ -21,7 +21,7 @@ export const fr: Record<TextKey, string> = {
   "access.refused.title": "Mariner n'a pas ouvert sa page",
   "access.shut.title": "Mariner ne peut pas ouvrir sa page",
   "access.shut.text":
-    "Il ne peut pas utiliser le dossier où il garde son mot de passe\u00a0: plutôt que de laisser entrer n'importe qui, il ne laisse entrer personne. Sur l'ordinateur qui le fait tourner, le journal de Mariner indique le dossier\u00a0: donnez-le au compte de Mariner, vérifiez qu'il est accessible en écriture, puis redémarrez Mariner. Cette page s'ouvrira alors toute seule.",
+    "Il ne peut pas utiliser le dossier où il garde son mot de passe, ou le mot de passe qui s'y trouve\u00a0: plutôt que de laisser entrer n'importe qui, il ne laisse entrer personne. Sur l'ordinateur qui le fait tourner, le journal de Mariner indique le dossier\u00a0: donnez-le, avec ce qu'il contient, au compte de Mariner, vérifiez qu'il est accessible en écriture, puis redémarrez Mariner. Cette page s'ouvrira alors toute seule.",
   "signIn.signedOut": "Votre session est terminée. Reconnectez-vous.",
   "signIn.heading": "Connexion à Mariner",
   "signIn.password": "Mot de passe",
@@ -32,6 +32,8 @@ export const fr: Record<TextKey, string> = {
   "choose.heading": "Choisir un mot de passe",
   "choose.intro":
     "Il sera demandé à toute personne qui ouvre cette page. Les trancheurs (UVtools, ChiTuBox) envoient leurs fichiers sans lui\u00a0: leur accès se coupe dans les réglages.",
+  "choose.cleared":
+    "Le mot de passe de Mariner a été effacé. Choisissez-en un nouveau.",
   "choose.new": "Nouveau mot de passe",
   "choose.hint": "Au moins 8 caractères.",
   "choose.repeat": "Répéter le mot de passe",
@@ -208,7 +210,7 @@ export const fr: Record<TextKey, string> = {
   "error.password_too_common":
     "Ce mot de passe fait partie des premiers que n'importe qui essaierait. Choisissez-en un autre.",
   "error.state_unavailable":
-    "Mariner ne peut pas utiliser le dossier où il garde son mot de passe\u00a0: sa page reste fermée.",
+    "Mariner ne peut pas utiliser le dossier où il garde son mot de passe, ou le mot de passe qui s'y trouve\u00a0: sa page reste fermée.",
   "error.password_too_short": "Un mot de passe compte au moins 8 caractères.",
   "error.password_too_long": "Un mot de passe compte au plus 1024 caractères.",
   "error.password_missing": "Aucun mot de passe n'a été donné.",

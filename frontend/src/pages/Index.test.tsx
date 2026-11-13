@@ -127,6 +127,24 @@ describe("Index", () => {
     expect(api.printerCommand).toHaveBeenCalledWith("pause_print");
   });
 
+  it("leaves it to the form to say that the session is over", async () => {
+    vi.spyOn(api, "printStatus").mockResolvedValue(printing);
+    const sent = vi
+      .spyOn(api, "printerCommand")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    renderIndex();
+    fireEvent.click(await screen.findByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(sent).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("says why a command was not taken", async () => {
     vi.spyOn(api, "printStatus").mockResolvedValue(printing);
     vi.spyOn(api, "printerCommand").mockRejectedValue(

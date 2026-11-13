@@ -20,7 +20,7 @@ export const en = {
   "access.refused.title": "Mariner did not open its page",
   "access.shut.title": "Mariner cannot open its page",
   "access.shut.text":
-    "It cannot use the folder it keeps its password in, so it lets nobody in rather than anybody. On the computer it runs on, Mariner's log says which folder: give it to the account Mariner runs under, make sure it can be written, and restart Mariner. This page then opens by itself.",
+    "It cannot use the folder it keeps its password in, or the password kept there, so it lets nobody in rather than anybody. On the computer it runs on, Mariner's log says which folder: give it and what it holds to the account Mariner runs under, make sure it can be written, and restart Mariner. This page then opens by itself.",
   "signIn.signedOut": "Your session is over. Sign in again.",
   "signIn.heading": "Sign in to Mariner",
   "signIn.password": "Password",
@@ -31,6 +31,7 @@ export const en = {
   "choose.heading": "Choose a password",
   "choose.intro":
     "It will be asked of anyone who opens this page. Slicers (UVtools, ChiTuBox) send files without it: their access can be switched off in the settings.",
+  "choose.cleared": "Mariner's password was cleared. Choose a new one.",
   "choose.new": "New password",
   "choose.hint": "At least 8 characters.",
   "choose.repeat": "Repeat the password",
@@ -218,7 +219,7 @@ export const en = {
   "error.password_too_common":
     "This password is among the first anyone would try. Choose another.",
   "error.state_unavailable":
-    "Mariner cannot use the folder it keeps its password in, so its page stays shut.",
+    "Mariner cannot use the folder it keeps its password in, or the password kept there, so its page stays shut.",
   "error.password_too_short": "A password has at least 8 characters.",
   "error.password_too_long": "A password has at most 1024 characters.",
   "error.password_missing": "No password was given.",

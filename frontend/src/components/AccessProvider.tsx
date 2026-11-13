@@ -74,7 +74,15 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     leftByItself.current = false;
   }
   const signedOutUnasked =
-    access === "sign-in" && wasIn.current && !leftByItself.current;
+    (access === "sign-in" || access === "choose") &&
+    wasIn.current &&
+    !leftByItself.current;
+
+  // What was said while the page was not open no longer holds once it
+  // is: that Mariner is shut, say.
+  useEffect(() => {
+    if (access === "in") toast.dismiss();
+  }, [access]);
 
   const failure = failed.current;
   const value = useMemo<AccessState>(() => {

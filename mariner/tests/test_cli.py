@@ -287,3 +287,26 @@ class CommandLineTest(TestCase):
         expect("sudo" in self.out.getvalue()).to_equal(True)
         expect((self.root / "own").exists()).to_equal(False)
         expect(self.state.exists()).to_equal(False)
+
+    def test_set_password_left_at_the_prompt_changes_nothing_and_says_so(
+        self,
+    ) -> None:
+        self.state.mkdir(mode=0o700)
+        for left in (EOFError(), KeyboardInterrupt()):
+            self.out = io.StringIO()
+            with patch.object(cli, "_folder_to_write", return_value=str(self.state)):
+                with patch("mariner.cli.getpass.getpass", side_effect=left):
+                    status = self._run_plain("set-password")
+            expect(status).to_equal(1)
+            expect("Nothing was changed" in self.out.getvalue()).to_equal(True)
+        expect((self.state / "password").exists()).to_equal(False)
+
+    def _run_plain(self, *arguments: str) -> int:
+        with patch("os.geteuid", return_value=1000), patch.object(
+            sys, "argv", ["mariner", *arguments]
+        ), patch.object(sys, "stdout", self.out), patch.object(sys, "stderr", self.out):
+            try:
+                cli.main()
+            except SystemExit as stopped:
+                return int(stopped.code or 0)
+        return 0
