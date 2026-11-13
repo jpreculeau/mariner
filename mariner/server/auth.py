@@ -637,6 +637,9 @@ def logout() -> Response:
 @auth_api.route("/password", methods=["POST"])
 def change_password() -> Response:
     """Replace the password; every other session ends."""
+    shut = _shut()
+    if shut is not None:
+        return shut
     if not is_signed_in():
         body = refusal("/api/auth-change", session) or {}
         return make_response(jsonify(body), status_of(body))

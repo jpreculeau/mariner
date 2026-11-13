@@ -698,6 +698,17 @@ class ChangeTest(_WithClient):
             response = self.post("/api/auth/password", current=PASSWORD, new="short")
             expect(response.get_json()["code"]).to_equal("password_too_short")
 
+    def test_it_is_not_changed_while_the_page_is_shut(self) -> None:
+        # What is kept is out of reach: nothing is written there, by a
+        # session that was open before it went.
+        with patch.object(state, "is_makeshift", return_value=True):
+            response = self.post(
+                "/api/auth/password", current=PASSWORD, new="new password!"
+            )
+        expect(response.status_code).to_equal(503)
+        expect(response.get_json()["code"]).to_equal("state_unavailable")
+        expect(auth.check_password(PASSWORD)).to_equal(True)
+
     def test_changing_it_asks_for_the_one_in_place(self) -> None:
         response = self.post("/api/auth/password", current="wrong", new="new password!")
         expect(response.status_code).to_equal(401)
