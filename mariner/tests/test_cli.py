@@ -1,16 +1,18 @@
 import io
 import json
 import os
+import re
 import stat
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
 from pyexpect import expect
 
-from mariner import cli, passwords
+from mariner import cli, passwords, totp
 
 
 class CommandLineTest(TestCase):
@@ -39,12 +41,18 @@ class CommandLineTest(TestCase):
 
     def _run(self, *arguments: str, typed: tuple = (), euid: int = 1000) -> int:
         answers = iter(typed)
+
+        def answer(prompt: str = "") -> str:
+            # What is typed may depend on what was shown.
+            given = next(answers)
+            return given() if callable(given) else given
+
         # Not as an administrator unless a test says so, whoever runs
         # the tests.
         with patch("os.geteuid", return_value=euid), patch.object(
             sys, "argv", ["mariner", *arguments]
-        ), patch(
-            "getpass.getpass", side_effect=lambda prompt="": next(answers)
+        ), patch("getpass.getpass", side_effect=answer), patch(
+            "builtins.input", side_effect=answer
         ), patch.object(
             sys, "stdout", self.out
         ), patch.object(
@@ -370,3 +378,58 @@ class CommandLineTest(TestCase):
             except SystemExit as stopped:
                 return int(stopped.code or 0)
         return 0
+
+    # -- the one-time code ---------------------------------------------------
+
+    def _shown_secret(self) -> str:
+        found = re.search(r"secret=([A-Z2-7]+)&", self.out.getvalue())
+        assert found is not None
+        return found.group(1)
+
+    def _code_of_the_moment(self) -> str:
+        return totp.code_at(self._shown_secret(), time.time()) or ""
+
+    def test_set_code_shows_the_key_and_keeps_it_once_a_code_is_typed(self) -> None:
+        # For who sets Mariner up from a terminal, before any page is open.
+        expect(self._run("set-code", typed=(self._code_of_the_moment,))).to_equal(0)
+        secret = self._shown_secret()
+        expect(totp.grouped(secret) in self.out.getvalue()).to_equal(True)
+        kept = self.state / totp.KEPT_AS
+        record = json.loads(kept.read_bytes())
+        expect(record["secret"]).to_equal(secret)
+        # The code that was typed has served.
+        expect(isinstance(record["last"], int)).to_equal(True)
+        expect(stat.S_IMODE(os.stat(kept).st_mode)).to_equal(0o600)
+
+    def test_set_code_keeps_nothing_without_a_right_code(self) -> None:
+        expect(self._run("set-code", typed=("000000", "111111", "222222"))).to_equal(1)
+        expect((self.state / totp.KEPT_AS).exists()).to_equal(False)
+        expect("Nothing was changed" in self.out.getvalue()).to_equal(True)
+
+    def test_set_code_takes_a_second_try(self) -> None:
+        expect(
+            self._run("set-code", typed=("000000", self._code_of_the_moment))
+        ).to_equal(0)
+        expect((self.state / totp.KEPT_AS).exists()).to_equal(True)
+
+    def test_set_code_left_at_the_prompt_changes_nothing(self) -> None:
+        def leave() -> str:
+            raise EOFError
+
+        expect(self._run("set-code", typed=(leave,))).to_equal(1)
+        expect((self.state / totp.KEPT_AS).exists()).to_equal(False)
+
+    def test_reset_code_does_away_with_it(self) -> None:
+        self._run("set-code", typed=(self._code_of_the_moment,))
+        expect(self._run("reset-code")).to_equal(0)
+        expect((self.state / totp.KEPT_AS).exists()).to_equal(False)
+        expect("Internet" in self.out.getvalue()).to_equal(True)
+
+    def test_reset_code_says_so_when_there_was_none(self) -> None:
+        expect(self._run("reset-code")).to_equal(0)
+        expect("no one-time code" in self.out.getvalue().lower()).to_equal(True)
+
+    def test_the_commands_for_the_code_are_named_in_the_usage(self) -> None:
+        self._run("--frobnicate")
+        expect("set-code" in self.out.getvalue()).to_equal(True)
+        expect("reset-code" in self.out.getvalue()).to_equal(True)

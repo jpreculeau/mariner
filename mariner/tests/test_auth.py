@@ -296,6 +296,7 @@ class FirstVisitTest(_WithClient):
                 "signed_in": False,
                 "from_internet": False,
                 "code_set": False,
+                "host_commands": True,
             }
         )
 
@@ -772,6 +773,7 @@ class ChangeTest(_WithClient):
                 "signed_in": False,
                 "from_internet": False,
                 "code_set": False,
+                "host_commands": True,
             }
         )
         # And one chosen anew does not bring them back.

@@ -50,6 +50,9 @@ Signing in from the Internet
   with the code, once it comes from the Internet (a phone that leaves the
   house, a cookie that was copied). One opened with the code holds
   everywhere.
+- **The page does not offer what would be refused**: seen from the
+  Internet, its power menu says that the computer is stopped and restarted
+  from the local network alone.
 - **Wrong passwords from the Internet are counted together**, whatever
   addresses they come from. Past 20 within the hour, signing in from the
   Internet is closed until the oldest is an hour old (``429``

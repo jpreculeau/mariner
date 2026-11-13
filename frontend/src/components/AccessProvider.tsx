@@ -97,6 +97,8 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   const failure = failed.current;
   const fromInternet = data?.from_internet === true;
   const codeSet = data?.code_set === true;
+  // Offered unless Mariner says it would refuse.
+  const hostCommands = data?.host_commands !== false;
   const value = useMemo<AccessState>(() => {
     const signedIn = async () => {
       // An answer asked for before this must not come after it and
@@ -128,6 +130,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       },
       fromInternet,
       codeSet,
+      hostCommands,
       signIn: async (password, code) => {
         await api.signIn(password, code);
         await signedIn();
@@ -155,6 +158,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     failure,
     fromInternet,
     codeSet,
+    hostCommands,
   ]);
 
   return (

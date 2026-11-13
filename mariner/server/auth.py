@@ -423,6 +423,13 @@ def _hash_of(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
+def _came_in_with_the_code(held: Mapping[str, Any]) -> bool:
+    """Whether a session is one the Internet is answered: it signed in
+    with the one-time code, and there still is one. Done away with, the
+    code ends what it opened from outside."""
+    return held.get(_WITH_CODE_AS) is True and code_is_set()
+
+
 def let_in(held: Mapping[str, Any], key: str, from_internet: bool = False) -> bool:
     """Whether a session holding *held*, sent with *key*, is signed in.
 
@@ -432,7 +439,7 @@ def let_in(held: Mapping[str, Any], key: str, from_internet: bool = False) -> bo
     """
     if not signed_in_with(held):
         return False
-    if from_internet and held.get(_WITH_CODE_AS) is not True:
+    if from_internet and not _came_in_with_the_code(held):
         return False
     expected = held.get(_KEY_AS)
     return isinstance(expected, str) and hmac.compare_digest(_hash_of(key), expected)
@@ -509,7 +516,7 @@ def refusal(
     if let_in(held, key, from_internet):
         return None
     if (method, path) in _WITHOUT_KEY and signed_in_with(held):
-        if not from_internet or held.get(_WITH_CODE_AS) is True:
+        if not from_internet or _came_in_with_the_code(held):
             return None
     if not has_password():
         return {
@@ -713,6 +720,9 @@ def auth_state() -> Response:
             # For the page to ask for the code, or say that there is none.
             "from_internet": _from_internet(),
             "code_set": code_is_set(),
+            # For the page not to offer what would be refused.
+            "host_commands": provenance.refusal("/api/host/reboot", request.remote_addr)
+            is None,
         }
     )
 

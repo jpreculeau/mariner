@@ -125,6 +125,8 @@ export const fr: Record<TextKey, string> = {
     "Des lettres lestées, pour les lecteurs dyslexiques",
 
   "power.open": "Éteindre ou redémarrer",
+  "power.localOnly":
+    "L'ordinateur s'arrête ou redémarre uniquement depuis le réseau local.",
   "power.heading": "Ordinateur qui fait tourner Mariner",
   "power.reboot": "Redémarrer",
   "power.rebootConfirm": "Confirmer le redémarrage ?",

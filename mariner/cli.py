@@ -1,7 +1,8 @@
-"""``mariner``: start Mariner, or set or clear its password.
+"""``mariner``: start Mariner, or set or clear its password or its
+one-time code.
 
-The two commands about the password are for whoever has the computer in
-hand. They work on the folder the service keeps its password in, without
+The commands about the password and the code are for whoever has the
+computer in hand. They work on the folder the service keeps its password in, without
 loading the server.
 """
 
@@ -12,14 +13,19 @@ import pwd
 import stat
 import sys
 import tempfile
-from typing import List, Optional
+import time
+from typing import Dict, List, Optional
 
-from mariner import config, passwords
+from mariner import config, passwords, totp
 
 _USAGE = """usage: mariner                  start Mariner
        mariner set-password     choose Mariner's password, typed here
        mariner reset-password   clear a password that is lost: the next
-                                visit to Mariner's page chooses one"""
+                                visit to Mariner's page chooses one
+       mariner set-code         set up the one-time code asked, besides
+                                the password, from the Internet
+       mariner reset-code       do away with it: nobody then signs in
+                                from the Internet"""
 
 
 def _serve() -> None:
@@ -160,13 +166,29 @@ def _set_password() -> int:
     except passwords.PasswordNotAllowed as error:
         print(f"{error.description} Nothing was changed.")
         return 1
+    problem = _keep(directory, passwords.KEPT_AS, record)
+    if problem is not None:
+        print(f"The password could not be kept in {directory} ({problem}).")
+        if problem != _NOT_A_FOLDER:
+            print("Run this command with sudo.")
+        return 1
+    _end_sessions(directory)
+    print(f"The password was set (in {directory}).")
+    print("Every browser that was signed in has to sign in again.")
+    return 0
+
+
+_NOT_A_FOLDER = "it is not a folder"
+
+
+def _keep(directory: str, name: str, record: Dict[str, object]) -> Optional[str]:
+    """Keep *record* under *name* in *directory*; why not, if it is not."""
     as_root = os.geteuid() == 0
     try:
         # The folder itself, not what a link of its name leads to.
         owner = os.lstat(directory)
         if not stat.S_ISDIR(owner.st_mode):
-            print(f"{directory} is not a folder. Nothing was changed.")
-            return 1
+            return _NOT_A_FOLDER
         descriptor, scratch = tempfile.mkstemp(dir=directory, prefix=".writing-")
         try:
             with os.fdopen(descriptor, "wb") as file:
@@ -181,7 +203,7 @@ def _set_password() -> int:
                 file.write(json.dumps(record).encode("ascii"))
                 file.flush()
                 os.fsync(file.fileno())
-            os.replace(scratch, passwords.kept_path(directory))
+            os.replace(scratch, os.path.join(os.path.expanduser(directory), name))
         except BaseException:
             try:
                 os.unlink(scratch)
@@ -189,12 +211,78 @@ def _set_password() -> int:
                 pass
             raise
     except OSError as error:
-        print(f"The password could not be kept in {directory} ({error}).")
+        return str(error)
+    return None
+
+
+_TRIES = 3
+
+
+def _set_code() -> int:
+    directory = _folder_to_write()
+    if directory is None:
+        print("Nothing was changed.")
+        if not os.path.lexists(_folders()[0]):
+            print(f"There is no {_folders()[0]} yet: start Mariner once first,")
+            print("then run this command again with sudo.")
+        return 1
+    secret = totp.new_secret()
+    print("In an application that gives one-time codes (Aegis, FreeOTP,")
+    print("Google Authenticator...), add an account with this key:")
+    print()
+    print(f"    {totp.grouped(secret)}")
+    print()
+    print("or, on the phone itself, open:")
+    print()
+    print(f"    {totp.uri(secret, 'Mariner')}")
+    print()
+    step = None
+    for _ in range(_TRIES):
+        try:
+            typed = input("Code given by the phone: ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        step = totp.step_of(secret, typed, time.time())
+        if step is not None:
+            break
+        print("This is not the code of the moment.")
+    if step is None:
+        # Else a phone that never took the key in would lock its owner
+        # out of the Internet.
+        print("Nothing was changed.")
+        return 1
+    problem = _keep(directory, totp.KEPT_AS, {"secret": secret, "last": step})
+    if problem is not None:
+        print(f"The code could not be kept in {directory} ({problem}).")
         print("Run this command with sudo.")
         return 1
-    _end_sessions(directory)
-    print(f"The password was set (in {directory}).")
-    print("Every browser that was signed in has to sign in again.")
+    print(f"The one-time code is set up (in {directory}).")
+    print("It is asked, besides the password, when signing in from the Internet.")
+    return 0
+
+
+def _reset_code() -> int:
+    folders = _folders()
+    try:
+        holding = [
+            one for one in folders if os.path.lexists(os.path.join(one, totp.KEPT_AS))
+        ]
+    except PermissionError:
+        print("This account may not look into the folder Mariner keeps things in.")
+        print("Run this command with sudo.")
+        return 1
+    if not holding:
+        print(f"No one-time code was set up (looked in {' and '.join(folders)}).")
+        return 0
+    try:
+        os.unlink(os.path.join(holding[0], totp.KEPT_AS))
+    except OSError as error:
+        print(f"The one-time code could not be done away with ({error}).")
+        print("Run this command with sudo.")
+        return 1
+    print(f"The one-time code was done away with (in {holding[0]}).")
+    print("Until another is set up, nobody signs in from the Internet.")
     return 0
 
 
@@ -220,5 +308,9 @@ def main() -> None:
         sys.exit(_reset_password())
     if arguments == ["set-password"]:
         sys.exit(_set_password())
+    if arguments == ["set-code"]:
+        sys.exit(_set_code())
+    if arguments == ["reset-code"]:
+        sys.exit(_reset_code())
     print(_USAGE, file=sys.stderr)
     sys.exit(2)

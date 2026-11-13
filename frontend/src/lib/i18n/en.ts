@@ -123,6 +123,8 @@ export const en = {
 
   // Power menu
   "power.open": "Shut down or restart",
+  "power.localOnly":
+    "The computer is shut down or restarted from the local network alone.",
   "power.heading": "Computer running Mariner",
   "power.reboot": "Restart",
   "power.rebootConfirm": "Confirm restart?",

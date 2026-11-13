@@ -9,6 +9,7 @@ import {
 import { PowerMenu } from "./PowerMenu";
 import { api, ApiError } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
+import { AccessContext, type AccessState } from "@/lib/access";
 
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -170,5 +171,27 @@ describe("PowerMenu", () => {
       await screen.findByRole("button", { name: "Restarting…" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Restarting…");
+  });
+
+  it("offers neither where the computer would refuse: seen from the Internet", async () => {
+    const shutdown = vi.spyOn(api, "hostShutdown");
+    render(
+      <AccessContext.Provider
+        value={{ hostCommands: false } as unknown as AccessState}
+      >
+        <PowerMenu />
+      </AccessContext.Provider>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Shut down or restart" }),
+    );
+    expect(
+      await screen.findByText(
+        "The computer is shut down or restarted from the local network alone.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Shut down")).toBeNull();
+    expect(screen.queryByText("Restart")).toBeNull();
+    expect(shutdown).not.toHaveBeenCalled();
   });
 });

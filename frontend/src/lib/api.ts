@@ -50,6 +50,8 @@ export interface AuthState {
   from_internet?: boolean;
   /** A one-time code is set up: asked for, from the Internet. */
   code_set?: boolean;
+  /** The computer can be shut down or restarted from where the page is. */
+  host_commands?: boolean;
 }
 
 /** The settings that can be changed from the page. */

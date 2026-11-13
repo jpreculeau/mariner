@@ -2,6 +2,7 @@
 
 import time
 from typing import Any
+from unittest.mock import patch
 
 from pyexpect import expect
 
@@ -171,6 +172,19 @@ class SessionsAndPlacesTest(_FromPlaces):
         client.environ_base["REMOTE_ADDR"] = LOCAL
         expect(client.get("/api/settings").status_code).to_equal(200)
 
+    def test_doing_away_with_the_code_ends_what_it_opened_from_outside(self) -> None:
+        # Nobody signs in from the Internet without one: nobody stays
+        # signed in from there either.
+        secret = _set_up()
+        client = self._from(INTERNET)
+        self._sign_in(client, code=_code(secret, 30))
+        auth.remove_code()
+        expect(self.state_of(client)["signed_in"]).to_equal(False)
+        expect(client.get("/api/settings").status_code).to_equal(401)
+        # At home it holds.
+        client.environ_base["REMOTE_ADDR"] = LOCAL
+        expect(client.get("/api/settings").status_code).to_equal(200)
+
     def test_the_page_is_told_where_it_is_seen_from(self) -> None:
         expect(self.state_of(self._from(LOCAL))).to_equal(
             {
@@ -178,12 +192,17 @@ class SessionsAndPlacesTest(_FromPlaces):
                 "signed_in": False,
                 "from_internet": False,
                 "code_set": False,
+                "host_commands": True,
             }
         )
         _set_up()
         told = self.state_of(self._from(INTERNET))
         expect(told["from_internet"]).to_equal(True)
         expect(told["code_set"]).to_equal(True)
+        # For the page not to offer what would be refused.
+        expect(told["host_commands"]).to_equal(False)
+        with patch("mariner.config.get_host_commands_from_internet", return_value=True):
+            expect(self.state_of(self._from(INTERNET))["host_commands"]).to_equal(True)
 
     def test_a_body_is_not_taken_in_from_a_session_without_the_code(self) -> None:
         # What the web server asks before storing a file.

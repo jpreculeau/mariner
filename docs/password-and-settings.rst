@@ -37,6 +37,40 @@ own account, run it as that account (``mariner set-password``, without
 The password is not kept as it is typed, but as a *hash* from which it cannot
 be read back, not even by Mariner. It can be replaced, never recovered.
 
+The one-time code
+-----------------
+
+From the Internet, the password is not enough: Mariner also asks for a
+*one-time code*, six digits that an application of your phone gives and
+that change every half minute. On the local network the password alone
+signs in. See :doc:`internet` for what else changes from outside.
+
+To set it up, either:
+
+- in the page, from the local network: **Settings**, **One-time code**,
+  **Set up a one-time code**. The page shows a key. In the application
+  (Aegis, FreeOTP, Google Authenticator or any other that speaks TOTP),
+  add an account and type the key, or open the link on the phone itself;
+  then type the code the application gives, to check that it took the key
+  in;
+- or from a terminal on the computer Mariner runs on:
+
+  .. code-block:: console
+
+     $ sudo mariner set-code
+
+  which shows the same key and asks for the same first code.
+
+Setting it up again, on another phone, replaces the key once the new phone's
+first code is given; the old phone's codes then stop working. To do away
+with it: **Remove the one-time code** in the same part of the settings (it
+asks for the password), or ``sudo mariner reset-code``. Without a code,
+nobody signs in from the Internet, and whoever was signed in from there is
+signed out.
+
+A lost phone locks nobody out at home: sign in from the local network, or
+use the terminal, and set the code up on the new phone.
+
 Signing in and out
 ------------------
 
