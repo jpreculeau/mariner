@@ -1,7 +1,7 @@
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, List, MutableMapping, Optional, Sequence
+from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 
 import toml
 
@@ -104,6 +104,43 @@ def get_http_port() -> int:
     return int(http_config.get("port", default_port))
 
 
+def _https() -> MutableMapping[str, object]:
+    section = _get_config().get("https")
+    return section if isinstance(section, dict) else {}
+
+
+def get_https_enabled() -> bool:
+    """Whether Mariner serves its page over HTTPS itself.
+
+    On unless it is plainly switched off: taken for off, something that is
+    neither true nor false would put the page in the clear without anyone
+    having said so.
+    """
+    return _https().get("enabled", True) is not False
+
+
+def get_https_port() -> int:
+    return int(_https().get("port", 5443))  # type: ignore[call-overload]
+
+
+def _own_certificate() -> Optional[Tuple[str, str]]:
+    """The certificate and key of the owner's own, when both are named."""
+    certificate, key = _https().get("certificate"), _https().get("key")
+    if isinstance(certificate, str) and isinstance(key, str):
+        return certificate, key
+    return None
+
+
+def get_https_certificate() -> Optional[str]:
+    own = _own_certificate()
+    return own[0] if own else None
+
+
+def get_https_key() -> Optional[str]:
+    own = _own_certificate()
+    return own[1] if own else None
+
+
 def get_http_allowed_hosts() -> List[str]:
     """Names Mariner answers to besides its address and local names.
 
@@ -172,6 +209,16 @@ def ignored_settings() -> List[str]:
                 f"[http] max_upload_size_mb = {megabytes!r} is not a whole "
                 f"number above zero: {DEFAULT_MAX_UPLOAD_SIZE_MB} is used"
             )
+    if "enabled" in _https() and not isinstance(_https()["enabled"], bool):
+        found.append(
+            f"[https] enabled = {_https()['enabled']!r} is neither true nor "
+            "false: HTTPS stays on"
+        )
+    if ("certificate" in _https() or "key" in _https()) and not _own_certificate():
+        found.append(
+            "[https] certificate and [https] key go together, each the path "
+            "of a file: Mariner makes a certificate of its own instead"
+        )
     for section in ("uvtools", "sdcp"):
         section_config = _get_config().get(section)
         if isinstance(section_config, dict) and "enabled" in section_config:

@@ -34,6 +34,7 @@ Requires:       python3.12
 Requires:       libxml2
 Requires:       libxslt
 Requires:       zlib
+Requires:       openssl
 Recommends:     alejandro-md-release
 
 %description

@@ -226,6 +226,8 @@ export const en = {
   "error.password_already_set":
     "A password has already been chosen. Sign in with it.",
   "error.password_not_set": "No password has been chosen yet.",
+  "error.https_required":
+    "Mariner's page is served over HTTPS, and answers nothing of its own in the clear. Open it at its https:// address.",
   "error.state_not_written":
     "Mariner could not keep this: the folder it keeps its password and settings in cannot be written. The drive may be full or read-only. Nothing was changed.",
   "error.login_required": "Sign in first.",

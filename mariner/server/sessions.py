@@ -22,6 +22,11 @@ from flask.sessions import SecureCookieSession, SecureCookieSessionInterface
 from itsdangerous import BadSignature
 
 COOKIE_NAME = "mariner_session"
+# Over HTTPS. Under this prefix a browser takes the cookie only from
+# HTTPS, for this host alone and for all of its paths: another program
+# of the computer, served in the clear or under another path, can no
+# longer set one of this name.
+SECURED_COOKIE_NAME = "__Host-" + COOKIE_NAME
 # What is tried of a request's cookies: more than a browser sends under
 # every path and form of the name there is. Each costs a signature.
 _MOST_TRIED = 32

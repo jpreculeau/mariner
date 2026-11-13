@@ -57,10 +57,12 @@ What the password does not cover
 Slicers send files and start prints over the network, and none of them can
 give a password. Their two interfaces are therefore **not** behind it:
 
-- UVtools, on the port of the web page (``/uvtools/...``);
+- UVtools, on the port Mariner listens on in the clear (``/uvtools/...``,
+  port 5000 unless set otherwise under ``[http]``);
 - SDCP, which ChiTuBox speaks, on UDP port 3000 and TCP port 3030.
 
-Anyone on your network can use them while they are on. Switch off the ones
+Anyone on your network can use them while they are on, and what goes
+through them is not encrypted (the page itself is: see :doc:`https`). Switch off the ones
 you do not use, under *Settings → Slicers* (Mariner then has to be
 restarted, which the page offers to do), or in ``config.toml``:
 
@@ -212,16 +214,17 @@ A script signs in like the page does, and keeps the cookie it is given:
 
 .. code-block:: console
 
-   $ curl -s -c jar http://printer.local:5000/api/csrf_token
+   $ curl -s --cacert mariner.pem -c jar https://printer.local:5443/api/csrf_token
    {"csrf_token":"IjM4..."}
-   $ curl -s -b jar -c jar -H 'X-CSRFToken: IjM4...' \
+   $ curl -s --cacert mariner.pem -b jar -c jar -H 'X-CSRFToken: IjM4...' \
          -H 'Content-Type: application/json' \
          -d '{"password":"correct horse battery"}' \
-         http://printer.local:5000/api/auth/login
+         https://printer.local:5443/api/auth/login
    {"csrf_token":"ImE1...","page_key":"u3Jk...","success":true}
-   $ curl -s -b jar -H 'X-Mariner-Key: u3Jk...' \
-         http://printer.local:5000/api/print_status
+   $ curl -s --cacert mariner.pem -b jar -H 'X-Mariner-Key: u3Jk...' \
+         https://printer.local:5443/api/print_status
 
+``mariner.pem`` is Mariner's certificate, copied as :doc:`https` says.
 The answer to signing in carries the key to send with every request from
 then on (``X-Mariner-Key``), and the token to send with those that change
 something (``X-CSRFToken``). Without both the cookie and the key the page's

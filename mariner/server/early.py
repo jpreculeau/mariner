@@ -53,6 +53,12 @@ UPLOAD_PREFIXES = ("/api/upload_file", "/uvtools/upload/")
 password_refusal: Optional[
     Callable[[str, str, Dict[str, str]], Optional[Dict[str, str]]]
 ] = None
+# Why a request (its path and headers) that came in the clear is not
+# answered there; None if it is. Set by whoever starts the server, when
+# the page is served over HTTPS.
+plain_refusal: Optional[Callable[[str, Dict[str, str]], Optional[Dict[str, str]]]] = (
+    None
+)
 
 _REASONS = {
     401: "Unauthorized",
@@ -164,6 +170,11 @@ class _Parser(HTTPRequestParser):
             self._log(refusal.code, headers)
             self._refuse(403, refusal.body())
             return
+        if plain_refusal is not None and not self.secured:
+            in_the_clear = plain_refusal(self.path, headers)
+            if in_the_clear is not None:
+                self._refuse(403, in_the_clear)
+                return
         if password_refusal is not None:
             not_signed_in = password_refusal(self.command, self.path, headers)
             if not_signed_in is not None:
@@ -244,7 +255,10 @@ def create_guarded_server(
     )
     for one in listening:
         one.channel_class = _Channel
-        if tls is not None and tls_port in (None, one.effective_port):
+        # Named as a number or, listening on several, as text.
+        if tls is not None and (
+            tls_port is None or int(one.effective_port) == int(tls_port)
+        ):
             from mariner.server.tls import secured
 
             one.channel_class = secured(_Channel, tls)

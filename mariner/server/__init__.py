@@ -2,7 +2,7 @@ import logging
 import multiprocessing
 import os
 import tempfile
-from typing import Dict
+from typing import Any, Dict
 
 from flask import abort, render_template
 
@@ -12,7 +12,17 @@ from mariner.file_formats.utils import get_supported_extensions
 from mariner.server.api import api as api_blueprint
 from mariner.server.auth import auth_api as auth_blueprint
 from mariner.server.app import UPLOAD_OVERHEAD_BYTES, app as flask_app, csrf
-from mariner.server import auth, early, origin, sessions, settings, state
+from mariner.server import (
+    auth,
+    certificate,
+    early,
+    https,
+    origin,
+    sessions,
+    settings,
+    state,
+    tls,
+)
 from mariner.server.early import serve
 from mariner.server.files import printable_files, remove_stale_scratch_files
 from mariner.server.providers import register_providers, start_providers
@@ -149,6 +159,54 @@ def use_spool_directory() -> None:
         )
 
 
+def _listening() -> Dict[str, Any]:
+    """Where the web server listens, and whether over HTTPS too.
+
+    Sets what the application needs to know of it.
+    """
+    host, port = config.get_http_host(), config.get_http_port()
+    in_the_clear: Dict[str, Any] = {"host": host, "port": port}
+    flask_app.config.update(
+        HTTPS_PORT=None,
+        SESSION_COOKIE_SECURE=False,
+        SESSION_COOKIE_NAME=sessions.COOKIE_NAME,
+    )
+    early.plain_refusal = None
+    pair = certificate.in_use()
+    if pair is None:
+        if config.get_https_enabled():
+            logger.warning(
+                "Mariner's page is served without HTTPS: what is typed in "
+                "it, its password included, can be read on the network"
+            )
+        return in_the_clear
+    secured_port = config.get_https_port()
+    if secured_port == port:
+        logger.error(
+            "Configuration: [https] port and [http] port are both %d. "
+            "Mariner's page is served without HTTPS until they differ",
+            port,
+        )
+        return in_the_clear
+    flask_app.config.update(
+        HTTPS_PORT=secured_port,
+        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_NAME=sessions.SECURED_COOKIE_NAME,
+    )
+    early.plain_refusal = lambda path, headers: (
+        https.refusal(headers.get("Host", ""), secured_port)
+        if https.is_for_the_page(path)
+        else None
+    )
+    at = f"[{host}]" if ":" in host else host
+    logger.info("Mariner's page is served over HTTPS on port %d", secured_port)
+    return {
+        "listen": f"{at}:{port} {at}:{secured_port}",
+        "tls": tls.context(*pair),
+        "tls_port": secured_port,
+    }
+
+
 def main() -> None:
     # Global log level applies to mariner.* and waitress output.
     log_level = getattr(logging, config.get_log_level(), logging.INFO)
@@ -208,8 +266,7 @@ def main() -> None:
     use_spool_directory()
     serve(
         flask_app,
-        host=config.get_http_host(),
-        port=config.get_http_port(),
+        **_listening(),
         # Left to itself the web server refuses anything over a gigabyte.
         max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
         # Each connection can hold an upload waiting on the drive.

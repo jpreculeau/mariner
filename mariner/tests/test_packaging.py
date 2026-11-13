@@ -89,3 +89,24 @@ class WorkflowsTest(TestCase):
                 # The version it stands for, for whoever reads or updates it.
                 expect(bool(re.search(r"#\s*v\d", line))).to_equal(True)
         expect(found > 10).to_equal(True)
+
+
+class CertificateToolTest(TestCase):
+    """The page is served over HTTPS with a certificate made by ``openssl``:
+    wherever Mariner is installed from, the command comes with it."""
+
+    def test_the_debian_package_asks_for_it(self) -> None:
+        control = (ROOT / "dist" / "debian" / "control").read_text()
+        depends = [line for line in control.splitlines() if line.startswith("Depends")]
+        expect("openssl" in depends[0]).to_equal(True)
+
+    def test_the_rpm_package_asks_for_it(self) -> None:
+        spec = (ROOT / "dist" / "rpm" / "mariner3d.spec").read_text()
+        expect("Requires:       openssl\n" in spec).to_equal(True)
+
+    def test_the_image_has_it_and_opens_the_port(self) -> None:
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        last_stage = dockerfile.rindex("FROM ")
+        final = dockerfile[last_stage:]
+        expect(" openssl" in final).to_equal(True)
+        expect("EXPOSE 5000 5443" in final).to_equal(True)

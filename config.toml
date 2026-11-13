@@ -61,6 +61,17 @@ spool_directory = "/var/tmp"
 # uses a folder of its own under /tmp.
 #directory = "/var/cache/mariner"
 
+[https]
+# Mariner serves its page over HTTPS by itself, on this port; the port under
+# [http] stays for slicers and sends browsers on. Set enabled to false only
+# where something else encrypts the connection (a relay on this computer).
+#enabled = true
+#port = 5443
+# A certificate of your own and its key, in place of the one Mariner makes
+# for itself. Both readable by Mariner's account, the key by nobody else.
+#certificate = "/etc/mariner/printer.pem"
+#key = "/etc/mariner/printer.key"
+
 [state]
 # Directory in which Mariner keeps what must outlast a restart, for itself
 # alone: the key that signs sessions, the password's hash, the settings

@@ -9,13 +9,13 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, Union, cast
 
-from flask import Flask, Response, jsonify, make_response, request, session
+from flask import Flask, Response, jsonify, make_response, redirect, request, session
 from werkzeug.exceptions import HTTPException
 from flask_wtf.csrf import CSRFError, CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
-from mariner.server import auth, origin, refusals, sessions
+from mariner.server import auth, https, origin, refusals, sessions
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -198,6 +198,28 @@ def refuse_other_sites() -> Optional[Tuple[Response, int]]:
 
 
 @app.before_request
+def ask_for_https() -> Optional[Union[Response, Tuple[Response, int]]]:
+    """Answer nothing of the page's own in the clear, once it has HTTPS.
+
+    See ``mariner.server.https``. As above, the web server Mariner runs
+    under has already refused a request that has a body.
+    """
+    port = app.config.get("HTTPS_PORT")
+    if port is None or request.scheme == "https":
+        return None
+    if not https.is_for_the_page(request.path):
+        return None
+    where = https.address(request.host, port)
+    reading_the_page = request.method in ("GET", "HEAD") and not (
+        request.path == "/api" or request.path.startswith("/api/")
+    )
+    if reading_the_page and where is not None:
+        # Kept as it was asked for: the method, and where in the page.
+        return redirect(where + request.full_path.rstrip("?"), code=307)
+    return jsonify(https.refusal(request.host, port)), 403
+
+
+@app.before_request
 def ask_for_the_password() -> Optional[Tuple[Response, int]]:
     """Answer the page's own addresses only to who is signed in.
 
@@ -217,7 +239,7 @@ def ask_for_the_password() -> Optional[Tuple[Response, int]]:
 
 # First of all: before the check of the token a form carries, which reads
 # the whole form, file included.
-for early in (ask_for_the_password, refuse_other_sites):
+for early in (ask_for_the_password, ask_for_https, refuse_other_sites):
     app.before_request_funcs.setdefault(None, []).remove(early)
     app.before_request_funcs[None].insert(0, early)
 
@@ -360,6 +382,10 @@ app.config.from_mapping(
         # the last visit: who is signed in stays so.
         "SESSION_COOKIE_NAME": sessions.COOKIE_NAME,
         "SESSION_COOKIE_HTTPONLY": True,
+        # Set at start, with the name of the cookie, when the page is
+        # served over HTTPS: see ``mariner.server.main``.
+        "SESSION_COOKIE_SECURE": False,
+        "HTTPS_PORT": None,
         "PERMANENT_SESSION_LIFETIME": timedelta(days=30),
         # The cookie is sent again only when the session changes, not
         # with every answer: an answer that was on its way when the

@@ -23,7 +23,7 @@ RUN poetry install --only main
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libxml2 libxslt1.1 zlib1g \
+    libxml2 libxslt1.1 zlib1g openssl \
   && rm -rf /var/lib/apt/lists/* \
   && useradd -r -s /sbin/nologin -d /nonexistent mariner \
   && usermod -aG dialout mariner \
@@ -35,7 +35,7 @@ COPY config.toml /etc/mariner/config.toml
 
 ENV PATH="/opt/venvs/mariner3d/bin:${PATH}"
 
-EXPOSE 5000
+EXPOSE 5000 5443
 # What must outlast the container: the key of sessions, the password's hash,
 # the settings changed from the page.
 VOLUME /var/lib/mariner

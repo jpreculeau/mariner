@@ -31,6 +31,12 @@ class ConfigurationTest(TestCase):
         expect(config.get_max_upload_bytes()).to_equal(2048 * 1024 * 1024)
         expect(config.get_spool_directory()).to_equal("/var/tmp")
 
+        # The page is encrypted unless it is said not to be.
+        expect(config.get_https_enabled()).to_equal(True)
+        expect(config.get_https_port()).to_equal(5443)
+        expect(config.get_https_certificate()).to_equal(None)
+        expect(config.get_https_key()).to_equal(None)
+
     def test_can_customize_the_upload_limit_and_where_uploads_wait(self) -> None:
         self.fs.create_file(
             "/etc/mariner/config.toml",
@@ -156,6 +162,40 @@ port = 80
         )
         expect(config.get_http_host()).to_equal("127.0.0.1")
         expect(config.get_http_port()).to_equal(80)
+
+    def test_can_customize_https_settings(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[https]
+enabled = false
+port = 443
+certificate = "/etc/ssl/printer.pem"
+key = "/etc/ssl/private/printer.key"
+            """,
+        )
+        expect(config.get_https_enabled()).to_equal(False)
+        expect(config.get_https_port()).to_equal(443)
+        expect(config.get_https_certificate()).to_equal("/etc/ssl/printer.pem")
+        expect(config.get_https_key()).to_equal("/etc/ssl/private/printer.key")
+
+    def test_https_settings_that_are_passed_over_are_named(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[https]
+enabled = "no"
+certificate = "/etc/ssl/printer.pem"
+            """,
+        )
+        # Not switched off by something that is neither true nor false:
+        # the page would go in the clear without anyone having said so.
+        expect(config.get_https_enabled()).to_equal(True)
+        said = " ".join(config.ignored_settings())
+        expect("[https] enabled" in said).to_equal(True)
+        # One without the other is of no use.
+        expect(config.get_https_certificate()).to_equal(None)
+        expect("[https] certificate" in said).to_equal(True)
 
     def test_can_say_where_things_are_kept(self) -> None:
         self.fs.create_file(

@@ -2,6 +2,8 @@ from typing import Any, Callable, List
 from unittest import TestCase
 from unittest.mock import patch
 
+from pyexpect import expect
+
 from mariner import server
 
 
@@ -9,8 +11,21 @@ class StartupTest(TestCase):
     def setUp(self) -> None:
         # Starting sets these for the web server: not for the tests that
         # run after these.
-        for name in ("password_refusal", "UPLOAD_PREFIXES"):
+        for name in ("password_refusal", "plain_refusal", "UPLOAD_PREFIXES"):
             self.addCleanup(setattr, server.early, name, getattr(server.early, name))
+        # Nor what it sets for the application.
+        kept = patch.dict(server.flask_app.config)
+        kept.start()
+        self.addCleanup(kept.stop)
+        # No certificate is looked for, nor made, unless a test says so.
+        looked_for = patch.object(server.certificate, "in_use", return_value=None)
+        self.certificate = looked_for.start()
+        self.addCleanup(looked_for.stop)
+        # Whatever the configuration of who runs the tests says.
+        for name, value in (("get_http_host", "0.0.0.0"), ("get_http_port", 5050)):
+            where = patch.object(server.config, name, return_value=value)
+            where.start()
+            self.addCleanup(where.stop)
 
     def test_unfinished_transfers_are_cleared_before_anything_else_runs(self) -> None:
         order: List[str] = []
@@ -228,3 +243,74 @@ class StartupTest(TestCase):
             serve = self._started()
             serve.assert_called_once()
         self.assertEqual(order, ["spool"])
+
+    def test_without_a_certificate_the_page_is_served_in_the_clear(self) -> None:
+        with patch.object(server, "use_spool_directory"):
+            serve = self._started()
+        settings = serve.call_args.kwargs
+        expect(settings["host"]).to_equal("0.0.0.0")
+        expect(settings["port"]).to_equal(5050)
+        expect(settings.get("tls")).to_equal(None)
+        expect(server.flask_app.config["HTTPS_PORT"]).to_equal(None)
+        expect(server.flask_app.config["SESSION_COOKIE_SECURE"]).to_equal(False)
+        expect(server.flask_app.config["SESSION_COOKIE_NAME"]).to_equal(
+            "mariner_session"
+        )
+        expect(server.early.plain_refusal).to_equal(None)
+
+    def test_with_a_certificate_the_page_is_served_over_https_beside_the_clear(
+        self,
+    ) -> None:
+        self.certificate.return_value = ("/c.pem", "/k.pem")
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.tls, "context", return_value="the context"
+        ) as context:
+            serve = self._started()
+        context.assert_called_once_with("/c.pem", "/k.pem")
+        settings = serve.call_args.kwargs
+        expect(settings["listen"]).to_equal("0.0.0.0:5050 0.0.0.0:5443")
+        expect("host" in settings or "port" in settings).to_equal(False)
+        expect(settings["tls"]).to_equal("the context")
+        expect(settings["tls_port"]).to_equal(5443)
+        expect(server.flask_app.config["HTTPS_PORT"]).to_equal(5443)
+        expect(server.flask_app.config["SESSION_COOKIE_SECURE"]).to_equal(True)
+        expect(server.flask_app.config["SESSION_COOKIE_NAME"]).to_equal(
+            "__Host-mariner_session"
+        )
+
+    def test_under_https_the_web_server_takes_no_body_for_the_page_in_the_clear(
+        self,
+    ) -> None:
+        self.certificate.return_value = ("/c.pem", "/k.pem")
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.tls, "context"
+        ):
+            self._started()
+        refused = server.early.plain_refusal(
+            "/api/upload_file", {"Host": "saturn.local:5050"}
+        )
+        expect(refused["code"]).to_equal("https_required")
+        expect("https://saturn.local:5443" in refused["description"]).to_equal(True)
+        expect(
+            server.early.plain_refusal("/uvtools/upload/x.ctb", {"Host": "saturn"})
+        ).to_equal(None)
+
+    def test_an_address_of_the_newer_kind_is_listened_on_in_brackets(self) -> None:
+        self.certificate.return_value = ("/c.pem", "/k.pem")
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.tls, "context"
+        ), patch.object(server.config, "get_http_host", return_value="::"):
+            serve = self._started()
+        expect(serve.call_args.kwargs["listen"]).to_equal("[::]:5050 [::]:5443")
+
+    def test_one_port_for_both_leaves_the_page_in_the_clear_and_says_so(
+        self,
+    ) -> None:
+        self.certificate.return_value = ("/c.pem", "/k.pem")
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.tls, "context"
+        ), patch.object(server.config, "get_https_port", return_value=5050):
+            with self.assertLogs("mariner.server", level="ERROR"):
+                serve = self._started()
+        expect(serve.call_args.kwargs.get("tls")).to_equal(None)
+        expect(server.flask_app.config["HTTPS_PORT"]).to_equal(None)

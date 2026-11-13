@@ -7,9 +7,11 @@ import subprocess
 import tempfile
 import threading
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from unittest import TestCase, skipUnless
+from unittest.mock import patch
 
 from pyexpect import expect
 
@@ -83,6 +85,9 @@ class SecuredConnectionTest(TestCase):
             host="127.0.0.1",
             port=0,
             max_request_body_size=10**9,
+            # Short, for the test of a connection that says nothing.
+            channel_timeout=1,
+            cleanup_interval=1,
             tls=tls.context(self.certificate, self.key),
         )
         self.port = self.server.effective_port
@@ -206,6 +211,50 @@ class SecuredConnectionTest(TestCase):
         connection.sendall(b"GET /after HTTP/1.1\r\nHost: localhost\r\n\r\n")
         expect(self._answer(connection).endswith(b"served 0")).to_equal(True)
 
+    def test_a_connection_that_never_finishes_greeting_is_not_kept(self) -> None:
+        # It holds one of the few connections there are.
+        with socket.create_connection(("127.0.0.1", self.port), timeout=10) as raw:
+            raw.sendall(b"\x16\x03\x01")
+            raw.settimeout(8)
+            started = time.monotonic()
+            expect(raw.recv(1024)).to_equal(b"")
+            expect(time.monotonic() - started < 6).to_equal(True)
+
+    def test_a_connection_that_says_nothing_after_greeting_is_not_kept(
+        self,
+    ) -> None:
+        connection = self._connected()
+        connection.settimeout(8)
+        started = time.monotonic()
+        expect(connection.recv(1024)).to_equal(b"")
+        expect(time.monotonic() - started < 6).to_equal(True)
+
+    def test_a_file_whose_sender_leaves_halfway_does_no_harm(self) -> None:
+        connection = self._connected()
+        connection.sendall(
+            b"POST /api/upload_file HTTP/1.1\r\nHost: localhost\r\n"
+            b"Content-Length: 5000000\r\n\r\n" + b"x" * 100000
+        )
+        connection.close()
+        after = self._connected()
+        after.sendall(b"GET /after HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        expect(self._answer(after).endswith(b"served 0")).to_equal(True)
+        expect([one["path"] for one in self.seen]).to_equal(["/after"])
+
+    def test_the_old_forms_of_tls_are_not_spoken(self) -> None:
+        old = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        old.check_hostname = False
+        old.verify_mode = ssl.CERT_NONE
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            old.minimum_version = ssl.TLSVersion.TLSv1
+            old.maximum_version = ssl.TLSVersion.TLSv1_1
+        old.set_ciphers("DEFAULT:@SECLEVEL=0")
+        raw = socket.create_connection(("127.0.0.1", self.port), timeout=5)
+        self.addCleanup(raw.close)
+        with self.assertRaises((ssl.SSLError, ConnectionError)):
+            old.wrap_socket(raw)
+
     def test_many_at_once_are_each_answered(self) -> None:
         answers: List[bool] = []
 
@@ -223,6 +272,19 @@ class SecuredConnectionTest(TestCase):
             thread.join()
         expect(answers).to_equal([True] * 12)
 
+    def test_what_is_refused_in_the_clear_is_not_refused_over_tls(self) -> None:
+        patcher = patch.object(
+            early, "plain_refusal", lambda path, headers: {"code": "https_required"}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        connection = self._connected()
+        connection.sendall(
+            b"POST /api/upload_file HTTP/1.1\r\nHost: localhost\r\n"
+            b"Content-Length: 5\r\n\r\nhello"
+        )
+        expect(self._answer(connection).endswith(b"served 5")).to_equal(True)
+
     def test_a_refusal_before_the_body_is_read_through_tls_too(self) -> None:
         # What the web server refuses on the headers alone.
         connection = self._connected()
@@ -233,3 +295,55 @@ class SecuredConnectionTest(TestCase):
         answer = self._answer(connection)
         expect(answer.startswith(b"HTTP/1.1 413")).to_equal(True)
         expect(self.seen).to_equal([])
+
+
+@skipUnless(shutil.which("openssl"), "needs the openssl command")
+class TwoPortsTest(TestCase):
+    """As Mariner listens: in the clear on one port, over TLS on another."""
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.certificate, key = _certificate(Path(folder.name))
+        self.schemes: List[str] = []
+
+        def application(environ: Dict[str, Any], start_response: Any) -> List[bytes]:
+            self.schemes.append(environ["wsgi.url_scheme"])
+            start_response("200 OK", [("Content-Length", "6")])
+            return [b"served"]
+
+        # Two ports that are free, as the configuration would name them.
+        ports = []
+        for _ in range(2):
+            with socket.socket() as probe:
+                probe.bind(("127.0.0.1", 0))
+                ports.append(probe.getsockname()[1])
+        self.plain, self.secured = ports
+        self.server = early.create_guarded_server(
+            application,
+            listen=f"127.0.0.1:{self.plain} 127.0.0.1:{self.secured}",
+            tls=tls.context(self.certificate, key),
+            tls_port=self.secured,
+        )
+
+        def run() -> None:
+            try:
+                self.server.run()
+            except OSError:
+                pass
+
+        threading.Thread(target=run, daemon=True).start()
+        self.addCleanup(self.server.close)
+
+    def test_the_one_named_speaks_tls_and_the_other_does_not(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.plain), timeout=5) as raw:
+            raw.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            answer = SecuredConnectionTest._answer(raw)
+            expect(answer.endswith(b"served")).to_equal(True)
+        trusting = ssl.create_default_context(cafile=self.certificate)
+        with socket.create_connection(("127.0.0.1", self.secured), timeout=5) as raw:
+            with trusting.wrap_socket(raw, server_hostname="localhost") as secured:
+                secured.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                answer = SecuredConnectionTest._answer(secured)
+                expect(answer.endswith(b"served")).to_equal(True)
+        expect(self.schemes).to_equal(["http", "https"])

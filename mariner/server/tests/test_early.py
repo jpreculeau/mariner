@@ -131,6 +131,34 @@ class EarlyRefusalTest(TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
+    def test_a_body_for_the_page_is_not_taken_in_the_clear_under_https(
+        self,
+    ) -> None:
+        patcher = patch.object(
+            early,
+            "plain_refusal",
+            lambda path, headers: (
+                {"code": "https_required"} if path.startswith("/api/") else None
+            ),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        status, _, body = self._exchange(
+            "POST /api/upload_file HTTP/1.1\nHost: 127.0.0.1\n"
+            "Content-Length: 500000000\n"
+        )
+        expect(status).to_equal(403)
+        expect(json.loads(body)["code"]).to_equal("https_required")
+        expect(self.called).to_equal([])
+        # A slicer's file still is.
+        status, _, _ = self._exchange(
+            "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+            "Content-Length: 5\n",
+            b"hello",
+            wait_for_body=True,
+        )
+        expect(status).to_equal(200)
+
     def test_a_password_out_of_reach_is_not_said_as_one_to_give(self) -> None:
         patcher = patch.object(
             early,

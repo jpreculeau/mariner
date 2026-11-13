@@ -34,6 +34,7 @@ Mariner 2 provides the following features:
    supported-printers
    install
    password-and-settings
+   https
    network-printing
    troubleshooting
    contributing
