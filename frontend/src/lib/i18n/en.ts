@@ -150,6 +150,10 @@ export const en = {
   "settings.code.password.missing": "Type the password.",
   "error.password_not_text":
     "This password holds what is not text. Choose another.",
+  "journal.tried.more":
+    "{count} wrong passwords or more were sent since your previous visit.",
+  "signIn.tried.more":
+    "{count} wrong passwords or more were sent since your previous visit. See Settings, Recent sign-ins.",
   "settings.password": "Password",
   "settings.password.current": "Current password",
   "settings.password.repeat": "Repeat the new password",

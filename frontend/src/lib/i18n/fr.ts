@@ -154,6 +154,10 @@ export const fr: Record<TextKey, string> = {
   "settings.code.password.missing": "Saisissez le mot de passe.",
   "error.password_not_text":
     "Ce mot de passe contient autre chose que du texte. Choisissez-en un autre.",
+  "journal.tried.more":
+    "{count} mots de passe erronés ou plus ont été envoyés depuis votre visite précédente.",
+  "signIn.tried.more":
+    "{count} mots de passe erronés ou plus ont été envoyés depuis votre visite précédente. Voir Réglages, Connexions récentes.",
   "settings.password": "Mot de passe",
   "settings.password.current": "Mot de passe actuel",
   "settings.password.repeat": "Répéter le nouveau mot de passe",

@@ -58,9 +58,14 @@ export function SignIns() {
       )}
       {tried > 0 && (
         <p className="text-base font-medium leading-relaxed">
-          {t(tried === 1 ? "journal.tried.one" : "journal.tried.many", {
-            count: String(tried),
-          })}
+          {t(
+            data.wrong_since_last_visit_or_more
+              ? "journal.tried.more"
+              : tried === 1
+                ? "journal.tried.one"
+                : "journal.tried.many",
+            { count: String(tried) },
+          )}
         </p>
       )}
       {data.entries.length === 0 ? (

@@ -411,6 +411,8 @@ export interface Tried {
   passwords: number;
   /** The right password with a wrong one-time code: it is known. */
   codes: number;
+  /** The wrong passwords counted are all Mariner remembers, of more. */
+  orMore?: boolean;
 }
 
 const count = (given: unknown) =>
@@ -422,6 +424,7 @@ async function signedInBy(url: string, body?: unknown): Promise<Tried> {
     page_key?: string;
     wrong_since_last_visit?: number;
     wrong_codes_since_last_visit?: number;
+    wrong_since_last_visit_or_more?: boolean;
   }>(url, body);
   if (typeof answer?.csrf_token === "string") {
     renewedCsrfToken = answer.csrf_token;
@@ -430,6 +433,7 @@ async function signedInBy(url: string, body?: unknown): Promise<Tried> {
   return {
     passwords: count(answer?.wrong_since_last_visit),
     codes: count(answer?.wrong_codes_since_last_visit),
+    orMore: answer?.wrong_since_last_visit_or_more === true,
   };
 }
 
@@ -448,6 +452,8 @@ export interface SignInJournal {
   wrong_since_last_visit: number;
   /** The right password sent with a wrong one-time code, meanwhile. */
   wrong_codes_since_last_visit: number;
+  /** The wrong passwords counted are all Mariner remembers, of more. */
+  wrong_since_last_visit_or_more?: boolean;
 }
 
 export const api = {
@@ -496,6 +502,8 @@ export const api = {
       entries: Array.isArray(answer?.entries) ? answer.entries : [],
       wrong_since_last_visit: count(answer?.wrong_since_last_visit),
       wrong_codes_since_last_visit: count(answer?.wrong_codes_since_last_visit),
+      wrong_since_last_visit_or_more:
+        answer?.wrong_since_last_visit_or_more === true,
     };
   },
 

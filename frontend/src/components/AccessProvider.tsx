@@ -94,7 +94,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     stood.current = access;
     if (access === "in") {
       toast.dismiss();
-      const { passwords, codes } = tried.current;
+      const { passwords, codes, orMore } = tried.current;
       tried.current = { passwords: 0, codes: 0 };
       // After the messages above are closed, not before: somebody has
       // been at the door while its owner was away.
@@ -109,7 +109,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       if (passwords > 0) {
         toast.error(
           say.current(
-            passwords === 1 ? "signIn.tried.one" : "signIn.tried.many",
+            orMore
+              ? "signIn.tried.more"
+              : passwords === 1
+                ? "signIn.tried.one"
+                : "signIn.tried.many",
             { count: String(passwords) },
           ),
         );
