@@ -448,6 +448,20 @@ describe("Files", () => {
     expect(renderFiles().accept).toBe("");
   });
 
+  it("leaves it to the form to say that the session is over, when listing", async () => {
+    vi.spyOn(api, "listFiles").mockRejectedValue(
+      new ApiError(
+        401,
+        "Sign in with Mariner's password first.",
+        "login_required",
+      ),
+    );
+    renderFiles();
+    await waitFor(() => expect(api.listFiles).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("says that the files could not be listed, and lets the reader try again", async () => {
     vi.spyOn(api, "listFiles").mockRejectedValue(
       new ApiError(0, "Mariner cannot be reached.", "network"),

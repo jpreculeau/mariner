@@ -77,7 +77,10 @@ def _still_usable(folder: Path) -> bool:
     """Whether the folder in use is still there and this account's.
 
     Nothing is made, nor put right: made again after it went, it would
-    be empty, and say that no password was ever chosen.
+    be empty, and say that no password was ever chosen. Whether it can
+    be written is not asked: on a drive gone read-only the password is
+    still read, and the page must go on showing and stopping a print;
+    what cannot be kept is said when keeping it is asked for.
     """
     try:
         status = os.lstat(folder)
@@ -86,7 +89,7 @@ def _still_usable(folder: Path) -> bool:
     return (
         stat.S_ISDIR(status.st_mode)
         and status.st_uid == os.geteuid()
-        and os.access(folder, os.R_OK | os.W_OK | os.X_OK)
+        and os.access(folder, os.R_OK | os.X_OK)
     )
 
 

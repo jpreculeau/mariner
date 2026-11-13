@@ -269,6 +269,45 @@ describe("Settings", () => {
     ).toBeInTheDocument();
   });
 
+  it("leaves it to the form to say that the session is over, when fetching", async () => {
+    const fetched = vi
+      .spyOn(api, "settings")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    renderSettings();
+    await waitFor(() => expect(fetched).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("leaves it to the form to say that the session is over, when changing the password", async () => {
+    const change = vi
+      .spyOn(api, "changePassword")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    renderSettings();
+    await screen.findByLabelText("Current password");
+    type("Current password", "old words");
+    type("New password", "new words!");
+    type("Repeat the new password", "new words!");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change the password" }),
+    );
+    await waitFor(() => expect(change).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("says that a password is missing, rather than do nothing", async () => {
     const change = vi.spyOn(api, "changePassword").mockResolvedValue();
     renderSettings();
@@ -576,9 +615,17 @@ describe("Settings", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Change the password" }),
     );
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Mariner could not keep this.",
+    const said = await screen.findByRole("alert");
+    expect(said).toHaveTextContent("Mariner could not keep this.");
+    // Read with the field focus went to.
+    expect(
+      screen.getByLabelText("Current password"),
+    ).toHaveAccessibleDescription(/could not keep this/);
+    // Said again when it happens again.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Change the password" }),
     );
+    await waitFor(() => expect(screen.getByRole("alert")).not.toBe(said));
     for (const label of [
       "Current password",
       "New password",

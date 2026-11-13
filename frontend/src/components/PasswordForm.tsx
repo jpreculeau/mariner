@@ -73,6 +73,10 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     try {
       await (choosing ? choosePassword(password) : signIn(password));
     } catch (failure) {
+      // Mariner is shut: the screen that replaces the form says it.
+      if (failure instanceof ApiError && failure.code === "state_unavailable") {
+        return;
+      }
       // Only what is about the password marks its field as wrong.
       const aboutThePassword =
         failure instanceof ApiError &&

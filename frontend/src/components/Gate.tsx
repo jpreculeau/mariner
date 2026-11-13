@@ -44,21 +44,21 @@ export function Gate({ children }: { children: ReactNode }) {
   useEffect(() => {
     const was = before.current;
     before.current = access;
-    const nowhere =
-      !document.activeElement || document.activeElement === document.body;
-    if (was === "in" && (access === "shut" || access === "unreachable")) {
-      // The page went, with what had focus in it.
-      if (nowhere) document.getElementById("content")?.focus();
-      return;
-    }
-    if (access === "in" || !askedAgain.current) return;
-    if (access === "unreachable") {
+    if (was === access) return;
+    const asked = askedAgain.current;
+    if (access !== "checking") askedAgain.current = false;
+    if (asked && access === "unreachable") {
       // Still not reached: back on the button, to press it again.
       againButton.current?.focus();
-    } else if (nowhere) {
-      document.getElementById("content")?.focus();
+      return;
     }
-    if (access !== "checking") askedAgain.current = false;
+    // A page that is opening lost nothing: focus is left where the
+    // browser put it.
+    const opening = was === "checking" && !asked;
+    const nowhere =
+      !document.activeElement || document.activeElement === document.body;
+    // What had focus went with the screen it was on.
+    if (!opening && nowhere) document.getElementById("content")?.focus();
   }, [access]);
 
   if (access === "in") return <>{children}</>;

@@ -5,7 +5,12 @@ import { supportedKinds } from "@/lib/kinds";
 
 // What the server words for its log rather than for a reader: the page's
 // own text is shown in every language.
-const NOT_WORDED_FOR_READERS = new Set(["printer_error", "internal_error"]);
+const NOT_WORDED_FOR_READERS = new Set([
+  "printer_error",
+  "internal_error",
+  // Worded for a script: "open its page in a browser".
+  "password_not_set",
+]);
 
 function textFor(code: string | undefined): TextKey | null {
   const key = `error.${code}`;

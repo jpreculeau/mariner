@@ -80,9 +80,19 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   // What was said while the page was not open no longer holds once it
   // is: that Mariner is shut, say.
+  const stood = useRef(access);
   useEffect(() => {
+    const was = stood.current;
+    stood.current = access;
     if (access === "in") toast.dismiss();
-  }, [access]);
+    if (was === "in" && access !== "in") {
+      // What was fetched under the page that went, its failures
+      // included, is not drawn again when the page opens.
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== KEY[0],
+      });
+    }
+  }, [access, queryClient]);
 
   const failure = failed.current;
   const value = useMemo<AccessState>(() => {

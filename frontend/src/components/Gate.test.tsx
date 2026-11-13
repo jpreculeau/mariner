@@ -794,6 +794,10 @@ describe("Gate", () => {
       /cannot be reached/,
     );
     expect(document.activeElement).toBe(screen.getByLabelText("Password"));
+    // Said again when it happens again.
+    const said = screen.getByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(screen.getByRole("alert")).not.toBe(said));
   });
 
   it("empties the form when it becomes the other one", async () => {
@@ -815,6 +819,58 @@ describe("Gate", () => {
       "aria-invalid",
       "false",
     );
+    // Why it is another form is still said.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "No password has been chosen yet.",
+    );
+  });
+
+  it("gives the keyboard a place when the page opens after another try", async () => {
+    const state = vi
+      .spyOn(api, "authState")
+      .mockRejectedValue(
+        new ApiError(0, "Mariner cannot be reached.", "network"),
+      );
+    renderGate();
+    const again = await screen.findByRole("button", { name: "Try again" });
+    again.focus();
+    state.mockResolvedValue({ password_set: true, signed_in: true });
+    fireEvent.click(again);
+    await screen.findByText("the printer's page");
+    await waitFor(() =>
+      expect(document.activeElement).toBe(document.getElementById("content")),
+    );
+  });
+
+  it("gives the keyboard a place when a form gives way to Mariner being shut", async () => {
+    const state = vi
+      .spyOn(api, "authState")
+      .mockResolvedValue({ password_set: true, signed_in: false });
+    vi.spyOn(api, "signIn").mockImplementation(async () => {
+      state.mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        unavailable: true,
+      });
+      window.dispatchEvent(
+        new StorageEvent("storage", { key: "mariner-page-key" }),
+      );
+      throw new ApiError(
+        503,
+        "Mariner cannot use the folder.",
+        "state_unavailable",
+      );
+    });
+    renderGate();
+    await screen.findByRole("heading", { name: "Sign in to Mariner" });
+    type("Password", "secret words");
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    await screen.findByText(/Mariner cannot open its page/);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(document.getElementById("content")),
+    );
+    // Said by the screen alone.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
   describe("under a page that is open", () => {
@@ -876,6 +932,44 @@ describe("Gate", () => {
       await screen.findByText(/Mariner cannot open its page/);
       await waitFor(() =>
         expect(document.activeElement).toBe(document.getElementById("content")),
+      );
+    });
+
+    it("keeps nothing of what was fetched under a page that shut", async () => {
+      // Drawn again as it was when the page opens, it would say for a
+      // moment that Mariner cannot be reached.
+      const client = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      });
+      const state = vi
+        .spyOn(api, "authState")
+        .mockResolvedValue({ password_set: true, signed_in: true });
+      refuseWith(503, "state_unavailable");
+      render(
+        <QueryClientProvider client={client}>
+          <LanguageProvider>
+            <AccessProvider>
+              <Gate>
+                <p>the printer's page</p>
+                <button onClick={() => api.printStatus().catch(() => {})}>
+                  ask
+                </button>
+              </Gate>
+            </AccessProvider>
+          </LanguageProvider>
+        </QueryClientProvider>,
+      );
+      await screen.findByText("the printer's page");
+      client.setQueryData(["print_status"], { state: "idle" });
+      state.mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        unavailable: true,
+      });
+      fireEvent.click(screen.getByRole("button", { name: "ask" }));
+      await screen.findByText(/Mariner cannot open its page/);
+      await waitFor(() =>
+        expect(client.getQueryData(["print_status"])).toBeUndefined(),
       );
     });
 

@@ -97,6 +97,11 @@ export default function Index() {
     );
   }
 
+  if (saidByThePage(error)) {
+    // The screen that is about to replace this page says it.
+    return <div className="container py-6">{header}</div>;
+  }
+
   if (error || !data) {
     // Mariner itself did not answer: not the same as a printer that does
     // not, and not the same thing to check.

@@ -217,6 +217,37 @@ class DegradedTest(TestCase):
         with patch("os.geteuid", return_value=os.geteuid() + 1):
             expect(state.is_makeshift()).to_equal(True)
 
+    def test_a_folder_that_can_no_longer_be_written_is_not_one(self) -> None:
+        # The card gone read-only during a print: the password is still
+        # read, and the page must go on showing and stopping the print.
+        # What cannot be kept then is said when it is asked for.
+        self._configured(self.root / "state")
+        state.write("anything", b"x")
+        real = os.access
+
+        def access(path: object, mode: int) -> bool:
+            return not (mode & os.W_OK) and real(path, mode)  # type: ignore
+
+        with patch("os.access", side_effect=access):
+            expect(state.is_makeshift()).to_equal(False)
+
+    def test_what_another_folder_holds_is_not_read_when_the_one_asked_for_is_unusable(
+        self,
+    ) -> None:
+        # There, and of another account: what it holds is out of reach,
+        # and no other folder stands in for it.
+        wanted = self.root / "state"
+        wanted.mkdir()
+        own = self.root / "own"
+        own.mkdir(mode=0o700)
+        (own / "password").write_bytes(b"x")
+        os.chmod(own / "password", 0o600)
+        self._configured(wanted)
+        with patch("os.geteuid", return_value=os.geteuid() + 1):
+            with patch("mariner.server.state._FALLBACKS", [str(own)]):
+                expect(state.read("password")).to_equal(None)
+                expect(state.exists("password")).to_equal(False)
+
     def test_none_that_can_be_made_is_known_before_one_is_looked_for(self) -> None:
         # The slicers' switches are read before the folder is made.
         blocked = self.root / "a-file"

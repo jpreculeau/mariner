@@ -414,6 +414,24 @@ class SignInTest(_WithClient):
         )
         expect(self.state_of()["signed_in"]).to_equal(True)
 
+    def test_a_key_that_cannot_be_kept_is_not_taken_at_each_sign_in(self) -> None:
+        # Each sign-in would end the sessions of the others.
+        restored = patch.dict(self.application.config, {"SECRET_KEY": b"m" * 32})
+        restored.start()
+        self.addCleanup(restored.stop)
+        state.remove("session.key")
+        real = state.write
+
+        def write(name: str, content: bytes) -> None:
+            if name == "session.key":
+                raise OSError(28, "No space left on device")
+            real(name, content)
+
+        with patch.object(state, "write", side_effect=write):
+            with self.assertLogs("mariner.server.state", level="WARNING"):
+                self.post("/api/auth/login", password=PASSWORD)
+        expect(self.application.config["SECRET_KEY"]).to_equal(b"m" * 32)
+
     def test_a_wrong_password_does_not_change_the_key_of_sessions(self) -> None:
         restored = patch.dict(self.application.config, {"SECRET_KEY": b"m" * 32})
         restored.start()

@@ -21,6 +21,18 @@ describe("errorText", () => {
     );
   });
 
+  it("says in the page's own words that no password is set", () => {
+    // The server's are for a script: "open its page in a browser".
+    const none = new ApiError(
+      401,
+      "No password has been chosen for Mariner yet. Open its page in a browser and choose one.",
+      "password_not_set",
+    );
+    expect(errorText(none, t("en"), "en")).toBe(
+      "No password has been chosen yet.",
+    );
+  });
+
   it("says it in French by the code the server gave", () => {
     expect(errorText(refused, t("fr"), "fr")).toContain("imprime déjà");
   });

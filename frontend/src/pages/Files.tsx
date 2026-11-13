@@ -12,7 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "@/components/ui/sonner";
-import { errorText } from "@/lib/errors";
+import { errorText, saidByThePage } from "@/lib/errors";
 import { useI18n } from "@/lib/i18n";
 import { useUploads } from "@/lib/uploads";
 import { usePageTitle } from "@/hooks/use-page-title";
@@ -193,7 +193,7 @@ export default function Files() {
               {t("files.loading")}
             </span>
           </div>
-        ) : error ? (
+        ) : saidByThePage(error) ? null : error ? (
           <div
             role="alert"
             className="flex flex-col items-center px-6 py-12 text-center"

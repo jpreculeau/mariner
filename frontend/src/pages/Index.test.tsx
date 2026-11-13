@@ -79,6 +79,24 @@ describe("Index", () => {
     );
   });
 
+  it("does not say that Mariner cannot be reached when it answered that the session is over", async () => {
+    // The form to sign in is about to say so; this would be false.
+    const asked = vi
+      .spyOn(api, "printStatus")
+      .mockRejectedValue(
+        new ApiError(
+          401,
+          "Sign in with Mariner's password first.",
+          "login_required",
+        ),
+      );
+    renderIndex();
+    await waitFor(() => expect(asked).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.queryByText("Mariner cannot be reached")).toBeNull();
+  });
+
   it("says that Mariner cannot be reached, and what to check", async () => {
     vi.spyOn(api, "printStatus").mockRejectedValue(
       new ApiError(0, "Mariner cannot be reached.", "network"),

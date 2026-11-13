@@ -151,6 +151,11 @@ export default function Settings() {
     );
   }
 
+  if (saidByThePage(error)) {
+    // The screen that is about to replace this page says it.
+    return <div className="container max-w-2xl py-6">{heading}</div>;
+  }
+
   if (error || !data) {
     return (
       <div className="container max-w-2xl py-6">
@@ -363,6 +368,8 @@ function ChangePassword() {
         (failure.code === "password_too_short" ||
           failure.code === "password_too_long" ||
           failure.code === "password_too_common");
+      // The form that replaces the page says it.
+      if (saidByThePage(failure)) return;
       const aboutTheCurrent =
         failure instanceof ApiError && failure.code === "wrong_password";
       // Anything else is about no field: none is marked as wrong.
