@@ -475,7 +475,8 @@ class EarlyRefusalTest(TestCase):
         ]
         expect(len(listening)).to_equal(2)
         for one in listening:
-            expect(one.channel_class).to_equal(early._Channel)
+            # Through the door: see mariner.server.load.
+            expect(one.channel_class.channels).to_equal(early._Channel)
 
     def test_a_page_may_be_asked_for_from_another_site(self) -> None:
         status, _, _ = self._exchange(

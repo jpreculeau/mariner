@@ -230,6 +230,9 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
                 return
             self._end()
 
+        def drop(self) -> None:
+            self._end()
+
         # -- the engine --------------------------------------------------
 
         def _end(self) -> None:

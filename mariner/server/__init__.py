@@ -137,7 +137,9 @@ def keep_requests_on_one_line() -> None:
             handler.addFilter(_OneLine())
 
 
-CONNECTION_LIMIT = 32
+# Connections taken at once. Those of the Internet are held to part of
+# them (``mariner.server.load``): the local network always finds room.
+CONNECTION_LIMIT = 64
 CHANNEL_TIMEOUT_SECONDS = 60
 
 

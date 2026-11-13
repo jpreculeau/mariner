@@ -209,7 +209,8 @@ class StartupTest(TestCase):
         # Each can hold an upload waiting on the drive.
         with patch.object(server, "use_spool_directory"):
             serve = self._started()
-        self.assertLessEqual(serve.call_args.kwargs["connection_limit"], 32)
+        # Only who is signed in gets a body taken in.
+        self.assertLessEqual(serve.call_args.kwargs["connection_limit"], 64)
 
     def test_uploads_wait_on_the_drive_not_in_memory(self) -> None:
         # The web server keeps an upload in a temporary file until it is

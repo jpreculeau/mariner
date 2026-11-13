@@ -22,21 +22,25 @@ request without a body: this reader belongs to one web server,
 and the application must not depend on being run by it.
 """
 
+import fcntl
 import json
 import logging
 import os
 import shutil
+import struct
 import tempfile
-from typing import Any, Callable, Dict, Optional
+import termios
+import time
+from typing import Any, Callable, Dict, List, Optional
 
 from waitress import create_server
-from waitress.channel import HTTPChannel
+from waitress.channel import ClientDisconnected, HTTPChannel
 from waitress.parser import HTTPRequestParser
 from waitress.server import BaseWSGIServer
 from waitress.utilities import Error
 
 from mariner import config
-from mariner.server import origin, provenance, refusals
+from mariner.server import load, origin, provenance, refusals
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -224,6 +228,74 @@ class _Channel(HTTPChannel):
     # anything reaches ``received``: what it decrypts is never looked at
     # here as the first bytes of a connection.
     _heard = False
+    # Whether it ever asked for something: see mariner.server.load.
+    _asked = False
+    # Its reader reads nothing any more: to be closed, by the thread
+    # that closes.
+    _gone = False
+
+    def drop(self) -> None:
+        """Close now, whatever is left to send."""
+        self.handle_close()
+
+    def _left_to_take(self) -> int:
+        """How much of what was asked for its reader has yet to take:
+        what waits here, and what the computer holds for it."""
+        left = int(self.total_outbufs_len) + len(getattr(self, "_waiting", b""))
+        try:
+            held = fcntl.ioctl(self.socket.fileno(), termios.TIOCOUTQ, b"\0" * 4)
+            left += int(struct.unpack("i", held)[0])
+        except (OSError, ValueError, AttributeError):
+            # Not told on this system: what waits here will have to do.
+            pass
+        return left
+
+    def write_soon(self, data: Any) -> int:
+        """As the web server's, for a reader that still reads."""
+        if self._gone:
+            raise ClientDisconnected
+        written = int(super().write_soon(data))
+        if self._gone:
+            raise ClientDisconnected
+        return written
+
+    def _flush_outbufs_below_high_watermark(self) -> None:
+        """As the web server's, without waiting for ever on a reader.
+
+        What serves a request waits here, when much is left to send, for
+        the reader to take some of it. One that asks for much and reads
+        nothing would hold it for good, and a few of them everything
+        Mariner has to serve with. Past ``load.STALLED_SECS`` without a
+        byte taken, the reader is taken for gone: nothing more is written
+        for it (see ``write_soon``) and the connection is closed at the
+        next round (see ``_tidying``).
+        """
+        if self._gone or self.total_outbufs_len <= self.adj.outbuf_high_watermark:
+            return
+        with self.outbuf_lock:
+            (_, exception) = self._flush_exception(self._flush_some, do_close=False)
+            left = self._left_to_take()
+            since = time.monotonic()
+            while self.connected and (
+                exception or self.total_outbufs_len > self.adj.outbuf_high_watermark
+            ):
+                self.server.pull_trigger()
+                self.outbuf_lock.wait(min(1.0, load.STALLED_SECS))
+                if exception:
+                    # The thread that closes has been told.
+                    return
+                now = time.monotonic()
+                still = self._left_to_take()
+                if still < left:
+                    left = still
+                    since = now
+                elif now - since > load.STALLED_SECS:
+                    self._gone = True
+                    logger.warning(
+                        "%s reads nothing of what it asked for: closed",
+                        self.addr[0] if isinstance(self.addr, tuple) else self.addr,
+                    )
+                    return
 
     def received(self, data: bytes) -> bool:
         if not self._heard:
@@ -234,7 +306,11 @@ class _Channel(HTTPChannel):
                 # headers that never come, it would for half a minute.
                 self.will_close = True
                 return False
-        return bool(super().received(data))
+        took = bool(super().received(data))
+        request = self.request
+        if self.requests or (request is not None and request.headers_finished):
+            self._asked = True
+        return took
 
     def parser_class(self, adj: Any) -> _Parser:
         """A reader of headers that knows whose request it reads.
@@ -273,6 +349,8 @@ def create_guarded_server(
     With *tls* (see ``mariner.server.tls.context``) it speaks HTTPS: on
     every port it listens on, or on *tls_port* alone when one is named.
     """
+    # How often the connections are gone round: see ``_tidying``.
+    settings.setdefault("cleanup_interval", 5)
     server = create_server(application, **settings)
     # Listening on several addresses makes one server for each.
     listening = (
@@ -280,16 +358,89 @@ def create_guarded_server(
         if isinstance(server, BaseWSGIServer)
         else [one for one in server.map.values() if isinstance(one, BaseWSGIServer)]
     )
+    door = load.Door()
     for one in listening:
-        one.channel_class = _Channel
+        channels: Any = _Channel
         # Named as a number or, listening on several, as text.
         if tls is not None and (
             tls_port is None or int(one.effective_port) == int(tls_port)
         ):
             from mariner.server.tls import secured
 
-            one.channel_class = secured(_Channel, tls)
+            channels = secured(_Channel, tls)
+        one.channel_class = _admitting(channels, door, listening)
+        one.maintenance = _tidying(one, one.maintenance)
     return server
+
+
+def _held(servers: List[BaseWSGIServer]) -> List[Any]:
+    """Where the connections open at this moment come from."""
+    return [
+        channel.addr[0] if isinstance(channel.addr, tuple) else None
+        for one in servers
+        for channel in list(one.active_channels.values())
+    ]
+
+
+def _admitting(channels: Any, door: load.Door, servers: List[BaseWSGIServer]) -> Any:
+    """What the web server calls with a new connection: *channels*, for
+    those *door* lets in. See ``mariner.server.load``."""
+
+    def admit(
+        server: Any, connection: Any, addr: Any, adj: Any, map: Any = None
+    ) -> Any:
+        address = addr[0] if isinstance(addr, tuple) else None
+        if not door.admits(address, _held(servers)):
+            _say_turned_away(address)
+            connection.close()
+            return None
+        return channels(server, connection, addr, adj, map=map)
+
+    # For who wants to know what the connections let in are made of.
+    admit.channels = channels  # type: ignore[attr-defined]
+    return admit
+
+
+# Said once in a while, with how many: not a line for each.
+_turned_away = {"count": 0, "said_at": 0.0}
+
+
+def _say_turned_away(address: object) -> None:
+    _turned_away["count"] += 1
+    now = time.monotonic()
+    if _turned_away["said_at"] and now - _turned_away["said_at"] < 60:
+        return
+    logger.warning(
+        "Too many connections from the Internet: %d turned away, the last " "from %s",
+        _turned_away["count"],
+        address,
+    )
+    _turned_away["count"] = 0
+    _turned_away["said_at"] = now
+
+
+def _tidying(server: BaseWSGIServer, usual: Callable[[float], None]) -> Any:
+    """The web server's round of its connections, and Mariner's after it:
+    those whose reader is gone, and those of the Internet that ask nothing
+    (see ``mariner.server.load``). Run by the thread that closes."""
+
+    def maintenance(now: float) -> None:
+        usual(now)
+        for channel in list(server.active_channels.values()):
+            address = channel.addr[0] if isinstance(channel.addr, tuple) else None
+            if getattr(channel, "_gone", False) or (
+                not channel.requests
+                and load.outstayed(
+                    address,
+                    getattr(channel, "_asked", True),
+                    channel.creation_time,
+                    channel.last_activity,
+                    now,
+                )
+            ):
+                channel.drop()
+
+    return maintenance
 
 
 def serve(

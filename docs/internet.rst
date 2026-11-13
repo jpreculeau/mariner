@@ -61,6 +61,29 @@ Signing in from the Internet
   stranger can keep you from signing in from outside for a while, never at
   home.
 
+Under load
+----------
+
+Mariner cannot keep strangers from leaning on its door. It keeps them from
+shutting you out at home, and from bringing it down:
+
+- of the 64 connections it takes at once, the Internet holds 24 at most,
+  and one address 8: the local network always finds room;
+- one address opens 30 new connections in ten seconds at most, the whole
+  Internet 150: each one over HTTPS costs the computer some work;
+- a connection from the Internet that asks nothing within ten seconds is
+  closed, and one that was answered is closed after thirty seconds with
+  nothing more asked;
+- whoever asks for much and reads none of it for a minute is taken for
+  gone, from wherever it is: it no longer holds what serves the others.
+
+Connections turned away are counted in the log, a line a minute at most.
+None of this applies to addresses of the local network, bar the last.
+
+A small computer still has its limits: a flood wide enough fills the line
+itself, and then nothing answers from outside until it stops. Home is not
+touched, nor is a print under way: the printer reads its file by itself.
+
 What is local
 -------------
 
