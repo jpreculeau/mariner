@@ -91,7 +91,7 @@ export const en = {
   "settings.code.localOnly":
     "It is set up and removed from the local network alone.",
   "settings.code.setUp": "Set up a one-time code",
-  "settings.code.again": "Set it up on another phone",
+  "settings.code.again": "Replace the phone",
   "settings.code.remove": "Remove the one-time code",
   "settings.code.how":
     "In an application that gives one-time codes (Aegis, FreeOTP, Google Authenticator…), add an account with this key, then type the code it gives.",
@@ -126,6 +126,23 @@ export const en = {
   "journal.password_changed": "Password changed",
   "journal.code_set": "One-time code set up",
   "journal.code_removed": "One-time code removed",
+  "journal.wrong_code": "Right password, wrong one-time code",
+  "journal.code_locked":
+    "Sign-in closed from the Internet until someone signs in at home",
+  "journal.times": ", {count} times",
+  "signIn.tried.one":
+    "{count} wrong password was sent since your previous visit. See Settings, Recent sign-ins.",
+  "signIn.tried.many":
+    "{count} wrong passwords were sent since your previous visit. See Settings, Recent sign-ins.",
+  "internet.again": "Try again",
+  "error.code_locked":
+    "Too many wrong one-time codes were sent with the right password: somebody else may know it. Signing in from the Internet is closed until somebody signs in from the local network.",
+  "settings.code.key": "Key to type",
+  "settings.code.open.hint":
+    "The link works if this page is open on the phone itself.",
+  "settings.code.replace.what":
+    "Type the password to set the code up on another phone. The codes of the phone in use will stop working once the new one is confirmed.",
+  "settings.code.continue": "Continue",
   "settings.password": "Password",
   "settings.password.current": "Current password",
   "settings.password.repeat": "Repeat the new password",

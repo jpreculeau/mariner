@@ -114,6 +114,77 @@ describe("OneTimeCode", () => {
     );
   });
 
+  it("says what to type when nothing was", async () => {
+    vi.spyOn(api, "startCode").mockResolvedValue({ secret: SECRET, uri: URI });
+    const confirm = vi.spyOn(api, "confirmCode");
+    renderIt();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Set up a one-time code" }),
+    );
+    await screen.findByLabelText("Code given by the phone");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Type the code your phone gives.",
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it("names the key for who cannot see it", async () => {
+    vi.spyOn(api, "startCode").mockResolvedValue({ secret: SECRET, uri: URI });
+    renderIt();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Set up a one-time code" }),
+    );
+    expect(await screen.findByLabelText("Key to type")).toHaveTextContent(
+      "GEZD GNBV",
+    );
+    // The link is for the phone itself: said.
+    expect(
+      screen.getByText(/if this page is open on the phone/),
+    ).toBeInTheDocument();
+  });
+
+  it("gives focus back to where it began, whatever the end", async () => {
+    vi.spyOn(api, "startCode").mockResolvedValue({ secret: SECRET, uri: URI });
+    vi.spyOn(api, "confirmCode").mockResolvedValue();
+    renderIt();
+    const setUp = () =>
+      screen.getByRole("button", { name: "Set up a one-time code" });
+    fireEvent.click(setUp());
+    await screen.findByLabelText("Code given by the phone");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(document.activeElement).toBe(setUp()));
+    fireEvent.click(setUp());
+    await screen.findByLabelText("Code given by the phone");
+    type("Code given by the phone", "287082");
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Code given by the phone")).toBeNull(),
+    );
+    await waitFor(() => expect(document.activeElement).toBe(setUp()));
+  });
+
+  it("asks for the password before another phone takes the place of the one in use", async () => {
+    const start = vi
+      .spyOn(api, "startCode")
+      .mockResolvedValue({ secret: SECRET, uri: URI });
+    renderIt({ codeSet: true });
+    fireEvent.click(screen.getByRole("button", { name: "Replace the phone" }));
+    // Said before it is done: the old phone's codes stop working.
+    expect(
+      screen.getByText(/codes of the phone in use will stop working/),
+    ).toBeInTheDocument();
+    expect(start).not.toHaveBeenCalled();
+    type("Current password", "correct horse battery");
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    await waitFor(() =>
+      expect(start).toHaveBeenCalledWith("correct horse battery"),
+    );
+    expect(
+      await screen.findByLabelText("Code given by the phone"),
+    ).toBeInTheDocument();
+  });
+
   it("is done away with by who gives the password", async () => {
     const remove = vi.spyOn(api, "removeCode").mockResolvedValue();
     renderIt({ codeSet: true });

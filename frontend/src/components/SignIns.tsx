@@ -5,6 +5,8 @@ import { useI18n, type TextKey } from "@/lib/i18n";
 const KNOWN: Record<string, TextKey> = {
   signed_in: "journal.signed_in",
   wrong_password: "journal.wrong_password",
+  wrong_code: "journal.wrong_code",
+  code_locked: "journal.code_locked",
   sign_in_closed: "journal.sign_in_closed",
   password_chosen: "journal.password_chosen",
   password_changed: "journal.password_changed",
@@ -82,6 +84,8 @@ export function SignIns() {
                   </td>
                   <td className="py-2 pr-4 align-top">
                     {KNOWN[entry.what] ? t(KNOWN[entry.what]) : entry.what}
+                    {(entry.count ?? 1) > 1 &&
+                      t("journal.times", { count: String(entry.count) })}
                   </td>
                   <td className="py-2 align-top [overflow-wrap:anywhere]">
                     {t(entry.internet ? "journal.internet" : "journal.local", {

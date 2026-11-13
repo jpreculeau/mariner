@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, onSignedOut, type AuthState } from "@/lib/api";
 import { AccessContext, type Access, type AccessState } from "@/lib/access";
 import { toast } from "@/components/ui/sonner";
+import { useI18n } from "@/lib/i18n";
 
 const KEY = ["auth"];
 const RETRY_EVERY_MS = 5000;
@@ -80,11 +81,31 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   // What was said while the page was not open no longer holds once it
   // is: that Mariner is shut, say.
+  // How many wrong passwords the sign-in under way was told of.
+  const tried = useRef(0);
+  const { t } = useI18n();
+  // As a reference: the effect below must not run again, and close the
+  // messages, when the language changes.
+  const say = useRef(t);
+  say.current = t;
   const stood = useRef(access);
   useEffect(() => {
     const was = stood.current;
     stood.current = access;
-    if (access === "in") toast.dismiss();
+    if (access === "in") {
+      toast.dismiss();
+      const count = tried.current;
+      tried.current = 0;
+      if (count > 0) {
+        // After the messages above are closed, not before: somebody has
+        // been at the door while its owner was away.
+        toast.error(
+          say.current(count === 1 ? "signIn.tried.one" : "signIn.tried.many", {
+            count: String(count),
+          }),
+        );
+      }
+    }
     if (was === "in" && access !== "in") {
       // What was fetched under the page that went, its failures
       // included, is not drawn again when the page opens.
@@ -115,6 +136,24 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         password_set: true,
         signed_in: true,
       }));
+      // Where the page is seen from may not be where it was when this
+      // was last asked: signed in outside, then back home. Only that is
+      // taken of the answer: who is signed in is known here.
+      api
+        .authState()
+        .then((now) =>
+          queryClient.setQueryData<AuthState>(KEY, (was) =>
+            was?.signed_in
+              ? {
+                  ...was,
+                  from_internet: now.from_internet,
+                  code_set: now.code_set,
+                  host_commands: now.host_commands,
+                }
+              : was,
+          ),
+        )
+        .catch(() => {});
     };
     return {
       access,
@@ -132,7 +171,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       codeSet,
       hostCommands,
       signIn: async (password, code) => {
-        await api.signIn(password, code);
+        tried.current = await api.signIn(password, code);
         await signedIn();
       },
       signOut: async () => {

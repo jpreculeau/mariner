@@ -107,9 +107,8 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         failure instanceof ApiError &&
         failure.code === "wrong_password"
       ) {
-        // It may be either: neither field is marked, and the code, which
-        // will not serve again, is to be typed anew.
-        setCode("");
+        // It may be either: neither field is marked. The code is left as
+        // typed: after a slip in the password it still serves.
         refuse("form", "signIn.wrongEither");
         return;
       }
@@ -156,6 +155,10 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
         <p className="text-base leading-relaxed text-muted-foreground">
           {t(choosing ? "internet.notSetUp.text" : "internet.noCode.text")}
         </p>
+        {/* For who has come home, or set the code up meanwhile. */}
+        <Button type="button" variant="outline" onClick={retry}>
+          {t("internet.again")}
+        </Button>
       </div>
     );
   }

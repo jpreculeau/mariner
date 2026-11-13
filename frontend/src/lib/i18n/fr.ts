@@ -47,7 +47,8 @@ export const fr: Record<TextKey, string> = {
   "choose.cleared":
     "Le mot de passe de Mariner a été effacé. Choisissez-en un nouveau.",
   "choose.new": "Nouveau mot de passe",
-  "choose.hint": "Au moins 14 caractères. Quelques mots font une bonne phrase.",
+  "choose.hint":
+    "Au moins 14 caractères. Quelques mots font un bon mot de passe.",
   "choose.repeat": "Répéter le mot de passe",
   "choose.submit": "Enregistrer le mot de passe",
   "choose.submitting": "Enregistrement…",
@@ -93,7 +94,7 @@ export const fr: Record<TextKey, string> = {
   "settings.code.localOnly":
     "Il se configure et se retire uniquement depuis le réseau local.",
   "settings.code.setUp": "Configurer un code à usage unique",
-  "settings.code.again": "Le configurer sur un autre téléphone",
+  "settings.code.again": "Changer de téléphone",
   "settings.code.remove": "Retirer le code à usage unique",
   "settings.code.how":
     "Dans une application qui donne des codes à usage unique (Aegis, FreeOTP, Google Authenticator…), ajoutez un compte avec cette clé, puis saisissez le code qu'elle donne.",
@@ -129,6 +130,23 @@ export const fr: Record<TextKey, string> = {
   "journal.password_changed": "Mot de passe changé",
   "journal.code_set": "Code à usage unique configuré",
   "journal.code_removed": "Code à usage unique retiré",
+  "journal.wrong_code": "Bon mot de passe, mauvais code à usage unique",
+  "journal.code_locked":
+    "Connexion fermée depuis Internet jusqu'à une connexion depuis le réseau local",
+  "journal.times": ", {count}\u00a0fois",
+  "signIn.tried.one":
+    "{count} mot de passe erroné a été envoyé depuis votre visite précédente. Voir Réglages, Connexions récentes.",
+  "signIn.tried.many":
+    "{count} mots de passe erronés ont été envoyés depuis votre visite précédente. Voir Réglages, Connexions récentes.",
+  "internet.again": "Réessayer",
+  "error.code_locked":
+    "Trop de codes à usage unique erronés ont été envoyés avec le bon mot de passe\u202f: quelqu'un d'autre le connaît peut-être. La connexion depuis Internet est fermée jusqu'à ce que quelqu'un se connecte depuis le réseau local.",
+  "settings.code.key": "Clé à saisir",
+  "settings.code.open.hint":
+    "Le lien fonctionne si cette page est ouverte sur le téléphone lui-même.",
+  "settings.code.replace.what":
+    "Saisissez le mot de passe pour configurer le code sur un autre téléphone. Les codes du téléphone actuel cesseront de fonctionner une fois le nouveau confirmé.",
+  "settings.code.continue": "Continuer",
   "settings.password": "Mot de passe",
   "settings.password.current": "Mot de passe actuel",
   "settings.password.repeat": "Répéter le nouveau mot de passe",

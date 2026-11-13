@@ -405,15 +405,19 @@ function post<T>(url: string, body?: unknown): Promise<T> {
  * Send what signs in. The answer carries the token of the new session:
  * the one the page held went with the session it had.
  */
-async function signedInBy(url: string, body?: unknown): Promise<void> {
-  const answer = await post<{ csrf_token?: string; page_key?: string }>(
-    url,
-    body,
-  );
+async function signedInBy(url: string, body?: unknown): Promise<number> {
+  const answer = await post<{
+    csrf_token?: string;
+    page_key?: string;
+    wrong_since_last_visit?: number;
+  }>(url, body);
   if (typeof answer?.csrf_token === "string") {
     renewedCsrfToken = answer.csrf_token;
   }
   if (typeof answer?.page_key === "string") setPageKey(answer.page_key);
+  // How many wrong passwords were sent since the visit before.
+  const tried = answer?.wrong_since_last_visit;
+  return typeof tried === "number" && tried > 0 ? tried : 0;
 }
 
 export interface SignInJournal {
@@ -424,6 +428,8 @@ export interface SignInJournal {
     what: string;
     from: string;
     internet: boolean;
+    /** How many, one after the other, this line stands for. */
+    count?: number;
   }[];
   /** Wrong passwords sent between the last sign-in and the one before. */
   wrong_since_last_visit: number;
@@ -450,8 +456,8 @@ export const api = {
   },
 
   /** With the one-time code, from the Internet. */
-  async signIn(password: string, code?: string): Promise<void> {
-    await signedInBy(
+  async signIn(password: string, code?: string): Promise<number> {
+    return signedInBy(
       "/api/auth/login",
       code === undefined ? { password } : { password, code },
     );
@@ -481,8 +487,12 @@ export const api = {
   },
 
   /** A key for a phone to take in; in force once confirmed. */
-  async startCode(): Promise<{ secret: string; uri: string }> {
-    return post("/api/auth/code/start");
+  async startCode(current?: string): Promise<{ secret: string; uri: string }> {
+    // With the password, where a code is in force already.
+    return post(
+      "/api/auth/code/start",
+      current === undefined ? undefined : { current },
+    );
   },
 
   async confirmCode(code: string): Promise<void> {

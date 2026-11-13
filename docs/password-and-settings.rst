@@ -61,12 +61,19 @@ To set it up, either:
 
   which shows the same key and asks for the same first code.
 
-Setting it up again, on another phone, replaces the key once the new phone's
-first code is given; the old phone's codes then stop working. To do away
-with it: **Remove the one-time code** in the same part of the settings (it
-asks for the password), or ``sudo mariner reset-code``. Without a code,
-nobody signs in from the Internet, and whoever was signed in from there is
-signed out.
+**Replace the phone**, in the same part of the settings, asks for the
+password and sets the code up on another phone; the old phone's codes stop
+working once the new phone's first code is given. To do away with the code:
+**Remove the one-time code** (it asks for the password too), or
+``sudo mariner reset-code``. Without a code, nobody signs in from the
+Internet. Replaced or removed, a code signs out whoever had signed in from
+the Internet with it, for good: the browser of a phone that was lost does
+not come back when the next code is set up.
+
+The code depends on the time: the computer's clock and the phone's must be
+right, within half a minute or so. A computer that reaches the Internet
+sets its clock by itself; one that has just started without it may refuse
+right codes until it has.
 
 A lost phone locks nobody out at home: sign in from the local network, or
 use the terminal, and set the code up on the new phone.
@@ -75,11 +82,14 @@ Recent sign-ins
 ---------------
 
 **Settings**, **Recent sign-ins** lists the last fifty things that happened
-at the door: sign-ins, wrong passwords, the password or the one-time code
-being changed, sign-in being closed to the Internet. Each with when, and
+at the door: sign-ins, wrong passwords, a right password sent with a wrong code, the
+password or the one-time code being changed, sign-in being closed to the
+Internet. Wrong passwords sent one after the other from one place are one
+line, with how many; they are kept apart from the rest, so that a crowd of
+them does not push out the sign-in you are looking for. Each with when, and
 where from: the local network or the Internet, and the address. Above the
-list, Mariner says how many wrong passwords were sent between your last two
-visits. What was typed is never kept.
+list, and in a message when you sign in, Mariner says how many wrong
+passwords were sent between your last two visits. What was typed is never kept.
 
 A few wrong passwords from the Internet are the lot of anything reachable
 from there. Many of them, or one from the local network that is not yours,

@@ -1114,6 +1114,53 @@ describe("Gate", () => {
       );
     });
 
+    it("keeps a code that may still serve when the two are refused", async () => {
+      from({ code_set: true });
+      vi.spyOn(api, "signIn").mockRejectedValue(
+        new ApiError(401, "This is not the password.", "wrong_password"),
+      );
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "correct horse battery");
+      type("One-time code", "287082");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await screen.findByRole("alert");
+      // A slip in the password: the code is not to be typed again.
+      expect(screen.getByLabelText("One-time code")).toHaveValue("287082");
+    });
+
+    it("says that sign-in is closed until somebody signs in at home", async () => {
+      from({ code_set: true });
+      vi.spyOn(api, "signIn").mockRejectedValue(
+        new ApiError(403, "Too many wrong one-time codes…", "code_locked"),
+      );
+      vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
+      renderGate();
+      await screen.findByRole("heading", { name: "Connexion à Mariner" });
+      type("Mot de passe", "correct horse battery");
+      type("Code à usage unique", "287082");
+      fireEvent.click(screen.getByRole("button", { name: "Se connecter" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /fermée jusqu'à ce que quelqu'un se connecte depuis le réseau local/,
+      );
+    });
+
+    it("lets one who has come home ask again", async () => {
+      const state = from({ code_set: false });
+      renderGate();
+      await screen.findByRole("heading", {
+        name: "Signing in from the Internet is not set up",
+      });
+      state.mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        from_internet: false,
+        code_set: false,
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(await screen.findByLabelText("Password")).toBeInTheDocument();
+    });
+
     it("asks for no code on the local network", async () => {
       vi.spyOn(api, "authState").mockResolvedValue({
         password_set: true,
@@ -1152,6 +1199,60 @@ describe("Gate", () => {
         }),
       ).toBeInTheDocument();
       expect(screen.queryByLabelText("New password")).toBeNull();
+    });
+  });
+
+  describe("once signed in", () => {
+    it("says that somebody tried while the owner was away", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+      });
+      vi.spyOn(api, "signIn").mockResolvedValue(3);
+      const said = vi.spyOn(toast, "error");
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "correct horse battery");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await waitFor(() =>
+        expect(said).toHaveBeenCalledWith(
+          "3 wrong passwords were sent since your previous visit. See Settings, Recent sign-ins.",
+        ),
+      );
+    });
+
+    it("says nothing of it when nobody did", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+      });
+      vi.spyOn(api, "signIn").mockResolvedValue(0);
+      const said = vi.spyOn(toast, "error");
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "correct horse battery");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await screen.findByText("the printer's page");
+      expect(said).not.toHaveBeenCalled();
+    });
+
+    it("asks again where the page is seen from", async () => {
+      // Signed in outside, the state was that of the Internet; home is
+      // not the same.
+      const state = vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+      });
+      vi.spyOn(api, "signIn").mockResolvedValue(0);
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      const asked = state.mock.calls.length;
+      state.mockResolvedValue({ password_set: true, signed_in: true });
+      type("Password", "correct horse battery");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await waitFor(() =>
+        expect(state.mock.calls.length).toBeGreaterThan(asked),
+      );
     });
   });
 });

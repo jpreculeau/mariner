@@ -58,6 +58,36 @@ describe("SignIns", () => {
     );
   });
 
+  it("says how many wrong ones one line stands for", async () => {
+    vi.spyOn(api, "journal").mockResolvedValue({
+      wrong_since_last_visit: 0,
+      entries: [
+        {
+          at: AT,
+          what: "wrong_password",
+          from: "203.0.113.5",
+          internet: true,
+          count: 12,
+        },
+        { at: AT - 5, what: "wrong_code", from: "203.0.113.5", internet: true },
+        {
+          at: AT - 9,
+          what: "code_locked",
+          from: "203.0.113.5",
+          internet: true,
+        },
+      ],
+    });
+    renderIt();
+    const table = await screen.findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    expect(rows[1]).toHaveTextContent("Wrong password, 12 times");
+    expect(rows[2]).toHaveTextContent("Right password, wrong one-time code");
+    expect(rows[3]).toHaveTextContent(
+      "Sign-in closed from the Internet until someone signs in at home",
+    );
+  });
+
   it("says how many tried since the visit before", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 3,
