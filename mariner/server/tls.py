@@ -55,6 +55,9 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
             # Encrypted, and not yet taken by the client.
             self._waiting = b""
             self._close_asked_at: Optional[float] = None
+            # The connection failed while the engine was held: to be
+            # closed by the thread that runs the connections.
+            self._broken = False
             super().__init__(server, sock, addr, adj, **more)
 
         # -- what the web server asks of a socket ------------------------
@@ -79,18 +82,24 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
                 # The client hung up.
                 self._end()
                 return
-            try:
-                with self._tls_lock:
+            plain, finished = b"", False
+            with self._tls_lock:
+                try:
                     self._arrived.write(raw)
                     plain = self._decrypted()
                     self._push()
-            except _Closed:
+                except _Closed:
+                    finished = True
+                except OSError:
+                    self._broken = True
+            # Never while holding the engine: see ``_end``.
+            if self._broken:
                 self._end()
-                return
-            except OSError:
-                self._end()
-                return
-            if plain:
+            elif finished:
+                # Nothing more will come from the client; what is left
+                # of an answer still goes to it.
+                self.handle_close()
+            elif plain:
                 self.last_activity = time.time()
                 self.received(plain)
 
@@ -101,29 +110,35 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
             was encrypted before, so that what waits stays small.
             """
             with self._tls_lock:
+                if self._broken:
+                    return 0
                 if not self._greeted or len(self._waiting) >= _MOST_WAITING:
                     return 0
                 try:
                     self._tls.write(data)
                     self._push()
+                    return len(data)
                 except (ssl.SSLError, OSError):
+                    # Closed by the thread that runs the connections, at
+                    # its next turn: see ``writable`` and ``_end``.
+                    self._broken = True
                     self._waiting = b""
-                    if do_close:
-                        self._end()
-                    return 0
-            return len(data)
+            return 0
 
         def writable(self) -> bool:
-            return bool(self._waiting) or bool(super().writable())
+            return self._broken or bool(self._waiting) or bool(super().writable())
 
         def handle_write(self) -> None:
             with self._tls_lock:
-                try:
-                    self._push()
-                except OSError:
-                    self._end()
-                    return
+                if not self._broken:
+                    try:
+                        self._push()
+                    except OSError:
+                        self._broken = True
                 waiting = bool(self._waiting)
+            if self._broken:
+                self._end()
+                return
             if self._close_asked_at is not None:
                 # Only what is left to send keeps it open.
                 overdue = time.time() - self._close_asked_at > _LONGEST_FAREWELL_SECS
@@ -136,7 +151,7 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
             super().handle_write()
 
         def readable(self) -> bool:
-            if self._close_asked_at is not None:
+            if self._close_asked_at is not None or self._broken:
                 return False
             if not self._greeted:
                 return True
@@ -148,7 +163,7 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
             The web server closes as soon as it has handed over the last
             of an answer; handed to the engine, part of it may still wait.
             """
-            if self._waiting and self.connected:
+            if self._waiting and self.connected and not self._broken:
                 if self._close_asked_at is None:
                     self._close_asked_at = time.time()
                 return
@@ -157,7 +172,14 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
         # -- the engine --------------------------------------------------
 
         def _end(self) -> None:
-            """Close now, whatever waits."""
+            """Close now, whatever waits.
+
+            Never called by a thread that holds the engine (``_tls_lock``):
+            closing takes the lock of what the web server has to send, and
+            a thread of the web server that holds that one may be waiting
+            for the engine. Each would wait for the other for ever, and
+            with them every connection, on every port.
+            """
             self._waiting = b""
             self._close_asked_at = None
             super().handle_close()

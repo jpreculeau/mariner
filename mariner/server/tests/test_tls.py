@@ -3,6 +3,7 @@
 import shutil
 import socket
 import ssl
+import struct
 import subprocess
 import tempfile
 import threading
@@ -14,6 +15,7 @@ from unittest import TestCase, skipUnless
 from unittest.mock import patch
 
 from pyexpect import expect
+from waitress.channel import HTTPChannel
 
 from mariner.server import early, tls
 
@@ -88,6 +90,9 @@ class SecuredConnectionTest(TestCase):
             # Short, for the test of a connection that says nothing.
             channel_timeout=1,
             cleanup_interval=1,
+            # Low, so that the threads that answer write to the client
+            # themselves, as they do for an answer of some size.
+            outbuf_high_watermark=65536,
             tls=tls.context(self.certificate, self.key),
         )
         self.port = self.server.effective_port
@@ -254,6 +259,48 @@ class SecuredConnectionTest(TestCase):
         self.addCleanup(raw.close)
         with self.assertRaises((ssl.SSLError, ConnectionError)):
             old.wrap_socket(raw)
+
+    def test_clients_that_cut_the_line_while_answered_do_not_stop_the_server(
+        self,
+    ) -> None:
+        # The web server writes from several threads: closing a broken
+        # connection while one of them wrote to it left both waiting for
+        # each other, and nothing was answered any more, on any port.
+        # Whether they wait for each other is a matter of chance: what is
+        # looked at is what makes it possible, a connection closed by a
+        # thread that holds the engine.
+        closed_holding_the_engine: List[bool] = []
+        really_close = HTTPChannel.handle_close
+
+        def close(channel: Any) -> None:
+            closed_holding_the_engine.append(channel._tls_lock._is_owned())
+            really_close(channel)
+
+        watched = patch.object(HTTPChannel, "handle_close", close)
+        watched.start()
+        self.addCleanup(watched.stop)
+        careless = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        careless.check_hostname = False
+        careless.verify_mode = ssl.CERT_NONE
+        for attempt in range(60):
+            raw = socket.socket()
+            raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+            raw.settimeout(5)
+            raw.connect(("127.0.0.1", int(self.port)))
+            connection = careless.wrap_socket(raw)
+            connection.sendall(b"GET /large HTTP/1.1\r\nHost: localhost\r\n\r\n" * 30)
+            time.sleep(0.0005 + (attempt % 8) * 0.001)
+            # Reset, not closed: the server learns of it while writing.
+            connection.setsockopt(
+                socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0)
+            )
+            connection.close()
+        after = self._connected()
+        after.settimeout(10)
+        after.sendall(b"GET /after HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        expect(self._answer(after).endswith(b"served 0")).to_equal(True)
+        expect(len(closed_holding_the_engine) > 0).to_equal(True)
+        expect(any(closed_holding_the_engine)).to_equal(False)
 
     def test_many_at_once_are_each_answered(self) -> None:
         answers: List[bool] = []
