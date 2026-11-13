@@ -119,8 +119,16 @@ def get_https_enabled() -> bool:
     return _https().get("enabled", True) is not False
 
 
+DEFAULT_HTTPS_PORT = 5443
+
+
+def _is_a_port(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and 0 < value < 65536
+
+
 def get_https_port() -> int:
-    return int(_https().get("port", 5443))  # type: ignore[call-overload]
+    port = _https().get("port", DEFAULT_HTTPS_PORT)
+    return port if _is_a_port(port) else DEFAULT_HTTPS_PORT  # type: ignore
 
 
 def _own_certificate() -> Optional[Tuple[str, str]]:
@@ -213,6 +221,11 @@ def ignored_settings() -> List[str]:
         found.append(
             f"[https] enabled = {_https()['enabled']!r} is neither true nor "
             "false: HTTPS stays on"
+        )
+    if "port" in _https() and not _is_a_port(_https()["port"]):
+        found.append(
+            f"[https] port = {_https()['port']!r} is not a port (a whole "
+            f"number from 1 to 65535): {DEFAULT_HTTPS_PORT} is used"
         )
     if ("certificate" in _https() or "key" in _https()) and not _own_certificate():
         found.append(

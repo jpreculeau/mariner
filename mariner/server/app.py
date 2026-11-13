@@ -397,6 +397,11 @@ app.config.from_mapping(
         # ends when Mariner restarts, or a month after the cookie that
         # goes with it was made; the page then asks for a new one.
         "WTF_CSRF_TIME_LIMIT": None,
+        # Over HTTPS the token would also be refused to who does not say
+        # where it comes from (no Referer): a script, a browser set to say
+        # nothing. Other sites are told apart before the token is looked
+        # at, by what they do say: see ``refuse_other_sites``.
+        "WTF_CSRF_SSL_STRICT": False,
         # Backend class name, not the legacy "filesystem" factory alias. The
         # lowercase aliases are deprecated in flask-caching 2.x and gone in
         # 3.x, where they fail at import with ImportStringError.

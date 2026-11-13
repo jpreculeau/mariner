@@ -69,6 +69,39 @@ class PlainPortTest(TestCase):
             expect(body["code"]).to_equal("https_required")
             expect("https://saturn.local:5443" in body["description"]).to_equal(True)
 
+    def test_the_refusal_says_where_the_page_is(self) -> None:
+        # For the page left open in the clear to go there by itself.
+        response = self.client.get(
+            "/api/print_status", base_url="http://saturn.local:5050"
+        )
+        expect(response.get_json()["address"]).to_equal("https://saturn.local:5443")
+
+    def test_a_slicer_s_address_is_told_from_one_that_looks_like_it(self) -> None:
+        response = self.client.get(
+            "/uvtoolsx/files", base_url="http://saturn.local:5050"
+        )
+        expect(response.status_code).to_equal(307)
+
+    def test_signing_in_over_https_needs_no_referer(self) -> None:
+        # A script, or a browser set to say nothing of where it comes
+        # from: other sites are told apart before this, by what they do
+        # say (see mariner.server.origin).
+        secured = "https://saturn.local:5443"
+        with patch("mariner.server.auth.check_password", return_value="g1"):
+            with patch("mariner.server.auth.has_password", return_value=True):
+                token = self.client.get("/api/csrf_token", base_url=secured).get_json()[
+                    "csrf_token"
+                ]
+                response = self.client.post(
+                    "/api/auth/login",
+                    base_url=secured,
+                    json={"password": "long enough!"},
+                    headers={"X-CSRFToken": token},
+                )
+        expect((response.get_json() or {}).get("code") == "token_refused").to_equal(
+            False
+        )
+
     def test_no_session_is_given_in_the_clear(self) -> None:
         response = self.client.get(
             "/api/csrf_token", base_url="http://saturn.local:5050"

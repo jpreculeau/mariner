@@ -159,6 +159,18 @@ class EarlyRefusalTest(TestCase):
         )
         expect(status).to_equal(200)
 
+    def test_https_asked_of_the_port_in_the_clear_is_hung_up_on_at_once(
+        self,
+    ) -> None:
+        # Left to itself the web server waits for the end of headers that
+        # will never come, and the browser for half a minute.
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as sock:
+            sock.sendall(b"\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03" + b"x" * 200)
+            expect(sock.recv(1024)).to_equal(b"")
+        expect(time.monotonic() - started < 2).to_equal(True)
+        expect(self.called).to_equal([])
+
     def test_a_password_out_of_reach_is_not_said_as_one_to_give(self) -> None:
         patcher = patch.object(
             early,

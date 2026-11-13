@@ -264,14 +264,26 @@ def main() -> None:
     for ignored in config.ignored_settings() + origin.unusable_entries():
         logger.warning("Configuration: %s", ignored)
     use_spool_directory()
-    serve(
-        flask_app,
-        **_listening(),
-        # Left to itself the web server refuses anything over a gigabyte.
-        max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
-        # Each connection can hold an upload waiting on the drive.
-        connection_limit=CONNECTION_LIMIT,
-        # A connection that says nothing is closed after this long, or up
-        # to half as long again. It holds one of the few there are.
-        channel_timeout=CHANNEL_TIMEOUT_SECONDS,
-    )
+    listening = _listening()
+    try:
+        serve(
+            flask_app,
+            **listening,
+            # Left to itself the web server refuses anything over a gigabyte.
+            max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
+            # Each connection can hold an upload waiting on the drive.
+            connection_limit=CONNECTION_LIMIT,
+            # A connection that says nothing is closed after this long, or up
+            # to half as long again. It holds one of the few there are.
+            channel_timeout=CHANNEL_TIMEOUT_SECONDS,
+        )
+    except OSError as error:
+        # A port another program holds, most often.
+        at = listening.get("listen") or f"{listening['host']}:{listening['port']}"
+        logger.error(
+            "Mariner cannot listen on %s: %s. Another program may be using "
+            "the port: change it under [http] or [https] in the configuration",
+            at,
+            error,
+        )
+        raise SystemExit(1)

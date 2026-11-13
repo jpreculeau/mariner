@@ -186,8 +186,12 @@ def in_use(folder: Optional[Path] = None) -> Optional[Tuple[str, str]]:
             return own_certificate, own_key
         except (OSError, ValueError) as error:
             logger.error(
-                "The certificate named in the configuration cannot be used "
-                "(%s): Mariner serves its page with one of its own instead",
+                "The certificate named in the configuration (%s, with its "
+                "key %s) cannot be used: %s. The key must not be kept under "
+                "a password. Mariner serves its page with a certificate of "
+                "its own instead",
+                own_certificate,
+                own_key,
                 error,
             )
     if folder is None:

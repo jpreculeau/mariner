@@ -39,10 +39,14 @@ def is_for_the_page(path: str) -> bool:
 def refusal(host: str, port: int) -> Dict[str, str]:
     """What is answered to a request for the page's own in the clear."""
     where = address(host, port)
-    return {
+    body = {
         "code": "https_required",
         "title": "HTTPS Required",
         "description": "Mariner's page is served over HTTPS, and answers "
         "nothing of its own in the clear"
         + (f": use {where} instead." if where else "."),
     }
+    if where:
+        # For a page left open in the clear, to go there by itself.
+        body["address"] = where
+    return body

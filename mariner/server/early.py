@@ -209,6 +209,20 @@ class _Parser(HTTPRequestParser):
 
 
 class _Channel(HTTPChannel):
+    # Whether anything came from the client yet.
+    _heard = False
+
+    def received(self, data: bytes) -> bool:
+        if not self._heard:
+            self._heard = True
+            if data[:2] == b"\x16\x03":
+                # The greeting of TLS: a browser given https:// with the
+                # port that is in the clear. Left to wait for the end of
+                # headers that never come, it would for half a minute.
+                self.will_close = True
+                return False
+        return bool(super().received(data))
+
     def parser_class(self, adj: Any) -> _Parser:
         """A reader of headers that knows whose request it reads.
 

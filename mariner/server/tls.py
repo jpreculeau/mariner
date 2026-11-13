@@ -9,6 +9,7 @@ blocks.
 """
 
 import logging
+import re
 import ssl
 import threading
 import time
@@ -32,8 +33,33 @@ def context(certificate: str, key: str) -> ssl.SSLContext:
     """What a server needs to speak TLS with *certificate* and its *key*."""
     made = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     made.minimum_version = ssl.TLSVersion.TLSv1_2
-    made.load_cert_chain(certificate, key)
+    # A key kept under a password is refused, not asked for on a
+    # terminal nobody sits at.
+    made.load_cert_chain(certificate, key, password=lambda: "")
     return made
+
+
+# What is taken over of the web server's connection, and relied on.
+_RELIED_ON = (
+    "handle_read",
+    "handle_write",
+    "handle_close",
+    "readable",
+    "writable",
+    "received",
+    "send",
+    "parser_class",
+)
+# What a browser that asked in the clear is told, in the clear.
+_NOT_IN_THE_CLEAR = (
+    b"HTTP/1.1 400 Bad Request\r\n"
+    b"Content-Type: text/plain; charset=utf-8\r\n"
+    b"Connection: close\r\n"
+    b"\r\n"
+    b"This port of Mariner speaks HTTPS: the address begins with "
+    b"https://, not http://.\r\n"
+)
+_REQUEST = re.compile(rb"[A-Z]{3,8} \S+ HTTP/1\.[01]\r?\n")
 
 
 class _Closed(Exception):
@@ -42,6 +68,15 @@ class _Closed(Exception):
 
 def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]:
     """A kind of connection like *base* that speaks TLS with *using*."""
+    missing = [name for name in _RELIED_ON if not callable(getattr(base, name, None))]
+    if missing:
+        # Said at start, not found out by a page that does not open.
+        raise RuntimeError(
+            "This version of the waitress web server is not made as the one "
+            f"Mariner's HTTPS was written for (no {', '.join(missing)}): "
+            "install the version Mariner asks for, or set enabled = false "
+            "under [https] and put a relay in front of Mariner."
+        )
 
     class Secured(base):  # type: ignore[valid-type, misc]
         def __init__(self, server: Any, sock: Any, addr: Any, adj: Any, **more: Any):
@@ -58,6 +93,8 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
             # The connection failed while the engine was held: to be
             # closed by the thread that runs the connections.
             self._broken = False
+            # Whether anything came from the client yet.
+            self._heard = False
             super().__init__(server, sock, addr, adj, **more)
 
         # -- what the web server asks of a socket ------------------------
@@ -82,6 +119,16 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
                 # The client hung up.
                 self._end()
                 return
+            if not self._heard:
+                self._heard = True
+                if _REQUEST.match(raw):
+                    # A browser given http:// with the port of HTTPS.
+                    try:
+                        self.socket.send(_NOT_IN_THE_CLEAR)
+                    except OSError:
+                        pass
+                    self._end()
+                    return
             plain, finished = b"", False
             with self._tls_lock:
                 try:

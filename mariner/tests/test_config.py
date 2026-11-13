@@ -197,6 +197,16 @@ certificate = "/etc/ssl/printer.pem"
         expect(config.get_https_certificate()).to_equal(None)
         expect("[https] certificate" in said).to_equal(True)
 
+    def test_a_port_for_https_that_is_not_one_is_the_default(self) -> None:
+        for given in ('"abc"', "70000", "0", "true"):
+            config._get_config.cache_clear()
+            self.fs.create_file(
+                "/etc/mariner/config.toml", contents=f"[https]\nport = {given}\n"
+            )
+            expect(config.get_https_port()).to_equal(5443)
+            expect("[https] port" in " ".join(config.ignored_settings())).to_equal(True)
+            self.fs.remove("/etc/mariner/config.toml")
+
     def test_can_say_where_things_are_kept(self) -> None:
         self.fs.create_file(
             "/etc/mariner/config.toml",

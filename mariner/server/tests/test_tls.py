@@ -20,6 +20,7 @@ from waitress.channel import HTTPChannel
 from mariner.server import early, tls
 
 LARGE = 5 * 1024 * 1024
+HUGE = 24 * 1024 * 1024
 
 
 def _certificate(folder: Path) -> Tuple[str, str]:
@@ -72,7 +73,9 @@ class SecuredConnectionTest(TestCase):
                     "length": len(body),
                 }
             )
-            if environ["PATH_INFO"] == "/large":
+            if environ["PATH_INFO"] == "/huge":
+                answer = b"0123456789abcdef" * (HUGE // 16)
+            elif environ["PATH_INFO"] == "/large":
                 answer = b"0123456789abcdef" * (LARGE // 16)
             else:
                 answer = b"served " + str(len(body)).encode()
@@ -182,6 +185,33 @@ class SecuredConnectionTest(TestCase):
         )[2]
         expect(len(body)).to_equal(LARGE)
 
+    def test_a_very_large_answer_is_whole_before_the_connection_is_closed(
+        self,
+    ) -> None:
+        # More than the system holds for a connection: what waits in the
+        # engine when the web server closes is the end of the answer.
+        trusting = ssl.create_default_context(cafile=self.certificate)
+        raw = socket.socket()
+        # A client that takes little at a time: the end of the answer
+        # is still in the engine when the web server has done with it.
+        raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8192)
+        raw.settimeout(20)
+        raw.connect(("127.0.0.1", int(self.port)))
+        connection = trusting.wrap_socket(raw, server_hostname="localhost")
+        self.addCleanup(connection.close)
+        connection.sendall(
+            b"GET /huge HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+        )
+        received = 0
+        while True:
+            # Slower than the server sends.
+            time.sleep(0.0003)
+            more = connection.recv(65536)
+            if not more:
+                break
+            received += len(more)
+        self.assertGreater(received, HUGE)
+
     def test_an_answer_is_whole_before_the_connection_is_closed(self) -> None:
         # The web server closes as soon as it has handed over the last
         # of the answer: what was encrypted must still reach the client.
@@ -198,11 +228,29 @@ class SecuredConnectionTest(TestCase):
             received += more
         expect(len(received.partition(b"\r\n\r\n")[2])).to_equal(LARGE)
 
-    def test_what_is_not_tls_is_hung_up_on_and_the_server_goes_on(self) -> None:
+    def test_a_browser_that_asks_in_the_clear_is_told_to_ask_over_https(
+        self,
+    ) -> None:
+        # An address typed with http:// and the port of HTTPS: an empty
+        # answer says nothing of what to do.
         with socket.create_connection(("127.0.0.1", self.port), timeout=5) as plain:
-            plain.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
-            # Nothing of the application is said in the clear.
-            expect(b"served" in plain.recv(65536)).to_equal(False)
+            plain.sendall(b"GET /files HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            answer = b""
+            while True:
+                more = plain.recv(65536)
+                if not more:
+                    break
+                answer += more
+        expect(answer.startswith(b"HTTP/1.1 400 ")).to_equal(True)
+        expect(b"https://" in answer).to_equal(True)
+        # Nothing of the application is said in the clear.
+        expect(b"served" in answer).to_equal(False)
+        expect(self.seen).to_equal([])
+
+    def test_what_is_neither_tls_nor_a_request_is_hung_up_on(self) -> None:
+        with socket.create_connection(("127.0.0.1", self.port), timeout=5) as plain:
+            plain.sendall(b"\x00\x01\x02 nothing known\r\n\r\n")
+            expect(plain.recv(65536)).to_equal(b"")
         expect(self.seen).to_equal([])
         connection = self._connected()
         connection.sendall(b"GET /after HTTP/1.1\r\nHost: localhost\r\n\r\n")
@@ -394,3 +442,26 @@ class TwoPortsTest(TestCase):
                 answer = SecuredConnectionTest._answer(secured)
                 expect(answer.endswith(b"served")).to_equal(True)
         expect(self.schemes).to_equal(["http", "https"])
+
+
+class ContextTest(TestCase):
+    def test_the_old_forms_of_tls_are_left_out_by_mariner_itself(self) -> None:
+        # Not by what the system happens to allow.
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        made = tls.context(*_certificate(Path(folder.name)))
+        expect(made.minimum_version).to_equal(ssl.TLSVersion.TLSv1_2)
+
+    def test_a_web_server_that_is_no_longer_made_the_same_is_not_served_blind(
+        self,
+    ) -> None:
+        # What is taken over of the web server's connection is its inner
+        # workings: a new version that changed them is said at start, not
+        # found out by a page that does not open.
+        class Changed:
+            def handle_read(self) -> None:
+                pass
+
+        with self.assertRaises(RuntimeError) as refused:
+            tls.secured(Changed, ssl.create_default_context())  # type: ignore
+        expect("waitress" in str(refused.exception)).to_equal(True)

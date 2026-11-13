@@ -44,6 +44,14 @@ again, give it Mariner's certificate to trust:
    of the Pi (``printer.local`` if it is called ``printer``) or the address
    it had when the certificate was made.
 
+The certificate lists the short name of the computer (``printer`` and
+``printer.local`` for a computer called ``printer.home.lan``) and its
+addresses. A name with a character other than letters, digits and hyphens
+is left out, and the certificate then lists the addresses alone. In Docker
+the name and address are the container's, which nothing outside reaches it
+by: the browser warns every time unless you give Mariner a certificate of
+your own (below), made for the name of the host.
+
 The certificate lasts thirteen months, the longest browsers accept, and
 Mariner makes a new one in its last month, at a restart: the warning then
 comes back once, and a certificate that was trusted has to be trusted
@@ -71,7 +79,8 @@ own authority, or from a public one), name it and its key in
    key = "/etc/mariner/printer.key"
 
 Both files must be readable by the account Mariner runs under (``mariner``),
-the key by nobody else. The certificate file holds the certificate followed
+the key by nobody else, and the key must not be kept under a password:
+nobody is there to type it when Mariner starts. The certificate file holds the certificate followed
 by those of the authorities between it and the root, if any. If the pair
 cannot be used, Mariner says so in its log and serves the page with a
 certificate of its own rather than in the clear.
@@ -96,6 +105,24 @@ the network.
 Mariner also serves its page in the clear, and says so in its log at start,
 when it cannot have a certificate: the ``openssl`` command is not installed
 (``sudo apt install openssl``), or both ports are set to the same number.
+A port that is not one (not a whole number from 1 to 65535) is passed over
+for 5443, which the log says too.
+
+If another program already uses one of the two ports, Mariner does not
+start at all, slicers' interfaces included: its log names the port
+(``journalctl -u mariner3d``). Give Mariner another one under ``[http]`` or
+``[https]``.
+
+Where Mariner cannot use its state directory (see
+:doc:`password-and-settings`), the certificate is kept with what else it
+falls back on, and made again at each start if that is a temporary folder.
+
+The wrong address
+-----------------
+
+``http://`` with the port of HTTPS (5443) is answered by a line saying that
+the port speaks HTTPS. ``https://`` with the port in the clear (5000) is
+hung up on: the browser says that the connection failed.
 
 From a script
 -------------

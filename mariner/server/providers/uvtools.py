@@ -9,7 +9,8 @@ JSON body.
 Recommended UVTools configuration for Mariner
 ----------------------------------------------
 Host : <Mariner IP>
-Port : 5050  (or whatever ``mariner.conf`` sets)
+Port : the one in the clear, under ``[http]`` (5050 when no configuration
+       sets one): not the port of the page over HTTPS
 Extensions : ctb;cbddlp;fdg;photon
 
 =============  ======  =======================

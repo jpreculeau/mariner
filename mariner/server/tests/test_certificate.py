@@ -49,6 +49,69 @@ class CertificateTest(TestCase):
             expect(name in said).to_equal(True)
         expect("IP Address:127.0.0.1" in said).to_equal(True)
 
+    def test_it_names_the_addresses_of_the_computer(self) -> None:
+        with patch.object(certificate, "_addresses", return_value=["192.168.1.20"]):
+            cert, _ = self._made()
+        expect(
+            "IP Address:192.168.1.20" in self._said(cert, "subjectAltName")
+        ).to_equal(True)
+
+    def test_it_does_not_last_longer_than_browsers_take(self) -> None:
+        cert, _ = self._made()
+        ends = subprocess.run(
+            ["openssl", "x509", "-noout", "-checkend", str(398 * 86400), "-in", cert],
+            capture_output=True,
+        )
+        # Run out by then.
+        expect(ends.returncode).to_equal(1)
+
+    def _said(self, cert: str, extension: str) -> str:
+        return subprocess.run(
+            ["openssl", "x509", "-noout", "-ext", extension, "-in", cert],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+
+    def test_a_key_of_the_owner_s_under_a_password_is_not_asked_for(self) -> None:
+        # Nobody is there to type it when Mariner starts: said in the
+        # log, and the page served with a certificate of Mariner's own.
+        own = self.folder / "own"
+        own.mkdir()
+        cert, key = str(own / "c.pem"), str(own / "k.pem")
+        subprocess.run(
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "ec",
+                "-pkeyopt",
+                "ec_paramgen_curve:prime256v1",
+                "-passout",
+                "pass:secret",
+                "-keyout",
+                key,
+                "-out",
+                cert,
+                "-days",
+                "2",
+                "-subj",
+                "/CN=localhost",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        with patch.object(config, "get_https_certificate", return_value=cert):
+            with patch.object(config, "get_https_key", return_value=key):
+                with self.assertLogs(
+                    "mariner.server.certificate", level="ERROR"
+                ) as logged:
+                    used = certificate.in_use(self.folder)
+        expect(used == (cert, key)).to_equal(False)
+        said = " ".join(logged.output)
+        expect(key in said or cert in said).to_equal(True)
+
     def test_a_name_that_is_not_one_does_not_keep_it_from_being_made(self) -> None:
         with patch("socket.gethostname", return_value="my printer; rm -rf"):
             cert, key = self._made()

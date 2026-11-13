@@ -314,3 +314,29 @@ class StartupTest(TestCase):
                 serve = self._started()
         expect(serve.call_args.kwargs.get("tls")).to_equal(None)
         expect(server.flask_app.config["HTTPS_PORT"]).to_equal(None)
+
+    def test_a_port_that_is_taken_is_said_in_one_line(self) -> None:
+        # Not by a page of the web server's inner workings.
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.logging, "basicConfig"
+        ), patch.object(server.logging.getLogger(), "handlers", []), patch.object(
+            server, "empty_cache"
+        ), patch.object(
+            server, "remove_stale_scratch_files"
+        ), patch.object(
+            server, "CacheBootstrapper"
+        ), patch.object(
+            server, "start_providers"
+        ), patch.object(
+            server.state, "session_key", return_value=b"k" * 32
+        ), patch.object(
+            server.auth, "clear_if_asked_on_the_boot_drive"
+        ), patch.object(
+            server, "serve", side_effect=OSError(98, "Address already in use")
+        ):
+            with self.assertLogs("mariner.server", level="ERROR") as logged:
+                with self.assertRaises(SystemExit) as stopped:
+                    server.main()
+        expect(stopped.exception.code).to_equal(1)
+        said = " ".join(logged.output)
+        expect("5050" in said and "Address already in use" in said).to_equal(True)

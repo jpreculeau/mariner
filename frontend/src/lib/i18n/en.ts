@@ -53,7 +53,7 @@ export const en = {
     "Slicers send files and start prints over the network without the password: they cannot give one. Switch off what you do not use.",
   "settings.uvtools": "UVtools",
   "settings.uvtools.hint":
-    "Files and commands sent by UVtools, on the port of this page.",
+    "Files and commands sent by UVtools, on the port Mariner keeps in the clear for slicers.",
   "settings.sdcp": "ChiTuBox (SDCP)",
   "settings.sdcp.hint":
     "The network printing ChiTuBox speaks: discovery, files and commands on ports 3000 and 3030.",

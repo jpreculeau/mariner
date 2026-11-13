@@ -55,7 +55,7 @@ export const fr: Record<TextKey, string> = {
     "Les trancheurs envoient des fichiers et lancent des impressions par le réseau sans le mot de passe\u00a0: ils ne savent pas en donner. Coupez ce que vous n'utilisez pas.",
   "settings.uvtools": "UVtools",
   "settings.uvtools.hint":
-    "Fichiers et commandes envoyés par UVtools, sur le port de cette page.",
+    "Fichiers et commandes envoyés par UVtools, sur le port que Mariner garde en clair pour les trancheurs.",
   "settings.sdcp": "ChiTuBox (SDCP)",
   "settings.sdcp.hint":
     "L'impression en réseau que parle ChiTuBox\u00a0: découverte, fichiers et commandes sur les ports 3000 et 3030.",

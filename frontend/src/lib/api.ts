@@ -1,3 +1,4 @@
+import { followToHttps } from "./https";
 import { forget, remember, remembered } from "@/lib/storage";
 
 export type PrinterStatus = "idle" | "printing" | "paused" | "offline";
@@ -199,6 +200,8 @@ export class ApiError extends Error {
 async function errorFrom(res: Response, fallback: string): Promise<ApiError> {
   try {
     const body = await res.json();
+    // Refused for being asked in the clear: the page moves to HTTPS.
+    followToHttps(body);
     if (body && typeof body.description === "string") {
       return new ApiError(
         res.status,
