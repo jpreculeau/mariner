@@ -85,6 +85,29 @@ export const fr: Record<TextKey, string> = {
   "settings.back": "Mariner est de retour.",
   "settings.notBack":
     "Mariner n'est pas encore de retour. Vérifiez qu'il tourne, puis rechargez cette page.",
+  "settings.code": "Code à usage unique",
+  "settings.code.none":
+    "Aucun n'est configuré\u202f: personne ne peut se connecter depuis Internet. Sur le réseau local, le mot de passe suffit.",
+  "settings.code.set":
+    "Un code à usage unique est configuré\u202f: il est demandé, en plus du mot de passe, pour se connecter depuis Internet.",
+  "settings.code.localOnly":
+    "Il se configure et se retire uniquement depuis le réseau local.",
+  "settings.code.setUp": "Configurer un code à usage unique",
+  "settings.code.again": "Le configurer sur un autre téléphone",
+  "settings.code.remove": "Retirer le code à usage unique",
+  "settings.code.how":
+    "Dans une application qui donne des codes à usage unique (Aegis, FreeOTP, Google Authenticator…), ajoutez un compte avec cette clé, puis saisissez le code qu'elle donne.",
+  "settings.code.open": "Ouvrir dans l'application du téléphone",
+  "settings.code.given": "Code donné par le téléphone",
+  "settings.code.given.hint":
+    "Six chiffres, renouvelés toutes les trente secondes.",
+  "settings.code.confirm": "Confirmer",
+  "settings.code.cancel": "Annuler",
+  "settings.code.done": "Le code à usage unique est configuré.",
+  "settings.code.remove.what":
+    "Sans lui, plus personne ne se connecte depuis Internet. Saisissez le mot de passe pour le retirer.",
+  "settings.code.remove.confirm": "Le retirer",
+  "settings.code.removed": "Le code à usage unique a été retiré.",
   "settings.password": "Mot de passe",
   "settings.password.current": "Mot de passe actuel",
   "settings.password.repeat": "Répéter le nouveau mot de passe",

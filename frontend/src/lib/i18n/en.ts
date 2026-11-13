@@ -83,6 +83,28 @@ export const en = {
   "settings.back": "Mariner is back.",
   "settings.notBack":
     "Mariner is not back yet. Check that it is running, then reload this page.",
+  "settings.code": "One-time code",
+  "settings.code.none":
+    "None is set up: nobody can sign in from the Internet. On the local network the password is enough.",
+  "settings.code.set":
+    "A one-time code is set up: it is asked for, besides the password, when signing in from the Internet.",
+  "settings.code.localOnly":
+    "It is set up and removed from the local network alone.",
+  "settings.code.setUp": "Set up a one-time code",
+  "settings.code.again": "Set it up on another phone",
+  "settings.code.remove": "Remove the one-time code",
+  "settings.code.how":
+    "In an application that gives one-time codes (Aegis, FreeOTP, Google Authenticator…), add an account with this key, then type the code it gives.",
+  "settings.code.open": "Open in the phone's application",
+  "settings.code.given": "Code given by the phone",
+  "settings.code.given.hint": "Six digits, new every half minute.",
+  "settings.code.confirm": "Confirm",
+  "settings.code.cancel": "Cancel",
+  "settings.code.done": "The one-time code is set up.",
+  "settings.code.remove.what":
+    "Without it, nobody signs in from the Internet any more. Type the password to remove it.",
+  "settings.code.remove.confirm": "Remove it",
+  "settings.code.removed": "The one-time code was removed.",
   "settings.password": "Password",
   "settings.password.current": "Current password",
   "settings.password.repeat": "Repeat the new password",

@@ -3,6 +3,7 @@ import type { FormEvent, ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogOut, RotateCcw, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { OneTimeCode } from "@/components/OneTimeCode";
 import { PasswordField } from "@/components/PasswordField";
 import { toast } from "@/components/ui/sonner";
 import {
@@ -287,6 +288,10 @@ export default function Settings() {
             "settings.assumeOff",
             "settings.assumeOff.hint",
           )}
+        </Part>
+
+        <Part title={t("settings.code")}>
+          <OneTimeCode />
         </Part>
 
         <Part title={t("settings.password")}>

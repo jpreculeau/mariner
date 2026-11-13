@@ -39,7 +39,10 @@ Signing in from the Internet
   password that was guessed, or read somewhere, opens nothing without the
   phone. Until a code is set up, nobody signs in from the Internet
   (``403`` ``code_not_set``). It is set up, and done away with, from the
-  local network alone, by who is signed in. A code serves once. Sent to
+  local network alone, by who is signed in, in the page's settings
+  ("One-time code"): the page gives a key to type into the application,
+  or a link that opens it on the phone, then asks for a first code to
+  check that the phone took it in. A code serves once. Sent to
   ``/api/auth/login`` as ``code``, beside ``password``; which of the two
   was wrong is not told.
 - **Signed in at home is not signed in outside.** On the local network the
