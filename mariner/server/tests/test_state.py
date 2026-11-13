@@ -248,6 +248,40 @@ class DegradedTest(TestCase):
                 expect(state.read("password")).to_equal(None)
                 expect(state.exists("password")).to_equal(False)
 
+    def _started_anew_having_only_read(self) -> Path:
+        # As at a start where everything is already kept: nothing is
+        # written, the folder is only read.
+        wanted = self.root / "state"
+        self._configured(wanted)
+        state.write("password", b"x")
+        state.forget()
+        expect(state.read("password")).to_equal(b"x")
+        return wanted
+
+    def test_a_folder_only_read_that_can_no_longer_be_written_is_not_one(
+        self,
+    ) -> None:
+        self._started_anew_having_only_read()
+        real = os.access
+
+        def access(path: object, mode: int) -> bool:
+            return not (mode & os.W_OK) and real(path, mode)  # type: ignore
+
+        with patch("os.access", side_effect=access):
+            expect(state.is_makeshift()).to_equal(False)
+            expect(state.read("password")).to_equal(b"x")
+
+    def test_a_folder_only_read_that_goes_is_not_made_again(self) -> None:
+        import shutil
+
+        wanted = self._started_anew_having_only_read()
+        shutil.rmtree(wanted)
+        expect(state.is_makeshift()).to_equal(True)
+        expect(state.exists("password")).to_equal(False)
+        with self.assertRaises(OSError):
+            state.write("password", b"y")
+        expect(wanted.exists()).to_equal(False)
+
     def test_none_that_can_be_made_is_known_before_one_is_looked_for(self) -> None:
         # The slicers' switches are read before the folder is made.
         blocked = self.root / "a-file"
@@ -328,9 +362,10 @@ class DegradedTest(TestCase):
         os.chmod(own / "settings.json", 0o600)
         self._configured(self.root / "link" / "state")
         with patch("mariner.server.state._FALLBACKS", [str(own)]):
-            expect(state.read("settings.json")).to_equal(b"{}")
+            # Said once, when it is first looked in.
             with self.assertLogs("mariner.server.state", level="WARNING"):
-                expect(state.directory()).to_equal(own)
+                expect(state.read("settings.json")).to_equal(b"{}")
+            expect(state.directory()).to_equal(own)
             expect(state.read("settings.json")).to_equal(b"{}")
         expect((self.root / "real" / "state").exists()).to_equal(False)
 

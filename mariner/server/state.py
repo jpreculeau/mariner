@@ -171,23 +171,38 @@ def _path(name: str) -> Path:
 
 
 def _existing() -> Optional[Path]:
-    """The folder to look in, if there is one: none is made for looking."""
+    """The folder to look in, if there is one: none is made for looking.
+
+    The one that is found is the one in use from then on, as if
+    something had been kept in it: at a start where everything is
+    already kept, nothing is written for a long time, and what holds
+    while Mariner runs (see ``is_makeshift``) must hold all the same.
+    """
+    global _directory, _makeshift
     if _directory is not None:
         return _directory
     wanted = os.path.expanduser(config.get_state_directory())
+    found: Optional[Path] = None
     if os.path.lexists(wanted):
         # The one asked for, or nothing: if it cannot be used, what it
         # holds is out of reach, and no other is looked in for it.
-        return Path(wanted) if _usable(wanted) else None
-    if _can_be_made(wanted):
+        found = Path(wanted) if _usable(wanted) else None
+    elif _can_be_made(wanted):
         # It will be made at the first thing kept, and read from then
         # on: nothing is read elsewhere until then, to be lost sight of.
         return None
-    for fallback in _FALLBACKS:
-        fallback = os.path.expanduser(fallback)
-        if os.path.isdir(fallback) and _usable(fallback):
-            return Path(fallback)
-    return None
+    else:
+        for fallback in _FALLBACKS:
+            fallback = os.path.expanduser(fallback)
+            if os.path.isdir(fallback) and _usable(fallback):
+                found = Path(fallback)
+                logger.warning(
+                    "Not keeping settings in %r; using %r", wanted, str(found)
+                )
+                break
+    if found is not None:
+        _directory, _makeshift = found, False
+    return found
 
 
 def exists(name: str) -> bool:

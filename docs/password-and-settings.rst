@@ -178,11 +178,13 @@ key and every session made with the old one is refused.
 
 If Mariner cannot use this directory, or the password kept in it (they
 belong to another account, after a copy made as ``root`` or a Docker mount;
-or the drive has gone read-only),
-it does not fall back on "no password yet": its page says that it cannot
-open and lets nobody in, and the slicers' interfaces stay off, until the
-directory is put right and Mariner restarted. The log names the directory.
-For instance:
+the directory was moved away; or, when Mariner starts, the drive is
+read-only), it does not fall back on "no password yet": its page says that
+it cannot open and lets nobody in, and the slicers' interfaces stay off,
+until the directory is put right and Mariner restarted. The log names the
+directory. A drive that goes read-only while Mariner runs does not shut the
+page — a print can still be watched and stopped — but nothing more can be
+kept: saving a setting or changing the password says so. For instance:
 
 .. code-block:: console
 

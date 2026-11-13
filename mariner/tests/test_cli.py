@@ -233,6 +233,22 @@ class CommandLineTest(TestCase):
         expect((own / "password").exists()).to_equal(True)
         expect((self.root / "real" / "state").exists()).to_equal(False)
 
+    def test_set_password_does_not_write_into_a_folder_mariner_will_not_use(
+        self,
+    ) -> None:
+        # There, and reached through a link: Mariner refuses it and its
+        # page stays shut. Saying "the password was set" would be false.
+        (self.root / "real" / "state").mkdir(parents=True, mode=0o700)
+        os.symlink(self.root / "real", self.root / "link")
+        with patch(
+            "mariner.config.get_state_directory",
+            return_value=str(self.root / "link" / "state"),
+        ):
+            status = self._run("set-password", typed=("long enough!", "long enough!"))
+        expect(status).to_equal(1)
+        expect("link" in self.out.getvalue()).to_equal(True)
+        expect((self.root / "real" / "state" / "password").exists()).to_equal(False)
+
     def test_they_work_on_the_folder_mariner_fell_back_on(self) -> None:
         # Run by hand under an ordinary account, Mariner keeps its
         # password in that account's home when it cannot make the folder

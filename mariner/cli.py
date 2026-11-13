@@ -99,6 +99,13 @@ def _folder_to_write() -> Optional[str]:
     folders = _folders()
     wanted, others = folders[0], folders[1:]
     if os.path.lexists(wanted):
+        if os.path.realpath(wanted) != os.path.abspath(wanted):
+            # Mariner does not use it, for where a link could lead, and
+            # looks in no other while it is there.
+            print(f"{wanted} is reached through a link, which Mariner does not")
+            print("follow: its page stays shut. Name the folder itself under")
+            print("[state] in the configuration.")
+            return None
         return wanted
     # As Mariner chooses: the folder it was told when it can be made,
     # else the first of the others that is there or can be.
@@ -129,6 +136,9 @@ def _made(folder: str) -> Optional[str]:
 
 def _set_password() -> int:
     directory = _folder_to_write()
+    if directory is None and os.path.lexists(_folders()[0]):
+        print("Nothing was changed.")
+        return 1
     if directory is None:
         print(f"There is no {_folders()[0]} yet: start Mariner once first, then")
         print("run this command again with sudo. If Mariner runs by hand under")
