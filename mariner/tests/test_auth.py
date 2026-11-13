@@ -81,11 +81,14 @@ class PasswordTest(_WithState):
 
     def test_one_everybody_tries_first_is_refused(self) -> None:
         for common in (
-            "password",
-            "12345678",
-            "Motdepasse",
-            "MARINER123",
-            "azertyuiop",
+            "passwordpassword",
+            "12345678901234",
+            "Motdepassemotdepasse",
+            "MARINER MARINER",
+            "azertyuiopqsdfgh",
+            "correct horse battery staple",
+            # One key held down.
+            "aaaaaaaaaaaaaaaa",
         ):
             with self.assertRaises(auth.PasswordNotAllowed) as refused:
                 auth.set_password(common)
@@ -99,15 +102,16 @@ class PasswordTest(_WithState):
     def test_one_is_not_chosen_where_there_is_one(self) -> None:
         auth.set_password(PASSWORD)
         with self.assertRaises(auth.PasswordAlreadySet):
-            auth.set_password("another one!", only_if_none=True)
+            auth.set_password("another one, longer!", only_if_none=True)
         expect(auth.check_password(PASSWORD)).to_equal(True)
 
     def test_a_short_one_is_refused(self) -> None:
-        for short in ("", "1234567", "é" * 7):
+        for short in ("", "1234567", "éè" * 6 + "é"):
             with self.assertRaises(auth.PasswordNotAllowed):
                 auth.set_password(short)
         expect(auth.has_password()).to_equal(False)
-        auth.set_password("é" * 8)
+        # Counted in characters, not in bytes.
+        auth.set_password("éè" * 7)
 
     def test_one_too_long_to_be_one_is_refused(self) -> None:
         # Hashing is paid for by Mariner, for whoever sends it.
@@ -390,7 +394,9 @@ class FirstVisitTest(_WithClient):
         # Else anyone could choose another, and be let in.
         self.post("/api/auth/setup", password=PASSWORD)
         other = self.application.test_client()
-        response = other.post("/api/auth/setup", json={"password": "another one!"})
+        response = other.post(
+            "/api/auth/setup", json={"password": "another one, longer!"}
+        )
         expect(response.status_code).to_equal(409)
         expect(response.get_json()["code"]).to_equal("password_already_set")
         expect(auth.check_password(PASSWORD)).to_equal(True)
@@ -659,13 +665,13 @@ class ChangeTest(_WithClient):
         ), self.assertLogs("mariner.server.auth", level="ERROR"):
             for _ in range(4):
                 response = self.post(
-                    "/api/auth/password", current=PASSWORD, new="new password!"
+                    "/api/auth/password", current=PASSWORD, new="a new passphrase!"
                 )
                 expect(response.status_code).to_equal(500)
                 expect(response.get_json()["code"]).to_equal("state_not_written")
         # The drive put right: no wait for wrong passwords nobody sent.
         response = self.post(
-            "/api/auth/password", current=PASSWORD, new="new password!"
+            "/api/auth/password", current=PASSWORD, new="a new passphrase!"
         )
         expect(response.status_code).to_equal(200)
 
@@ -687,9 +693,11 @@ class ChangeTest(_WithClient):
 
         with patch.object(state, "write", side_effect=write):
             with self.assertLogs("mariner.server.state", level="WARNING"):
-                self.post("/api/auth/password", current=PASSWORD, new="new password!")
+                self.post(
+                    "/api/auth/password", current=PASSWORD, new="a new passphrase!"
+                )
         other = self.application.test_client()
-        other.post("/api/auth/login", json={"password": "new password!"})
+        other.post("/api/auth/login", json={"password": "a new passphrase!"})
         expect(self.application.config["SECRET_KEY"] == b"o" * 32).to_equal(False)
         expect(self.state_of()["signed_in"]).to_equal(True)
 
@@ -703,24 +711,26 @@ class ChangeTest(_WithClient):
         # session that was open before it went.
         with patch.object(state, "is_makeshift", return_value=True):
             response = self.post(
-                "/api/auth/password", current=PASSWORD, new="new password!"
+                "/api/auth/password", current=PASSWORD, new="a new passphrase!"
             )
         expect(response.status_code).to_equal(503)
         expect(response.get_json()["code"]).to_equal("state_unavailable")
         expect(auth.check_password(PASSWORD)).to_equal(True)
 
     def test_changing_it_asks_for_the_one_in_place(self) -> None:
-        response = self.post("/api/auth/password", current="wrong", new="new password!")
+        response = self.post(
+            "/api/auth/password", current="wrong", new="a new passphrase!"
+        )
         expect(response.status_code).to_equal(401)
         expect(response.get_json()["code"]).to_equal("wrong_password")
         expect(auth.check_password(PASSWORD)).to_equal(True)
 
     def test_it_is_changed_and_this_page_stays_signed_in(self) -> None:
         response = self.post(
-            "/api/auth/password", current=PASSWORD, new="new password!"
+            "/api/auth/password", current=PASSWORD, new="a new passphrase!"
         )
         expect(response.status_code).to_equal(200)
-        expect(auth.check_password("new password!")).to_equal(True)
+        expect(auth.check_password("a new passphrase!")).to_equal(True)
         expect(auth.check_password(PASSWORD)).to_equal(False)
         expect(self.state_of()["signed_in"]).to_equal(True)
 
@@ -729,7 +739,7 @@ class ChangeTest(_WithClient):
         other = self.application.test_client()
         other.post("/api/auth/login", json={"password": PASSWORD})
         expect(self.state_of(other)["signed_in"]).to_equal(True)
-        self.post("/api/auth/password", current=PASSWORD, new="new password!")
+        self.post("/api/auth/password", current=PASSWORD, new="a new passphrase!")
         expect(self.state_of(other)["signed_in"]).to_equal(False)
 
     def test_a_new_one_that_is_too_short_is_refused(self) -> None:
@@ -741,7 +751,7 @@ class ChangeTest(_WithClient):
     def test_it_is_not_changed_by_who_is_not_signed_in(self) -> None:
         other = self.application.test_client()
         response = other.post(
-            "/api/auth/password", json={"current": PASSWORD, "new": "new password!"}
+            "/api/auth/password", json={"current": PASSWORD, "new": "a new passphrase!"}
         )
         expect(response.status_code).to_equal(401)
         expect(auth.check_password(PASSWORD)).to_equal(True)
@@ -1001,7 +1011,7 @@ class PageKeyTest(_WithClient):
     def test_changing_the_password_gives_a_new_one(self) -> None:
         answer = self.client.post(
             "/api/auth/password",
-            json={"current": PASSWORD, "new": "new password!"},
+            json={"current": PASSWORD, "new": "a new passphrase!"},
             headers={"X-Mariner-Key": self.key},
         )
         expect(answer.status_code).to_equal(200)
@@ -1042,7 +1052,7 @@ class OnlyTheCookieTest(_WithClient):
         for _ in range(6):
             thief.post("/api/auth/login", json={"password": "not the one"})
         answer = self.client.post(
-            "/api/auth/password", json={"current": PASSWORD, "new": "new password!"}
+            "/api/auth/password", json={"current": PASSWORD, "new": "a new passphrase!"}
         )
         expect(answer.status_code).to_equal(200)
 
@@ -1072,8 +1082,10 @@ class OnlyTheCookieTest(_WithClient):
 
     def test_wrong_current_passwords_are_counted_when_changing_it(self) -> None:
         for _ in range(3):
-            self.post("/api/auth/password", current="wrong", new="new password!")
-        answer = self.post("/api/auth/password", current=PASSWORD, new="new password!")
+            self.post("/api/auth/password", current="wrong", new="a new passphrase!")
+        answer = self.post(
+            "/api/auth/password", current=PASSWORD, new="a new passphrase!"
+        )
         expect(answer.status_code).to_equal(429)
 
     def test_another_session_of_the_same_reader_does_not_come_before_this_one(
@@ -1102,7 +1114,7 @@ class OnlyTheCookieTest(_WithClient):
         before = self.application.config["SECRET_KEY"]
         self.addCleanup(self.application.config.__setitem__, "SECRET_KEY", before)
         answer = self.client.post(
-            "/api/auth/password", json={"current": PASSWORD, "new": "new password!"}
+            "/api/auth/password", json={"current": PASSWORD, "new": "a new passphrase!"}
         )
         expect(answer.status_code).to_equal(200)
         expect(self.application.config["SECRET_KEY"] == before).to_equal(False)
@@ -1151,3 +1163,123 @@ class SignedOutListTest(_WithState):
         auth._note_signed_out("abc")
         kept = json.loads(state.read("signed-out.json") or b"{}")
         expect(kept["abc"] > time.time() + 45 * 86400).to_equal(True)
+
+
+class PassphraseTest(_WithState):
+    def test_one_of_thirteen_characters_is_too_short(self) -> None:
+        with self.assertRaises(passwords.PasswordNotAllowed) as refused:
+            auth.set_password("thirteen char")
+        expect(refused.exception.code).to_equal("password_too_short")
+
+    def test_one_of_fourteen_is_taken_whatever_it_is_made_of(self) -> None:
+        # Length, and nothing asked of what it is made of.
+        auth.set_password("fourteen chars")
+        expect(auth.check_password("fourteen chars")).to_equal(True)
+
+    def test_a_shorter_one_chosen_before_still_opens(self) -> None:
+        # Kept by a version that asked for eight.
+        with patch.object(passwords, "MIN_LENGTH", 8):
+            auth.set_password("8 chars!")
+        expect(auth.check_password("8 chars!")).to_equal(True)
+
+
+class InternetCeilingTest(_WithState):
+    def test_it_is_open_at_first(self) -> None:
+        expect(auth.claim_internet_attempt(now=100.0)).to_equal(0)
+
+    def test_it_closes_after_many_wrong_ones_within_the_hour(self) -> None:
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR):
+            expect(auth.claim_internet_attempt(now=100.0 + sent)).to_equal(0)
+        wait = auth.claim_internet_attempt(now=200.0)
+        # Until the first of them is an hour old.
+        expect(wait).to_equal(3500)
+
+    def test_it_opens_again_as_they_grow_old(self) -> None:
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR):
+            auth.claim_internet_attempt(now=100.0 + sent)
+        expect(auth.claim_internet_attempt(now=100.0 + 3601)).to_equal(0)
+
+    def test_one_turned_away_is_not_counted(self) -> None:
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR):
+            auth.claim_internet_attempt(now=100.0)
+        for _ in range(50):
+            auth.claim_internet_attempt(now=200.0)
+        expect(auth.claim_internet_attempt(now=100.0 + 3601)).to_equal(0)
+
+    def test_a_right_one_is_not_counted(self) -> None:
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR * 3):
+            expect(auth.claim_internet_attempt(now=100.0)).to_equal(0)
+            auth.note_internet_success(100.0)
+
+
+class FromTheInternetTest(_WithClient):
+    def _from(self, address: str) -> Any:
+        client = self.application.test_client()
+        client.environ_base["REMOTE_ADDR"] = address
+        return client
+
+    def test_the_password_is_not_chosen_from_the_internet(self) -> None:
+        # Else whoever finds the page first, anywhere, chooses it.
+        response = self._from("203.0.113.5").post(
+            "/api/auth/setup", json={"password": PASSWORD}
+        )
+        expect(response.status_code).to_equal(403)
+        expect(response.get_json()["code"]).to_equal("local_network_only")
+        expect(auth.has_password()).to_equal(False)
+
+    def _later(self) -> None:
+        # Long enough for no address to be made to wait on its own count;
+        # not the hour the ceiling counts over.
+        with auth._attempts_lock:
+            auth._attempts.clear()
+
+    def test_many_wrong_ones_from_all_over_close_it_to_the_internet(self) -> None:
+        auth.set_password(PASSWORD)
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR):
+            response = self._from(f"203.0.{sent}.5").post(
+                "/api/auth/login", json={"password": "not the one"}
+            )
+            expect(response.status_code).to_equal(401)
+            self._later()
+        with self.assertLogs("mariner.server.auth", level="WARNING") as logged:
+            response = self._from("198.51.100.9").post(
+                "/api/auth/login", json={"password": PASSWORD}
+            )
+        expect(response.status_code).to_equal(429)
+        expect(response.get_json()["code"]).to_equal("sign_in_closed")
+        expect(int(response.headers["Retry-After"]) > 3000).to_equal(True)
+        expect("closed" in " ".join(logged.output)).to_equal(True)
+
+    def test_which_leaves_the_local_network_as_it_was(self) -> None:
+        auth.set_password(PASSWORD)
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR + 5):
+            self._from(f"203.0.{sent}.5").post(
+                "/api/auth/login", json={"password": "not the one"}
+            )
+            self._later()
+        response = self._from("192.168.1.20").post(
+            "/api/auth/login", json={"password": PASSWORD}
+        )
+        expect(response.status_code).to_equal(200)
+
+    def test_wrong_ones_from_the_local_network_do_not_close_it(self) -> None:
+        auth.set_password(PASSWORD)
+        for sent in range(auth.INTERNET_FAILURES_AN_HOUR + 5):
+            self._from(f"192.168.{sent}.5").post(
+                "/api/auth/login", json={"password": "not the one"}
+            )
+            self._later()
+        response = self._from("203.0.113.5").post(
+            "/api/auth/login", json={"password": PASSWORD}
+        )
+        expect(response.status_code).to_equal(200)
+
+    def test_one_address_made_to_wait_does_not_use_the_ceiling_up(self) -> None:
+        auth.set_password(PASSWORD)
+        hammering = self._from("203.0.113.5")
+        for _ in range(auth.INTERNET_FAILURES_AN_HOUR * 2):
+            hammering.post("/api/auth/login", json={"password": "not the one"})
+        response = self._from("198.51.100.9").post(
+            "/api/auth/login", json={"password": PASSWORD}
+        )
+        expect(response.status_code).to_equal(200)

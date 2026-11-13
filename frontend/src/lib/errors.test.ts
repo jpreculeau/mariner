@@ -129,6 +129,18 @@ describe("errorText", () => {
       "Trop de mots de passe erronés. Réessayez dans 16\u00a0s.",
     );
   });
+
+  it("says for how long signing in from the Internet is closed", () => {
+    const closed = new ApiError(
+      429,
+      "Too many wrong passwords were sent from the Internet. Signing in from there is closed for 58 minutes; it works from the local network.",
+      "sign_in_closed",
+    );
+    expect(errorText(closed, t("fr"), "fr")).toBe(
+      "Trop de mots de passe erronés ont été envoyés depuis Internet. La connexion depuis Internet est fermée pendant 58\u00a0min\u202f; elle reste possible depuis le réseau local.",
+    );
+    expect(errorText(closed, t("en"), "en")).toBe(closed.message);
+  });
 });
 
 describe("saidByThePage", () => {

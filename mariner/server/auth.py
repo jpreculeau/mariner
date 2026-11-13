@@ -19,7 +19,7 @@ import stat
 import secrets
 import threading
 import time
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 from flask import (
     Blueprint,
@@ -34,7 +34,7 @@ from flask_wtf.csrf import generate_csrf
 
 from mariner import config, passwords
 from mariner.passwords import PasswordNotAllowed  # noqa: F401
-from mariner.server import sessions, state
+from mariner.server import provenance, sessions, state
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -232,8 +232,46 @@ def count_of(address: Optional[str], now: Optional[float] = None) -> str:
 
 
 def forget_attempts() -> None:
+    global _closed_said_at
     with _attempts_lock:
         _attempts.clear()
+        _from_internet.clear()
+    _closed_said_at = 0.0
+
+
+# From the Internet, addresses are had by the thousand: a count for each
+# holds nobody. So the wrong passwords sent from all of it are counted
+# together, and past this many within the hour signing in from the
+# Internet is closed until they grow old. The local network is left as it
+# is: the owner signs in at home whatever goes on outside.
+INTERNET_FAILURES_AN_HOUR = 20
+_HOUR_SECS = 3600
+# When each was looked at.
+_from_internet: List[float] = []
+
+
+def claim_internet_attempt(now: Optional[float] = None) -> int:
+    """Seconds until a password from the Internet is looked at; 0 for now.
+
+    As above: one that is let through is counted as wrong at once, until
+    ``note_internet_success`` says otherwise; one turned away is not.
+    """
+    moment = time.monotonic() if now is None else now
+    with _attempts_lock:
+        _from_internet[:] = [
+            sent for sent in _from_internet if sent + _HOUR_SECS > moment
+        ]
+        if len(_from_internet) >= INTERNET_FAILURES_AN_HOUR:
+            return max(1, math.ceil(min(_from_internet) + _HOUR_SECS - moment))
+        _from_internet.append(moment)
+        return 0
+
+
+def note_internet_success(claimed_at: float) -> None:
+    """Take back the attempt claimed at *claimed_at*: it was not a wrong one."""
+    with _attempts_lock:
+        if claimed_at in _from_internet:
+            _from_internet.remove(claimed_at)
 
 
 def claim_attempt(count: str, now: Optional[float] = None) -> int:
@@ -550,6 +588,20 @@ def _shut() -> Optional[Response]:
     return None
 
 
+def _closed_answer(wait: int) -> Response:
+    minutes = math.ceil(wait / 60)
+    answer = _refuse(
+        "sign_in_closed",
+        "Sign-In Closed From The Internet",
+        "Too many wrong passwords were sent from the Internet. Signing in "
+        f"from there is closed for {minutes} minute{'' if minutes == 1 else 's'}"
+        "; it works from the local network.",
+        429,
+    )
+    answer.headers["Retry-After"] = str(wait)
+    return answer
+
+
 def _wait_answer(wait: int) -> Response:
     answer = _refuse(
         "too_many_attempts",
@@ -560,6 +612,24 @@ def _wait_answer(wait: int) -> Response:
     )
     answer.headers["Retry-After"] = str(wait)
     return answer
+
+
+# Said once in a while, not at each attempt turned away.
+_closed_said_at = 0.0
+
+
+def _say_closed(wait: int) -> None:
+    global _closed_said_at
+    now = time.monotonic()
+    if _closed_said_at and now - _closed_said_at < 600:
+        return
+    _closed_said_at = now
+    logger.warning(
+        "Signing in from the Internet is closed for %d s: %d wrong passwords "
+        "were sent from there within the hour",
+        wait,
+        INTERNET_FAILURES_AN_HOUR,
+    )
 
 
 @auth_api.route("/setup", methods=["POST"])
@@ -577,6 +647,15 @@ def setup() -> Response:
     )
     if has_password():
         return already()
+    if not provenance.is_local(request.remote_addr):
+        # Else whoever finds the page first, anywhere, chooses it.
+        return _refuse(
+            "local_network_only",
+            "Local Network Only",
+            "The password is chosen from the local network, or with "
+            "the command mariner set-password, not from the Internet.",
+            403,
+        )
     given = _given("password")
     if given is None:
         return _not_a_password()
@@ -607,9 +686,18 @@ def login() -> Response:
         # the page offers to choose one.
         body = refusal("/api/auth-login", session) or {}
         return make_response(jsonify(body), status_of(body))
+    from_internet = not provenance.is_local(request.remote_addr)
+    claimed_at = time.monotonic()
+    if from_internet:
+        closed_for = claim_internet_attempt(claimed_at)
+        if closed_for:
+            _say_closed(closed_for)
+            return _closed_answer(closed_for)
     count = count_of(request.remote_addr)
     wait = claim_attempt(count)
     if wait:
+        # Turned away without being looked at: not one more wrong one.
+        note_internet_success(claimed_at)
         return _wait_answer(wait)
     current = generation()
     if current is None or not check_password(given[0]):
@@ -618,6 +706,7 @@ def login() -> Response:
             "wrong_password", "Wrong Password", "This is not the password.", 401
         )
     note_success(count)
+    note_internet_success(claimed_at)
     _use_the_key_that_is_kept()
     return _sign_in(current)
 

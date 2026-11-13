@@ -9,8 +9,12 @@ Choosing the password
 ---------------------
 
 The first time the page is opened, it asks for a password to be chosen: type
-it twice, at least 8 characters (the handful everybody tries first, such as
-``password`` or ``12345678``, are refused). Whoever opens the page first
+it twice, at least 14 characters: a few words make a good one, and nothing
+is asked of what it is made of (the handful everybody tries first are
+refused). A shorter one chosen with an earlier version still opens the page;
+the next one chosen has to be longer. It is chosen from the local network
+or with ``sudo mariner set-password``, never from the Internet (see
+:doc:`internet`). Whoever opens the page first
 chooses it, so do it right after installing Mariner, before the printer is
 left on the network.
 

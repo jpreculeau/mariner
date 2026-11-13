@@ -12,7 +12,10 @@ import os
 import secrets
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-MIN_LENGTH = 8
+# Long enough to stand being guessed at from the Internet, and nothing
+# asked of what it is made of: a few words do. One chosen before, when
+# eight were asked for, still opens.
+MIN_LENGTH = 14
 # Hashing is paid for by Mariner, for whoever sends one.
 MAX_LENGTH = 1024
 
@@ -36,7 +39,15 @@ _TOO_COMMON = frozenset(
     azertyuiop azerty123 iloveyou letmein123 admin123 administrator
     motdepasse motdepasse1 mariner mariner1 mariner123 mariner2 printer123
     imprimante changeme welcome1 raspberry raspberrypi
+    passwordpassword password123456 12345678901234 123456789012345
+    1234567890123456 01234567890123 qwertyuiopasdfgh azertyuiopqsdfgh
+    motdepassemotdepasse raspberryraspberry marinermariner
     """.split()
+    + [
+        "mariner mariner",
+        "correct horse battery staple",
+        "correcthorsebatterystaple",
+    ]
 )
 
 
@@ -71,7 +82,8 @@ def record_for(password: str) -> Dict[str, Any]:
             "password_too_long",
             f"A password has at most {MAX_LENGTH} characters.",
         )
-    if password.lower() in _TOO_COMMON:
+    # The handful, and one key held down.
+    if password.lower() in _TOO_COMMON or len(set(password)) == 1:
         raise PasswordNotAllowed(
             "password_too_common",
             "This password is among the first anyone would try. Choose another.",

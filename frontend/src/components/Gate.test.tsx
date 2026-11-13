@@ -112,7 +112,7 @@ describe("Gate", () => {
       vi.spyOn(api, "choosePassword").mockRejectedValue(
         new ApiError(
           400,
-          "A password has at least 8 characters.",
+          "A password has at least 14 characters.",
           "password_too_short",
         ),
       );
@@ -123,7 +123,7 @@ describe("Gate", () => {
       fireEvent.click(screen.getByRole("button", { name: "Set the password" }));
 
       const alert = await screen.findByRole("alert");
-      expect(alert).toHaveTextContent("A password has at least 8 characters.");
+      expect(alert).toHaveTextContent("A password has at least 14 characters.");
       const field = screen.getByLabelText("New password");
       expect(field).toHaveAttribute("aria-invalid", "true");
       expect(field.getAttribute("aria-describedby")).toContain(alert.id);

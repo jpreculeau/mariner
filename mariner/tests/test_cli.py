@@ -73,7 +73,7 @@ class CommandLineTest(TestCase):
         # account, where the service would then not use them.
         loaded = set(sys.modules)
         self._run("reset-password")
-        self._run("set-password", typed=("long enough!", "long enough!"))
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
         new = {name for name in set(sys.modules) - loaded}
         expect(
             sorted(name for name in new if name.startswith("mariner.server"))
@@ -82,31 +82,33 @@ class CommandLineTest(TestCase):
     def test_set_password_keeps_the_one_typed_twice(self) -> None:
         # Before the page is ever opened: nobody else gets to choose it.
         expect(
-            self._run("set-password", typed=("long enough!", "long enough!"))
+            self._run("set-password", typed=("long enough now!", "long enough now!"))
         ).to_equal(0)
         kept = self.state / "password"
         record = json.loads(kept.read_bytes())
-        expect(passwords.matches(record, "long enough!")).to_equal(True)
+        expect(passwords.matches(record, "long enough now!")).to_equal(True)
         expect(stat.S_IMODE(os.stat(kept).st_mode)).to_equal(0o600)
         expect(stat.S_IMODE(os.stat(self.state).st_mode)).to_equal(0o700)
-        expect("long enough!" in self.out.getvalue()).to_equal(False)
+        expect("long enough now!" in self.out.getvalue()).to_equal(False)
 
     def test_set_password_refuses_two_that_differ(self) -> None:
         expect(
-            self._run("set-password", typed=("long enough!", "long enough?"))
+            self._run("set-password", typed=("long enough now!", "long enough now?"))
         ).to_equal(1)
         expect((self.state / "password").exists()).to_equal(False)
 
     def test_set_password_says_why_one_is_not_taken(self) -> None:
         expect(self._run("set-password", typed=("short", "short"))).to_equal(1)
-        expect("8 characters" in self.out.getvalue()).to_equal(True)
+        expect("14 characters" in self.out.getvalue()).to_equal(True)
 
     def test_set_password_replaces_the_one_in_place(self) -> None:
-        self._run("set-password", typed=("long enough!", "long enough!"))
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
         first = json.loads((self.state / "password").read_bytes())
-        self._run("set-password", typed=("another one!", "another one!"))
+        self._run(
+            "set-password", typed=("another one, longer!", "another one, longer!")
+        )
         second = json.loads((self.state / "password").read_bytes())
-        expect(passwords.matches(second, "another one!")).to_equal(True)
+        expect(passwords.matches(second, "another one, longer!")).to_equal(True)
         # Whoever was signed in under the first no longer is.
         expect(second["generation"] == first["generation"]).to_equal(False)
 
@@ -115,7 +117,9 @@ class CommandLineTest(TestCase):
         # not take it.
         self.state.mkdir(mode=0o700)
         with patch("os.fchown") as chown:
-            self._run("set-password", typed=("long enough!", "long enough!"), euid=0)
+            self._run(
+                "set-password", typed=("long enough now!", "long enough now!"), euid=0
+            )
         owner = os.stat(self.state)
         expect(chown.call_args[0][1:]).to_equal((owner.st_uid, owner.st_gid))
 
@@ -131,7 +135,9 @@ class CommandLineTest(TestCase):
             "os.replace",
             side_effect=lambda a, b: (order.append("placed"), real_replace(a, b)),
         ):
-            self._run("set-password", typed=("long enough!", "long enough!"), euid=0)
+            self._run(
+                "set-password", typed=("long enough now!", "long enough now!"), euid=0
+            )
         expect(order).to_equal(["owner", "placed"])
         by_name.assert_not_called()
 
@@ -140,7 +146,7 @@ class CommandLineTest(TestCase):
         real.mkdir()
         self.state.symlink_to(real)
         expect(
-            self._run("set-password", typed=("long enough!", "long enough!"))
+            self._run("set-password", typed=("long enough now!", "long enough now!"))
         ).to_equal(1)
         expect(list(real.iterdir())).to_equal([])
 
@@ -148,7 +154,9 @@ class CommandLineTest(TestCase):
         # Made by root, the service would not use it, and its page would
         # stay shut.
         expect(
-            self._run("set-password", typed=("long enough!", "long enough!"), euid=0)
+            self._run(
+                "set-password", typed=("long enough now!", "long enough now!"), euid=0
+            )
         ).to_equal(1)
         expect(self.state.exists()).to_equal(False)
         expect("start Mariner once" in self.out.getvalue()).to_equal(True)
@@ -158,7 +166,7 @@ class CommandLineTest(TestCase):
         # is then of no use.
         self.state.mkdir(mode=0o700)
         (self.state / "session.key").write_bytes(b"k" * 32)
-        self._run("set-password", typed=("long enough!", "long enough!"))
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
         expect((self.state / "session.key").exists()).to_equal(False)
         (self.state / "session.key").write_bytes(b"k" * 32)
         self._run("reset-password")
@@ -212,7 +220,7 @@ class CommandLineTest(TestCase):
         own = self._home_folder()
         own.mkdir(mode=0o700)
         expect(
-            self._run("set-password", typed=("long enough!", "long enough!"))
+            self._run("set-password", typed=("long enough now!", "long enough now!"))
         ).to_equal(0)
         expect((self.state / "password").exists()).to_equal(True)
         expect((own / "password").exists()).to_equal(False)
@@ -228,7 +236,9 @@ class CommandLineTest(TestCase):
             return_value=str(self.root / "link" / "state"),
         ):
             expect(
-                self._run("set-password", typed=("long enough!", "long enough!"))
+                self._run(
+                    "set-password", typed=("long enough now!", "long enough now!")
+                )
             ).to_equal(0)
         expect((own / "password").exists()).to_equal(True)
         expect((self.root / "real" / "state").exists()).to_equal(False)
@@ -244,7 +254,9 @@ class CommandLineTest(TestCase):
             "mariner.config.get_state_directory",
             return_value=str(self.root / "link" / "state"),
         ):
-            status = self._run("set-password", typed=("long enough!", "long enough!"))
+            status = self._run(
+                "set-password", typed=("long enough now!", "long enough now!")
+            )
         expect(status).to_equal(1)
         expect("link" in self.out.getvalue()).to_equal(True)
         expect((self.root / "real" / "state" / "password").exists()).to_equal(False)
@@ -261,7 +273,9 @@ class CommandLineTest(TestCase):
             "mariner.config.get_state_directory", return_value=str(blocked / "state")
         ):
             expect(
-                self._run("set-password", typed=("long enough!", "long enough!"))
+                self._run(
+                    "set-password", typed=("long enough now!", "long enough now!")
+                )
             ).to_equal(0)
             expect((own / "password").exists()).to_equal(True)
             expect(self._run("reset-password")).to_equal(0)
@@ -283,7 +297,7 @@ class CommandLineTest(TestCase):
         expect(str(self.state) in said and str(own) in said).to_equal(True)
 
     def test_reset_password_clears_it(self) -> None:
-        self._run("set-password", typed=("long enough!", "long enough!"))
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
         expect(self._run("reset-password")).to_equal(0)
         expect((self.state / "password").exists()).to_equal(False)
         # It says which folder it acted on.
@@ -294,7 +308,7 @@ class CommandLineTest(TestCase):
         expect("no password" in self.out.getvalue().lower()).to_equal(True)
 
     def test_reset_password_says_so_when_it_may_not(self) -> None:
-        self._run("set-password", typed=("long enough!", "long enough!"))
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
         with patch("os.unlink", side_effect=PermissionError("not yours")):
             expect(self._run("reset-password")).to_equal(1)
         expect("sudo" in self.out.getvalue()).to_equal(True)
@@ -303,7 +317,7 @@ class CommandLineTest(TestCase):
         self,
     ) -> None:
         # The folder of the service, which this account may not enter.
-        self._run("set-password", typed=("long enough!", "long enough!"))
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
         kept = passwords.kept_path(str(self.state))
         real = os.lstat
 
@@ -326,7 +340,9 @@ class CommandLineTest(TestCase):
         # Mariner runs under its own account, and has not started yet:
         # a password kept in this account's home would never be read.
         with patch.object(cli, "_runs_under_another_account", return_value=True):
-            status = self._run("set-password", typed=("long enough!", "long enough!"))
+            status = self._run(
+                "set-password", typed=("long enough now!", "long enough now!")
+            )
         expect(status).to_equal(1)
         expect("sudo" in self.out.getvalue()).to_equal(True)
         expect((self.root / "own").exists()).to_equal(False)

@@ -35,7 +35,7 @@ export const fr: Record<TextKey, string> = {
   "choose.cleared":
     "Le mot de passe de Mariner a été effacé. Choisissez-en un nouveau.",
   "choose.new": "Nouveau mot de passe",
-  "choose.hint": "Au moins 8 caractères.",
+  "choose.hint": "Au moins 14 caractères. Quelques mots font une bonne phrase.",
   "choose.repeat": "Répéter le mot de passe",
   "choose.submit": "Enregistrer le mot de passe",
   "choose.submitting": "Enregistrement…",
@@ -207,11 +207,13 @@ export const fr: Record<TextKey, string> = {
   "error.wrong_password": "Ce n'est pas le mot de passe.",
   "error.too_many_attempts":
     "Trop de mots de passe erronés. Réessayez dans {seconds}\u00a0s.",
+  "error.sign_in_closed":
+    "Trop de mots de passe erronés ont été envoyés depuis Internet. La connexion depuis Internet est fermée pendant {minutes}\u00a0min\u202f; elle reste possible depuis le réseau local.",
   "error.password_too_common":
     "Ce mot de passe fait partie des premiers que n'importe qui essaierait. Choisissez-en un autre.",
   "error.state_unavailable":
     "Mariner ne peut pas utiliser le dossier où il garde son mot de passe, ou le mot de passe qui s'y trouve\u00a0: sa page reste fermée.",
-  "error.password_too_short": "Un mot de passe compte au moins 8 caractères.",
+  "error.password_too_short": "Un mot de passe compte au moins 14 caractères.",
   "error.password_too_long": "Un mot de passe compte au plus 1024 caractères.",
   "error.password_missing": "Aucun mot de passe n'a été donné.",
   "error.password_already_set":

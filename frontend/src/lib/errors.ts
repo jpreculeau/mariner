@@ -39,6 +39,10 @@ export function errorText(error: unknown, t: Translate, lang: Lang): string {
       const seconds = /(\d+) seconds?/.exec(error.message)?.[1];
       return seconds ? t(key, { seconds }) : error.message;
     }
+    if (error.code === "sign_in_closed") {
+      const minutes = /(\d+) minutes?/.exec(error.message)?.[1];
+      return minutes ? t(key, { minutes }) : error.message;
+    }
     if (error.code === "type_not_supported") {
       // The kinds that are taken, which the server's words list.
       const kinds = supportedKinds();

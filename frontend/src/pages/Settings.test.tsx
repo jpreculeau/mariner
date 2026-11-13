@@ -216,7 +216,7 @@ describe("Settings", () => {
       vi.spyOn(api, "changePassword").mockRejectedValue(
         new ApiError(
           400,
-          "A password has at least 8 characters.",
+          "A password has at least 14 characters.",
           "password_too_short",
         ),
       );

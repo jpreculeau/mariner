@@ -33,7 +33,7 @@ export const en = {
     "It will be asked of anyone who opens this page. Slicers (UVtools, ChiTuBox) send files without it: their access can be switched off in the settings.",
   "choose.cleared": "Mariner's password was cleared. Choose a new one.",
   "choose.new": "New password",
-  "choose.hint": "At least 8 characters.",
+  "choose.hint": "At least 14 characters. A few words make a good one.",
   "choose.repeat": "Repeat the password",
   "choose.submit": "Set the password",
   "choose.submitting": "Setting the password…",
@@ -216,11 +216,13 @@ export const en = {
   "error.wrong_password": "This is not the password.",
   "error.too_many_attempts":
     "Too many wrong passwords. Try again in {seconds} s.",
+  "error.sign_in_closed":
+    "Too many wrong passwords were sent from the Internet. Signing in from there is closed for {minutes} min; it works from the local network.",
   "error.password_too_common":
     "This password is among the first anyone would try. Choose another.",
   "error.state_unavailable":
     "Mariner cannot use the folder it keeps its password in, or the password kept there, so its page stays shut.",
-  "error.password_too_short": "A password has at least 8 characters.",
+  "error.password_too_short": "A password has at least 14 characters.",
   "error.password_too_long": "A password has at most 1024 characters.",
   "error.password_missing": "No password was given.",
   "error.password_already_set":

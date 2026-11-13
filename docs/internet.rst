@@ -27,6 +27,20 @@ From an address that is not local these are answered ``403`` with the code
 says who was refused. The page itself, and everything else it does once
 signed in, is answered as on the local network.
 
+Signing in from the Internet
+----------------------------
+
+- **The password is not chosen from there.** On a Mariner that has none
+  yet, a visitor from the Internet is refused (``local_network_only``):
+  choose it from the local network, or with ``sudo mariner set-password``.
+- **Wrong passwords from the Internet are counted together**, whatever
+  addresses they come from. Past 20 within the hour, signing in from the
+  Internet is closed until the oldest is an hour old (``429``
+  ``sign_in_closed``, and a line in the log). Who is already signed in
+  stays so, and signing in from the local network goes on as before: a
+  stranger can keep you from signing in from outside for a while, never at
+  home.
+
 What is local
 -------------
 
