@@ -136,6 +136,28 @@ describe("api client", () => {
     document.head.removeChild(meta);
   });
 
+  it("sends what sets the one-time code up as JSON, which the server reads", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response("{}", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    globalThis.fetch = fetchMock;
+    await api.confirmCode("287082");
+    await api.removeCode("correct horse battery");
+    for (const [index, body] of [
+      [0, { code: "287082" }],
+      [1, { current: "correct horse battery" }],
+    ] as const) {
+      const sent = fetchMock.mock.calls[index][1];
+      expect(sent.headers["Content-Type"]).toBe("application/json");
+      expect(JSON.parse(sent.body)).toEqual(body);
+    }
+  });
+
   describe("when the page's token is out of date", () => {
     // Real answers: what is read of one cannot be read again.
     const json = (status: number, body: unknown) => () =>

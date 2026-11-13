@@ -455,21 +455,15 @@ export const api = {
 
   /** A key for a phone to take in; in force once confirmed. */
   async startCode(): Promise<{ secret: string; uri: string }> {
-    return apiFetch("/api/auth/code/start", { method: "POST" });
+    return post("/api/auth/code/start");
   },
 
   async confirmCode(code: string): Promise<void> {
-    await apiFetch("/api/auth/code/confirm", {
-      method: "POST",
-      body: JSON.stringify({ code }),
-    });
+    await post("/api/auth/code/confirm", { code });
   },
 
   async removeCode(current: string): Promise<void> {
-    await apiFetch("/api/auth/code/remove", {
-      method: "POST",
-      body: JSON.stringify({ current }),
-    });
+    await post("/api/auth/code/remove", { current });
   },
 
   async settings(): Promise<SettingsResponse> {
