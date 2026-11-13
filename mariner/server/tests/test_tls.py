@@ -449,9 +449,6 @@ class SecuredConnectionTest(TestCase):
         expect(answer.startswith(b"HTTP/1.1 413")).to_equal(True)
         expect(self.seen).to_equal([])
 
-
-@skipUnless(shutil.which("openssl"), "needs the openssl command")
-
     def test_readers_that_read_nothing_do_not_stop_the_answers(self) -> None:
         # As many as there are threads to answer, and one more: each asks
         # for much, several times over, and takes none of it.
@@ -470,6 +467,7 @@ class SecuredConnectionTest(TestCase):
             expect(time.monotonic() - started < 9).to_equal(True)
 
 
+@skipUnless(shutil.which("openssl"), "needs the openssl command")
 class TwoPortsTest(TestCase):
     """As Mariner listens: in the clear on one port, over TLS on another."""
 
