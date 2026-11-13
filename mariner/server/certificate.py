@@ -17,6 +17,7 @@ import os
 import re
 import shutil
 import socket
+import ssl
 import subprocess
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -185,14 +186,23 @@ def in_use(folder: Optional[Path] = None) -> Optional[Tuple[str, str]]:
             tls.context(own_certificate, own_key)
             return own_certificate, own_key
         except (OSError, ValueError) as error:
+            under_a_password = isinstance(error, ssl.SSLError) and not isinstance(
+                error, FileNotFoundError
+            )
             logger.error(
                 "The certificate named in the configuration (%s, with its "
-                "key %s) cannot be used: %s. The key must not be kept under "
-                "a password. Mariner serves its page with a certificate of "
-                "its own instead",
+                "key %s) cannot be used: %s.%s Mariner serves its page with a "
+                "certificate of its own instead",
                 own_certificate,
                 own_key,
                 error,
+                (
+                    " If the key is kept under a password, it must not be; if not, "
+                    "the two files do not go together or are not what they are "
+                    "named for."
+                    if under_a_password
+                    else ""
+                ),
             )
     if folder is None:
         from mariner.server import state

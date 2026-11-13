@@ -350,6 +350,35 @@ class SecuredConnectionTest(TestCase):
         expect(len(closed_holding_the_engine) > 0).to_equal(True)
         expect(any(closed_holding_the_engine)).to_equal(False)
 
+    def test_little_is_kept_encrypted_for_a_client_that_does_not_read(
+        self,
+    ) -> None:
+        # Not the whole of an answer, in the memory of a small board.
+        connection = self._connected()
+        connection.sendall(b"GET /huge HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        time.sleep(1.0)
+        kept = [
+            len(channel._waiting)
+            for channel in list(self.server._map.values())
+            if hasattr(channel, "_waiting")
+        ]
+        expect(len(kept)).to_equal(1)
+        self.assertLess(kept[0], 2 * tls._MOST_WAITING)
+
+    def test_a_file_sent_slowly_is_not_taken_for_a_connection_that_says_nothing(
+        self,
+    ) -> None:
+        # Slower than the time a silent connection is given.
+        connection = self._connected()
+        connection.sendall(
+            b"POST /api/upload_file HTTP/1.1\r\nHost: localhost\r\n"
+            b"Content-Length: 6\r\n\r\n"
+        )
+        for piece in (b"a", b"b", b"c", b"d", b"e", b"f"):
+            time.sleep(0.5)
+            connection.sendall(piece)
+        expect(self._answer(connection).endswith(b"served 6")).to_equal(True)
+
     def test_many_at_once_are_each_answered(self) -> None:
         answers: List[bool] = []
 

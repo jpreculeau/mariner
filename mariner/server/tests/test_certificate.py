@@ -174,6 +174,17 @@ class CertificateTest(TestCase):
         tls.context(cert, key)
         expect(Path(cert).parent).to_equal(self.folder)
 
+    def test_a_file_that_is_missing_is_not_said_to_be_under_a_password(self) -> None:
+        with patch.object(config, "get_https_certificate", return_value="/nowhere"):
+            with patch.object(config, "get_https_key", return_value="/nowhere"):
+                with self.assertLogs(
+                    "mariner.server.certificate", level="ERROR"
+                ) as logged:
+                    certificate.in_use(self.folder)
+        said = " ".join(logged.output)
+        expect("No such file" in said).to_equal(True)
+        expect("must not be kept under a password" in said).to_equal(False)
+
     def test_switched_off_there_is_none(self) -> None:
         with patch.object(config, "get_https_enabled", return_value=False):
             expect(certificate.in_use(self.folder)).to_equal(None)

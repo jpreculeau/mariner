@@ -139,6 +139,10 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
                     finished = True
                 except OSError:
                     self._broken = True
+                if len(self._waiting) > 2 * _MOST_WAITING:
+                    # A client that has the engine answer it again and
+                    # again, and takes none of the answers.
+                    self._broken = True
             # Never while holding the engine: see ``_end``.
             if self._broken:
                 self._end()
@@ -153,18 +157,21 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
         def send(self, data: bytes, do_close: bool = True) -> int:
             """Take *data* to be sent encrypted; how much of it was taken.
 
-            All of it or none: none while the client is slow to take what
-            was encrypted before, so that what waits stays small.
+            No more than there is room for: what waits encrypted for a
+            client slow to take it stays small, however much the web
+            server hands over at a time.
             """
             with self._tls_lock:
-                if self._broken:
+                if self._broken or not self._greeted:
                     return 0
-                if not self._greeted or len(self._waiting) >= _MOST_WAITING:
+                room = _MOST_WAITING - len(self._waiting)
+                if room <= 0:
                     return 0
+                taken = data[:room]
                 try:
-                    self._tls.write(data)
+                    self._tls.write(taken)
                     self._push()
-                    return len(data)
+                    return len(taken)
                 except (ssl.SSLError, OSError):
                     # Closed by the thread that runs the connections, at
                     # its next turn: see ``writable`` and ``_end``.
