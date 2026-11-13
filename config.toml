@@ -95,8 +95,9 @@ spool_directory = "/var/tmp"
 
 [state]
 # Directory in which Mariner keeps what must outlast a restart, for itself
-# alone: the key that signs sessions, the password's hash, the settings
-# changed from its page, the history of prints shown to slicers. Default is
+# alone: the key that signs sessions, the password's hash, the secret of
+# the one-time code, the journal of sign-ins, the settings changed from its
+# page, the history of prints shown to slicers. Default is
 # /var/lib/mariner, which the service is given. Run several instances on one
 # computer with a directory each.
 #directory = "/var/lib/mariner"

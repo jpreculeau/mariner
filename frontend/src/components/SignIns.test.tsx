@@ -25,6 +25,7 @@ describe("SignIns", () => {
   it("lists what happened, with when and where from", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 0,
+      wrong_codes_since_last_visit: 0,
       entries: [
         { at: AT, what: "signed_in", from: "192.168.1.20", internet: false },
         {
@@ -61,6 +62,7 @@ describe("SignIns", () => {
   it("says how many wrong ones one line stands for", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 0,
+      wrong_codes_since_last_visit: 0,
       entries: [
         {
           at: AT,
@@ -91,6 +93,7 @@ describe("SignIns", () => {
   it("says how many tried since the visit before", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 3,
+      wrong_codes_since_last_visit: 0,
       entries: [
         { at: AT, what: "signed_in", from: "192.168.1.20", internet: false },
       ],
@@ -103,9 +106,24 @@ describe("SignIns", () => {
     ).toBeInTheDocument();
   });
 
+  it("says when the right password came with wrong codes", async () => {
+    vi.spyOn(api, "journal").mockResolvedValue({
+      wrong_since_last_visit: 0,
+      wrong_codes_since_last_visit: 4,
+      entries: [],
+    });
+    renderIt();
+    expect(
+      await screen.findByText(
+        "The right password was sent 4 times with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("says it in the singular for one", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 1,
+      wrong_codes_since_last_visit: 0,
       entries: [],
     });
     renderIt();
@@ -119,6 +137,7 @@ describe("SignIns", () => {
   it("says so when there is nothing yet", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 0,
+      wrong_codes_since_last_visit: 0,
       entries: [],
     });
     renderIt();
@@ -139,6 +158,7 @@ describe("SignIns", () => {
     // Noted by a newer Mariner than this page.
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 0,
+      wrong_codes_since_last_visit: 0,
       entries: [
         {
           at: AT,

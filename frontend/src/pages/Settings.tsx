@@ -292,7 +292,11 @@ export default function Settings() {
         </Part>
 
         <Part title={t("settings.code")}>
-          <OneTimeCode />
+          <OneTimeCode
+            onChanged={() =>
+              queryClient.invalidateQueries({ queryKey: ["journal"] })
+            }
+          />
         </Part>
 
         <Part title={t("settings.journal")}>

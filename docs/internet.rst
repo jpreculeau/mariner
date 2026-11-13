@@ -118,9 +118,13 @@ shutting you out at home, and from bringing it down:
   asked;
 - over IPv6, where whoever has one address has billions, a network counts
   as one address;
-- whoever is sent a very large answer and reads none of it for a minute is
-  taken for gone, from wherever it is: it no longer holds what serves the
-  others. (Nothing Mariner serves today is that large.)
+- a connection from the Internet that sends many requests in one go has
+  four of them answered and is then closed; a browser sends one at a time;
+- whoever is sent much and reads none of it is taken for gone, after three
+  seconds from the Internet and a minute on the local network: it no
+  longer holds what serves the others;
+- an upload from the Internet that stops for more than thirty seconds is
+  cut.
 
 Connections turned away are counted in the log, a line a minute at most.
 None of this applies to addresses of the local network, bar the last.
@@ -170,8 +174,9 @@ there for them. To know whether yours is one: forward the port, open the
 page from a phone **on mobile data, not on the house's Wi-Fi**, and look.
 If the page asks for the one-time code (or says that none is set up), all
 is well. If it asks for the password alone, the phone was taken for a
-computer of the house: sign in from the local network, open **Settings**,
-**Recent sign-ins**, and read the address the phone's attempt came from.
+computer of the house. Type a wrong password on the phone, on purpose; then
+sign in from the local network, open **Settings**, **Recent sign-ins**, and
+read the address that wrong password came from.
 
 - **A router that passes connections on under its own address.** Most keep
   the visitor's address; some replace it with their own (``192.168.1.1``,
@@ -183,8 +188,9 @@ computer of the house: sign in from the local network, open **Settings**,
   with ``10.``, ``172.16.`` to ``172.31.``, ``192.168.`` or ``100.64.`` to
   ``100.127.``, and other customers of the provider, or the computers of
   the network in between, arrive with such addresses. List that network
-  under ``not_local`` (``not_local = ["10.0.0.0/8"]``, say), unless it is
-  the very range your own computers use.
+  under ``not_local`` (``not_local = ["10.0.0.0/8"]``, say). If it is the
+  very range your own computers use, Mariner cannot tell them from the
+  strangers: do not forward a port there, and use a VPN.
 - **A tunnel or a relay on this very computer** (cloudflared, a reverse
   proxy): everything arrives from ``127.0.0.1``. Set
   ``not_local = ["127.0.0.1"]``.

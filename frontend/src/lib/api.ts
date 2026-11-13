@@ -405,19 +405,32 @@ function post<T>(url: string, body?: unknown): Promise<T> {
  * Send what signs in. The answer carries the token of the new session:
  * the one the page held went with the session it had.
  */
-async function signedInBy(url: string, body?: unknown): Promise<number> {
+/** What was tried since the visit before the one that begins. */
+export interface Tried {
+  /** Wrong passwords. */
+  passwords: number;
+  /** The right password with a wrong one-time code: it is known. */
+  codes: number;
+}
+
+const count = (given: unknown) =>
+  typeof given === "number" && given > 0 ? given : 0;
+
+async function signedInBy(url: string, body?: unknown): Promise<Tried> {
   const answer = await post<{
     csrf_token?: string;
     page_key?: string;
     wrong_since_last_visit?: number;
+    wrong_codes_since_last_visit?: number;
   }>(url, body);
   if (typeof answer?.csrf_token === "string") {
     renewedCsrfToken = answer.csrf_token;
   }
   if (typeof answer?.page_key === "string") setPageKey(answer.page_key);
-  // How many wrong passwords were sent since the visit before.
-  const tried = answer?.wrong_since_last_visit;
-  return typeof tried === "number" && tried > 0 ? tried : 0;
+  return {
+    passwords: count(answer?.wrong_since_last_visit),
+    codes: count(answer?.wrong_codes_since_last_visit),
+  };
 }
 
 export interface SignInJournal {
@@ -433,6 +446,8 @@ export interface SignInJournal {
   }[];
   /** Wrong passwords sent between the last sign-in and the one before. */
   wrong_since_last_visit: number;
+  /** The right password sent with a wrong one-time code, meanwhile. */
+  wrong_codes_since_last_visit: number;
 }
 
 export const api = {
@@ -456,7 +471,7 @@ export const api = {
   },
 
   /** With the one-time code, from the Internet. */
-  async signIn(password: string, code?: string): Promise<number> {
+  async signIn(password: string, code?: string): Promise<Tried> {
     return signedInBy(
       "/api/auth/login",
       code === undefined ? { password } : { password, code },
@@ -479,10 +494,8 @@ export const api = {
     const answer = await apiFetch<SignInJournal>("/api/auth/journal");
     return {
       entries: Array.isArray(answer?.entries) ? answer.entries : [],
-      wrong_since_last_visit:
-        typeof answer?.wrong_since_last_visit === "number"
-          ? answer.wrong_since_last_visit
-          : 0,
+      wrong_since_last_visit: count(answer?.wrong_since_last_visit),
+      wrong_codes_since_last_visit: count(answer?.wrong_codes_since_last_visit),
     };
   },
 

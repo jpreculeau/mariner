@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, onSignedOut, type AuthState } from "@/lib/api";
+import { api, onSignedOut, type AuthState, type Tried } from "@/lib/api";
 import { AccessContext, type Access, type AccessState } from "@/lib/access";
 import { toast } from "@/components/ui/sonner";
 import { useI18n } from "@/lib/i18n";
@@ -82,7 +82,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   // What was said while the page was not open no longer holds once it
   // is: that Mariner is shut, say.
   // How many wrong passwords the sign-in under way was told of.
-  const tried = useRef(0);
+  const tried = useRef<Tried>({ passwords: 0, codes: 0 });
   const { t } = useI18n();
   // As a reference: the effect below must not run again, and close the
   // messages, when the language changes.
@@ -94,15 +94,24 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     stood.current = access;
     if (access === "in") {
       toast.dismiss();
-      const count = tried.current;
-      tried.current = 0;
-      if (count > 0) {
-        // After the messages above are closed, not before: somebody has
-        // been at the door while its owner was away.
+      const { passwords, codes } = tried.current;
+      tried.current = { passwords: 0, codes: 0 };
+      // After the messages above are closed, not before: somebody has
+      // been at the door while its owner was away.
+      if (codes > 0) {
         toast.error(
-          say.current(count === 1 ? "signIn.tried.one" : "signIn.tried.many", {
-            count: String(count),
-          }),
+          say.current(
+            codes === 1 ? "signIn.triedCodes.one" : "signIn.triedCodes.many",
+            { count: String(codes) },
+          ),
+        );
+      }
+      if (passwords > 0) {
+        toast.error(
+          say.current(
+            passwords === 1 ? "signIn.tried.one" : "signIn.tried.many",
+            { count: String(passwords) },
+          ),
         );
       }
     }
@@ -171,7 +180,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       codeSet,
       hostCommands,
       signIn: async (password, code) => {
-        tried.current = await api.signIn(password, code);
+        // Nothing, from a Mariner that does not say.
+        tried.current = (await api.signIn(password, code)) ?? {
+          passwords: 0,
+          codes: 0,
+        };
         await signedIn();
       },
       signOut: async () => {

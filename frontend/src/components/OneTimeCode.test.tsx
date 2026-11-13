@@ -185,6 +185,60 @@ describe("OneTimeCode", () => {
     ).toBeInTheDocument();
   });
 
+  it("asks for the password to be typed before sending nothing", async () => {
+    const start = vi.spyOn(api, "startCode");
+    const remove = vi.spyOn(api, "removeCode");
+    renderIt({ codeSet: true });
+    fireEvent.click(screen.getByRole("button", { name: "Replace the phone" }));
+    fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Type the password.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove the one-time code" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove it" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Type the password.",
+    );
+    expect(start).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("gives focus back to the button that was pressed", async () => {
+    renderIt({ codeSet: true });
+    const remove = () =>
+      screen.getByRole("button", { name: "Remove the one-time code" });
+    fireEvent.click(remove());
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(document.activeElement).toBe(remove()));
+  });
+
+  it("tells the page that something changed, for the journal to be read again", async () => {
+    vi.spyOn(api, "removeCode").mockResolvedValue();
+    const changed = vi.fn();
+    render(
+      <AccessContext.Provider
+        value={
+          {
+            fromInternet: false,
+            codeSet: true,
+            retry,
+          } as unknown as AccessState
+        }
+      >
+        <OneTimeCode onChanged={changed} />
+      </AccessContext.Provider>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove the one-time code" }),
+    );
+    type("Current password", "correct horse battery");
+    fireEvent.click(screen.getByRole("button", { name: "Remove it" }));
+    await waitFor(() => expect(changed).toHaveBeenCalled());
+  });
+
   it("is done away with by who gives the password", async () => {
     const remove = vi.spyOn(api, "removeCode").mockResolvedValue();
     renderIt({ codeSet: true });

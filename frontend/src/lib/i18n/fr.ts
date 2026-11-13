@@ -147,6 +147,13 @@ export const fr: Record<TextKey, string> = {
   "settings.code.replace.what":
     "Saisissez le mot de passe pour configurer le code sur un autre téléphone. Les codes du téléphone actuel cesseront de fonctionner une fois le nouveau confirmé.",
   "settings.code.continue": "Continuer",
+  "signIn.triedCodes.one":
+    "Le bon mot de passe a été envoyé {count} fois avec un mauvais code à usage unique depuis votre visite précédente\u202f: quelqu'un d'autre le connaît peut-être. Changez-le dans les réglages.",
+  "signIn.triedCodes.many":
+    "Le bon mot de passe a été envoyé {count} fois avec un mauvais code à usage unique depuis votre visite précédente\u202f: quelqu'un d'autre le connaît peut-être. Changez-le dans les réglages.",
+  "settings.code.password.missing": "Saisissez le mot de passe.",
+  "error.password_not_text":
+    "Ce mot de passe contient autre chose que du texte. Choisissez-en un autre.",
   "settings.password": "Mot de passe",
   "settings.password.current": "Mot de passe actuel",
   "settings.password.repeat": "Répéter le nouveau mot de passe",

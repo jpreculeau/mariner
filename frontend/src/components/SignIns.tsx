@@ -21,7 +21,9 @@ const KNOWN: Record<string, TextKey> = {
 export function SignIns() {
   const { t, lang } = useI18n();
   const { data, isError, isLoading } = useQuery({
-    queryKey: ["auth", "journal"],
+    // Not under the key of who is signed in: it goes with the rest when
+    // the page is signed out of.
+    queryKey: ["journal"],
     queryFn: () => api.journal(),
     // As it stood when the page was opened: asked again at each visit.
     staleTime: 0,
@@ -43,9 +45,17 @@ export function SignIns() {
     timeStyle: "short",
   });
   const tried = data.wrong_since_last_visit;
+  const codes = data.wrong_codes_since_last_visit;
 
   return (
     <div className="grid gap-4">
+      {codes > 0 && (
+        <p className="text-base font-medium leading-relaxed text-danger">
+          {t(codes === 1 ? "signIn.triedCodes.one" : "signIn.triedCodes.many", {
+            count: String(codes),
+          })}
+        </p>
+      )}
       {tried > 0 && (
         <p className="text-base font-medium leading-relaxed">
           {t(tried === 1 ? "journal.tried.one" : "journal.tried.many", {

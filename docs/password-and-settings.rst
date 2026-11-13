@@ -81,15 +81,17 @@ use the terminal, and set the code up on the new phone.
 Recent sign-ins
 ---------------
 
-**Settings**, **Recent sign-ins** lists the last fifty things that happened
-at the door: sign-ins, wrong passwords, a right password sent with a wrong code, the
+**Settings**, **Recent sign-ins** lists the latest things that happened at
+the door (up to fifty of each kind below): sign-ins, wrong passwords, a right password sent with a wrong code, the
 password or the one-time code being changed, sign-in being closed to the
 Internet. Wrong passwords sent one after the other from one place are one
 line, with how many; they are kept apart from the rest, so that a crowd of
 them does not push out the sign-in you are looking for. Each with when, and
 where from: the local network or the Internet, and the address. Above the
 list, and in a message when you sign in, Mariner says how many wrong
-passwords were sent between your last two visits. What was typed is never kept.
+passwords were sent between your last two visits (not counting your own
+slips just before signing in), and, apart, how many times the right password
+came with a wrong code: that one means somebody else knows the password. What was typed is never kept.
 
 A few wrong passwords from the Internet are the lot of anything reachable
 from there. Many of them, or one from the local network that is not yours,
@@ -230,6 +232,10 @@ Mariner runs under and no other account can read it. It holds:
   would have ended by themselves;
 - ``settings.json``: the settings changed from the page. Remove it to go
   back to ``config.toml`` alone;
+- ``one-time-code``: the secret of the one-time code, with the last code
+  that served and the count of wrong ones. Whoever reads it can make the
+  codes: it is as secret as the password is;
+- ``sign-ins``: the journal of sign-ins and attempts;
 - ``sdcp_history.json``: the prints shown to ChiTuBox as past tasks.
 
 Keep this directory when you move an installation; in Docker it is a volume.

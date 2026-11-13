@@ -143,6 +143,13 @@ export const en = {
   "settings.code.replace.what":
     "Type the password to set the code up on another phone. The codes of the phone in use will stop working once the new one is confirmed.",
   "settings.code.continue": "Continue",
+  "signIn.triedCodes.one":
+    "The right password was sent {count} time with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+  "signIn.triedCodes.many":
+    "The right password was sent {count} times with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+  "settings.code.password.missing": "Type the password.",
+  "error.password_not_text":
+    "This password holds what is not text. Choose another.",
   "settings.password": "Password",
   "settings.password.current": "Current password",
   "settings.password.repeat": "Repeat the new password",

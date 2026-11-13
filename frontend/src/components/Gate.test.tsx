@@ -1208,7 +1208,7 @@ describe("Gate", () => {
         password_set: true,
         signed_in: false,
       });
-      vi.spyOn(api, "signIn").mockResolvedValue(3);
+      vi.spyOn(api, "signIn").mockResolvedValue({ passwords: 3, codes: 0 });
       const said = vi.spyOn(toast, "error");
       renderGate();
       await screen.findByRole("heading", { name: "Sign in to Mariner" });
@@ -1221,12 +1221,31 @@ describe("Gate", () => {
       );
     });
 
+    it("says it plainly when the password itself is known to somebody", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+      });
+      vi.spyOn(api, "signIn").mockResolvedValue({ passwords: 0, codes: 10 });
+      const said = vi.spyOn(toast, "error");
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "correct horse battery");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await waitFor(() =>
+        expect(said).toHaveBeenCalledWith(
+          "The right password was sent 10 times with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+        ),
+      );
+      expect(said).toHaveBeenCalledTimes(1);
+    });
+
     it("says nothing of it when nobody did", async () => {
       vi.spyOn(api, "authState").mockResolvedValue({
         password_set: true,
         signed_in: false,
       });
-      vi.spyOn(api, "signIn").mockResolvedValue(0);
+      vi.spyOn(api, "signIn").mockResolvedValue({ passwords: 0, codes: 0 });
       const said = vi.spyOn(toast, "error");
       renderGate();
       await screen.findByRole("heading", { name: "Sign in to Mariner" });
@@ -1243,7 +1262,7 @@ describe("Gate", () => {
         password_set: true,
         signed_in: false,
       });
-      vi.spyOn(api, "signIn").mockResolvedValue(0);
+      vi.spyOn(api, "signIn").mockResolvedValue({ passwords: 0, codes: 0 });
       renderGate();
       await screen.findByRole("heading", { name: "Sign in to Mariner" });
       const asked = state.mock.calls.length;

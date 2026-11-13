@@ -13,7 +13,7 @@ import { useI18n } from "@/lib/i18n";
  * the Internet: set up with a phone, or done away with. From the local
  * network alone.
  */
-export function OneTimeCode() {
+export function OneTimeCode({ onChanged }: { onChanged?: () => void }) {
   const { fromInternet, codeSet, retry } = useAccess();
   const { t, lang } = useI18n();
   // What is being done: nothing, giving the password to replace the
@@ -30,7 +30,9 @@ export function OneTimeCode() {
   const said = useRef(0);
   const underWay = useRef(false);
   const field = useRef<HTMLInputElement>(null);
-  const first = useRef<HTMLButtonElement>(null);
+  // The button that opened the form under way: focus goes back to it.
+  const opener = useRef<"first" | "remove">("first");
+  const section = useRef<HTMLDivElement>(null);
   const began = useRef(false);
 
   // Focus goes to what comes next, once it is drawn; and back to where
@@ -42,7 +44,16 @@ export function OneTimeCode() {
       field.current?.focus();
     } else if (began.current) {
       began.current = false;
-      first.current?.focus();
+      // Found again by what it is: it was drawn anew.
+      // The first, where the one pressed is gone with the code.
+      (
+        section.current?.querySelector<HTMLElement>(
+          `[data-code-button="${opener.current}"]`,
+        ) ??
+        section.current?.querySelector<HTMLElement>(
+          '[data-code-button="first"]',
+        )
+      )?.focus();
     }
   }, [doing, key]);
 
@@ -72,8 +83,9 @@ export function OneTimeCode() {
     setKey(null);
     setTyped("");
     toast.success(words);
-    // The page asks again where it stands.
+    // The page asks again where it stands, and reads its journal again.
     retry();
+    onChanged?.();
   };
 
   const start = (current?: string) =>
@@ -108,15 +120,16 @@ export function OneTimeCode() {
   }
 
   return (
-    <div className="grid gap-4">
+    <div ref={section} className="grid gap-4">
       {status}
       {doing === "nothing" && (
         <div className="flex flex-wrap gap-2">
           <Button
-            ref={first}
+            data-code-button="first"
             variant="outline"
             className="h-auto min-h-10 whitespace-normal"
             onClick={() => {
+              opener.current = "first";
               if (!codeSet) {
                 start();
                 return;
@@ -134,7 +147,9 @@ export function OneTimeCode() {
             <Button
               variant="outline"
               className="h-auto min-h-10 whitespace-normal"
+              data-code-button="remove"
               onClick={() => {
+                opener.current = "remove";
                 setRefused(null);
                 setTyped("");
                 setDoing("removing");
@@ -227,6 +242,10 @@ export function OneTimeCode() {
           className="grid gap-4"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
+            if (!typed) {
+              missing(t("settings.code.password.missing"));
+              return;
+            }
             start(typed);
           }}
         >
@@ -269,6 +288,10 @@ export function OneTimeCode() {
           className="grid gap-4"
           onSubmit={(event: FormEvent) => {
             event.preventDefault();
+            if (!typed) {
+              missing(t("settings.code.password.missing"));
+              return;
+            }
             once(async () => {
               await api.removeCode(typed);
               done(t("settings.code.removed"));
