@@ -468,7 +468,7 @@ def is_signed_in() -> bool:
 def _sign_in(
     under: str,
     with_code: Optional[str] = None,
-    tried: Optional[Mapping[str, int]] = None,
+    tried: Optional[Mapping[str, Any]] = None,
 ) -> Response:
     """Sign this browser in *under* the password of that number.
 
@@ -499,6 +499,7 @@ def _sign_in(
         # What was tried since the visit before.
         answer["wrong_since_last_visit"] = tried["wrong_passwords"]
         answer["wrong_codes_since_last_visit"] = tried["wrong_codes"]
+        answer["wrong_since_last_visit_or_more"] = tried["or_more"]
     return jsonify(answer)
 
 
@@ -572,11 +573,14 @@ _WITH_CODE_AS = "code"
 _code_lock = threading.Lock()
 # The same, should it not be possible to keep it.
 _last_step_seen: Optional[int] = None
+# Which code that was: what served for one is nothing to the next.
+_last_step_seen_of: Optional[str] = None
 
 
 def forget_code_seen() -> None:
-    global _last_step_seen, _wrong_codes_seen
+    global _last_step_seen, _last_step_seen_of, _wrong_codes_seen
     _last_step_seen = None
+    _last_step_seen_of = None
     _wrong_codes_seen = None
 
 
@@ -601,8 +605,10 @@ def code_identity() -> Optional[str]:
     """What tells the code in force from the one before, or the one
     after; None when there is none. Says nothing of the secret."""
     secret = _secret_in_force(_code_record())
-    if secret is None:
-        return None
+    return None if secret is None else _identity_of(secret)
+
+
+def _identity_of(secret: str) -> str:
     return hashlib.sha256(b"mariner one-time code " + secret.encode()).hexdigest()[:16]
 
 
@@ -620,11 +626,13 @@ def _last_step(
     kept = record.get("last")
     now = time.time() if moment is None else moment
     to_come = int(now) // totp.PERIOD_SECS + 1
-    steps = [
-        step
-        for step in (kept, _last_step_seen)
-        if isinstance(step, int) and step <= to_come
-    ]
+    secret = _secret_in_force(record)
+    seen = (
+        _last_step_seen
+        if secret is not None and _identity_of(secret) == _last_step_seen_of
+        else None
+    )
+    steps = [step for step in (kept, seen) if isinstance(step, int) and step <= to_come]
     return max(steps) if steps else None
 
 
@@ -682,7 +690,7 @@ def start_code() -> str:
 
 def confirm_code(candidate: str, now: Optional[float] = None) -> bool:
     """Put the secret that was started in force, given a code of it."""
-    global _last_step_seen, _wrong_codes_seen
+    global _last_step_seen, _last_step_seen_of, _wrong_codes_seen
     moment = time.time() if now is None else now
     with _code_lock:
         record = _code_record()
@@ -697,6 +705,7 @@ def confirm_code(candidate: str, now: Optional[float] = None) -> bool:
             json.dumps({"secret": pending, "last": step}).encode("ascii"),
         )
         _last_step_seen = step
+        _last_step_seen_of = _identity_of(pending)
         # Another code: what was guessed at the one before is nothing to it.
         _wrong_codes_seen = None
     return True
@@ -720,13 +729,14 @@ def code_step(candidate: str, now: Optional[float] = None) -> Optional[int]:
 
 def use_code_step(step: int, now: Optional[float] = None) -> bool:
     """Have the code of *step* serve; False if it, or a later one, has."""
-    global _last_step_seen
+    global _last_step_seen, _last_step_seen_of
     with _code_lock:
         record = _code_record()
         last = _last_step(record, now)
         if _secret_in_force(record) is None or (last is not None and step <= last):
             return False
         _last_step_seen = step
+        _last_step_seen_of = _identity_of(str(_secret_in_force(record)))
         record["last"] = step
         try:
             state.write(totp.KEPT_AS, json.dumps(record).encode("ascii"))
@@ -1201,5 +1211,6 @@ def sign_ins() -> Response:
             "entries": journal.entries(),
             "wrong_since_last_visit": tried["wrong_passwords"],
             "wrong_codes_since_last_visit": tried["wrong_codes"],
+            "wrong_since_last_visit_or_more": tried["or_more"],
         }
     )

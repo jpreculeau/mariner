@@ -10,6 +10,8 @@ ExecStart=/usr/bin/mariner
 # restarted from its page after a change of settings.
 Restart=always
 RestartSec=3
+# Each connection and each file being sent is a file held open.
+LimitNOFILE=4096
 
 # Folders of its own: /var/lib/mariner for what must outlast a restart
 # (the key of sessions, the password's hash, settings changed from the

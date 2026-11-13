@@ -38,6 +38,11 @@ class ServiceUnitTest(TestCase):
         service = _service(UNITS[0])
         expect(service["Restart"]).to_equal("always")
 
+    def test_it_can_hold_more_files_open_than_a_crowd_makes_it(self) -> None:
+        # Each connection and each file being sent is one: at the usual
+        # ceiling of 1024, with none left, nobody else can come in.
+        expect(_service(UNITS[0])["LimitNOFILE"]).to_equal("4096")
+
     def test_what_it_writes_to_the_log_has_a_ceiling(self) -> None:
         # Any device of the network can have lines written.
         service = _service(UNITS[0])

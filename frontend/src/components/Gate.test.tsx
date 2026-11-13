@@ -1240,6 +1240,28 @@ describe("Gate", () => {
       expect(said).toHaveBeenCalledTimes(1);
     });
 
+    it("says that there were more than is remembered", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+      });
+      vi.spyOn(api, "signIn").mockResolvedValue({
+        passwords: 50,
+        codes: 0,
+        orMore: true,
+      });
+      const said = vi.spyOn(toast, "error");
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "correct horse battery");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await waitFor(() =>
+        expect(said).toHaveBeenCalledWith(
+          "50 wrong passwords or more were sent since your previous visit. See Settings, Recent sign-ins.",
+        ),
+      );
+    });
+
     it("says nothing of it when nobody did", async () => {
       vi.spyOn(api, "authState").mockResolvedValue({
         password_set: true,

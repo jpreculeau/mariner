@@ -94,7 +94,22 @@ class JournalTest(_WithState):
         journal.note("wrong_password", LOCAL, now=4.0)
         journal.note("signed_in", LOCAL, now=5.0)
         expect(journal.since_the_visit_before()).to_equal(
-            {"wrong_passwords": 1, "wrong_codes": 0}
+            {"wrong_passwords": 1, "wrong_codes": 0, "or_more": False}
+        )
+
+    def test_more_than_is_remembered_is_said_to_be_more(self) -> None:
+        # From as many addresses: only the latest are kept, and the count
+        # made of them is short of what was sent.
+        journal.note("signed_in", LOCAL, now=1.0)
+        for sent in range(journal.KEPT + 20):
+            journal.note(
+                "wrong_password",
+                f"203.0.{sent % 250}.{sent // 250 + 1}",
+                now=10.0 + sent,
+            )
+        journal.note("signed_in", LOCAL, now=5000.0)
+        expect(journal.since_the_visit_before()).to_equal(
+            {"wrong_passwords": journal.KEPT, "wrong_codes": 0, "or_more": True}
         )
 
     def test_wrong_codes_are_counted_for_what_they_are(self) -> None:
@@ -104,7 +119,7 @@ class JournalTest(_WithState):
         journal.note("wrong_password", INTERNET, now=8.0)
         journal.note("signed_in", LOCAL, now=9.0)
         expect(journal.since_the_visit_before()).to_equal(
-            {"wrong_passwords": 1, "wrong_codes": 3}
+            {"wrong_passwords": 1, "wrong_codes": 3, "or_more": False}
         )
 
     def test_the_count_adds_up_those_folded_into_one_line(self) -> None:
@@ -227,3 +242,4 @@ class WhatIsNotedTest(_WithClient):
         told = answer.get_json()
         expect(told["wrong_since_last_visit"]).to_equal(2)
         expect(told["wrong_codes_since_last_visit"]).to_equal(0)
+        expect(told["wrong_since_last_visit_or_more"]).to_equal(False)

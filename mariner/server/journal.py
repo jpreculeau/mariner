@@ -133,28 +133,40 @@ def note(what: str, address: object, now: Optional[float] = None) -> None:
                 )
 
 
+def entries_with_their_place() -> List[Dict[str, Any]]:
+    """What is remembered, the latest first, each with its place (``n``)."""
+    with _lock:
+        return [dict(entry) for entry in reversed(_all())]
+
+
 def entries() -> List[Dict[str, Any]]:
     """What is remembered, the latest first."""
-    with _lock:
-        return [
-            {name: value for name, value in entry.items() if name != "n"}
-            for entry in reversed(_all())
-        ]
+    return [
+        {name: value for name, value in entry.items() if name != "n"}
+        for entry in entries_with_their_place()
+    ]
 
 
-def since_the_visit_before() -> Dict[str, int]:
+def since_the_visit_before() -> Dict[str, Any]:
     """What was tried between the last sign-in and the one before it,
     while the owner was away: wrong passwords, and wrong one-time codes
     sent with the right password, which say that the password is known.
 
     Not what came from the same place just before that last sign-in: the
-    owner's own slips of the finger.
+    owner's own slips of the finger. ``or_more`` says that the wrong
+    passwords counted are all that is remembered, of more that were sent.
     """
+    with _lock:
+        _read()
+        full = len(_wrong) >= KEPT
+        oldest = _wrong[0].get("n", 0) if _wrong else None
+    reached_the_oldest = False
+    listed = entries_with_their_place()
     passwords = codes = 0
     within = False
     where: Optional[str] = None
     own_slips = True
-    for entry in entries():
+    for entry in listed:
         what = entry["what"]
         if what in ("signed_in", "password_chosen"):
             if within:
@@ -162,6 +174,8 @@ def since_the_visit_before() -> Dict[str, int]:
             within = True
             where = entry["from"]
             continue
+        if within and what == _WRONG and entry.get("n") == oldest:
+            reached_the_oldest = True
         if not within:
             continue
         if what not in (_WRONG, "wrong_code"):
@@ -173,7 +187,11 @@ def since_the_visit_before() -> Dict[str, int]:
             passwords += entry.get("count", 1)
         else:
             codes += entry.get("count", 1)
-    return {"wrong_passwords": passwords, "wrong_codes": codes}
+    return {
+        "wrong_passwords": passwords,
+        "wrong_codes": codes,
+        "or_more": full and reached_the_oldest,
+    }
 
 
 def wrong_since_the_visit_before() -> int:

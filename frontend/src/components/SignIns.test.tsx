@@ -120,6 +120,21 @@ describe("SignIns", () => {
     ).toBeInTheDocument();
   });
 
+  it("says that there were more than it remembers", async () => {
+    vi.spyOn(api, "journal").mockResolvedValue({
+      wrong_since_last_visit: 50,
+      wrong_codes_since_last_visit: 0,
+      wrong_since_last_visit_or_more: true,
+      entries: [],
+    });
+    renderIt();
+    expect(
+      await screen.findByText(
+        "50 wrong passwords or more were sent since your previous visit.",
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("says it in the singular for one", async () => {
     vi.spyOn(api, "journal").mockResolvedValue({
       wrong_since_last_visit: 1,

@@ -61,6 +61,20 @@ class CodeKeptTest(_WithState):
         expect(auth.code_is_set()).to_equal(True)
         expect(auth.check_code(after)).to_equal(False)
 
+    def test_a_code_set_up_from_a_terminal_serves_at_once(self) -> None:
+        # ``mariner set-code`` while Mariner runs: what is remembered of
+        # the last code of the old secret is nothing to the new one.
+        import json
+
+        old = _set_up()
+        expect(auth.check_code(_code(old, 30))).to_equal(True)
+        new = totp.new_secret()
+        step = int(time.time()) // totp.PERIOD_SECS - 5
+        state.write(
+            totp.KEPT_AS, json.dumps({"secret": new, "last": step}).encode("ascii")
+        )
+        expect(auth.check_code(_code(new))).to_equal(True)
+
     def test_another_takes_its_place_only_once_confirmed(self) -> None:
         old = _set_up()
         new = auth.start_code()
