@@ -138,7 +138,9 @@ def _is_allowed_name(name: str) -> bool:
 
 
 def _allowed_hosts() -> list:
-    return config.get_http_allowed_hosts()
+    # The name Mariner has on the Internet is one of its own.
+    public = config.get_public_name()
+    return config.get_http_allowed_hosts() + ([public] if public else [])
 
 
 def _site(address: str) -> Optional[Tuple[str, str, str]]:

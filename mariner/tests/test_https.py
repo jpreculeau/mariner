@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 from pyexpect import expect
 
-from mariner import server
+from mariner import config, server
+from mariner.server import https, origin
 from mariner.server.app import app
 
 
@@ -182,6 +183,49 @@ class PlainPortTest(TestCase):
             expect(
                 server.sessions.read(app, f"__Host-mariner_session={signed}", "")
             ).to_equal({"held": 1})
+
+
+class PublicNameTest(TestCase):
+    """The name Mariner is reached under from the Internet."""
+
+    def setUp(self) -> None:
+        # Whatever configuration other tests left read.
+        for name, value in (
+            ("get_http_allowed_hosts", []),
+            ("get_public_name", None),
+            ("get_public_port", 443),
+        ):
+            patcher = patch.object(config, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_it_is_one_of_the_names_mariner_answers_to(self) -> None:
+        headers = {"Host": "saturn.example.org"}
+        expect(origin.host_refusal(headers) is None).to_equal(False)
+        with patch.object(config, "get_public_name", return_value="saturn.example.org"):
+            expect(origin.host_refusal(headers)).to_equal(None)
+            expect(origin.host_refusal({"Host": "Saturn.Example.org:8443"})).to_equal(
+                None
+            )
+            expect(origin.host_refusal({"Host": "other.example.org"}) is None).to_equal(
+                False
+            )
+
+    def test_asked_for_in_the_clear_under_it_the_page_is_at_the_public_port(
+        self,
+    ) -> None:
+        # The router listens on 443 and passes it on to Mariner's 5443.
+        with patch.object(config, "get_public_name", return_value="saturn.example.org"):
+            expect(https.address("saturn.example.org", 5443)).to_equal(
+                "https://saturn.example.org"
+            )
+            expect(https.address("192.168.1.50:5000", 5443)).to_equal(
+                "https://192.168.1.50:5443"
+            )
+            with patch.object(config, "get_public_port", return_value=8443):
+                expect(https.address("saturn.example.org:80", 5443)).to_equal(
+                    "https://saturn.example.org:8443"
+                )
 
 
 class FromTheInternetTest(TestCase):

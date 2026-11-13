@@ -86,6 +86,11 @@ spool_directory = "/var/tmp"
 #not_local = ["192.168.1.1"]
 # Let who is signed in stop or restart the computer from the Internet.
 #host_commands = false
+# The name Mariner is reached under from the Internet: answered to besides
+# its address and local names.
+#public_name = "printer.example.org"
+# The port the router listens on for HTTPS, where it is not Mariner's own.
+#public_port = 443
 
 [state]
 # Directory in which Mariner keeps what must outlast a restart, for itself

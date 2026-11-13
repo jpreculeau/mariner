@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 
 import ipaddress
+import re
 import toml
 
 
@@ -197,6 +198,35 @@ def get_host_commands_from_internet() -> bool:
     return _internet().get("host_commands", False) is True
 
 
+_A_NAME = re.compile(r"(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}")
+DEFAULT_PUBLIC_PORT = 443
+
+
+def get_public_name() -> Optional[str]:
+    """The name Mariner is reached under from the Internet, if it has one.
+
+    ``public_name`` under ``[internet]``, as in ``printer.example.org``:
+    Mariner answers to it besides its address and local names.
+    """
+    given = _internet().get("public_name")
+    if not isinstance(given, str):
+        return None
+    name = given.strip().lower().rstrip(".")
+    return name if _A_NAME.fullmatch(name) else None
+
+
+def get_public_port() -> int:
+    """The port its page is reached at from the Internet, over HTTPS.
+
+    ``public_port`` under ``[internet]``: the port the router listens on,
+    where it is not the one it passes connections on to. 443 unless said.
+    """
+    given = _internet().get("public_port", DEFAULT_PUBLIC_PORT)
+    if isinstance(given, bool) or not isinstance(given, int):
+        return DEFAULT_PUBLIC_PORT
+    return given if 1 <= given <= 65535 else DEFAULT_PUBLIC_PORT
+
+
 def get_http_allowed_hosts() -> List[str]:
     """Names Mariner answers to besides its address and local names.
 
@@ -296,6 +326,23 @@ def ignored_settings() -> List[str]:
                     f"[internet] {name}: {one!r} is neither an address nor a "
                     "network (as in 192.168.1.0/24): it is passed over"
                 )
+    if "public_name" in _internet() and get_public_name() is None:
+        found.append(
+            f"[internet] public_name = {_internet()['public_name']!r} is not a "
+            "name (as in printer.example.org, without https:// or a port): "
+            "it is passed over"
+        )
+    if "public_port" in _internet():
+        given = _internet()["public_port"]
+        if (
+            isinstance(given, bool)
+            or not isinstance(given, int)
+            or not (1 <= given <= 65535)
+        ):
+            found.append(
+                f"[internet] public_port = {given!r} is not a port: "
+                f"{DEFAULT_PUBLIC_PORT} is used"
+            )
     if "host_commands" in _internet() and not isinstance(
         _internet()["host_commands"], bool
     ):

@@ -1,5 +1,6 @@
 """HTTPS spoken by the web server itself, over real connections."""
 
+import os
 import shutil
 import socket
 import ssl
@@ -455,8 +456,8 @@ class SecuredConnectionTest(TestCase):
         from mariner.server import load
 
         with patch.object(load, "STALLED_SECS", 1.0):
-            for _ in range(5):
-                deaf = self._connected()
+            readers = [self._connected() for _ in range(5)]
+            for deaf in readers:
                 deaf.sendall(b"GET /huge HTTP/1.1\r\nHost: localhost\r\n\r\n" * 4)
             time.sleep(0.5)
             other = self._connected()
@@ -465,6 +466,10 @@ class SecuredConnectionTest(TestCase):
             other.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             expect(self._answer(other).endswith(b"served 0")).to_equal(True)
             expect(time.monotonic() - started < 9).to_equal(True)
+            # Before the server is closed under what still serves them.
+            for deaf in readers:
+                deaf.close()
+            time.sleep(1.5)
 
 
 @skipUnless(shutil.which("openssl"), "needs the openssl command")
@@ -557,3 +562,112 @@ class ContextTest(TestCase):
         # Something to call, that gives nothing: with none, the system
         # asks on the terminal.
         expect(answer()).to_equal("")
+
+
+@skipUnless(shutil.which("openssl"), "needs the openssl command")
+class RenewedCertificateTest(TestCase):
+    """A certificate is renewed every other month or so, by a program of
+    its own: Mariner takes the new one without being restarted."""
+
+    def setUp(self) -> None:
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name)
+        self.certificate, self.key = _certificate(self.folder)
+        self.live = tls.context(self.certificate, self.key)
+        self.watched = tls.Watched(self.live, self.certificate, self.key)
+
+    def _renewed(self) -> Tuple[str, str]:
+        other = self.folder / "new"
+        other.mkdir(exist_ok=True)
+        return _certificate(other)
+
+    def _put(self, certificate: str, key: str) -> None:
+        # As the programs that renew do: each file replaced in one go.
+        for made, used in ((certificate, self.certificate), (key, self.key)):
+            scratch = used + ".new"
+            shutil.copyfile(made, scratch)
+            os.replace(scratch, used)
+
+    def _served(self) -> bytes:
+        """The certificate a client is shown by a server that uses ``live``."""
+        client = ssl.create_default_context()
+        client.check_hostname = False
+        client.verify_mode = ssl.CERT_NONE
+        to_server, to_client = ssl.MemoryBIO(), ssl.MemoryBIO()
+        server = self.live.wrap_bio(to_server, to_client, server_side=True)
+        asking = client.wrap_bio(to_client, to_server)
+        for _ in range(10):
+            for side in (asking, server):
+                try:
+                    side.do_handshake()
+                except ssl.SSLWantReadError:
+                    pass
+        shown = asking.getpeercert(binary_form=True)
+        assert shown is not None
+        return shown
+
+    def _der(self, certificate: str) -> bytes:
+        return ssl.PEM_cert_to_DER_cert(Path(certificate).read_text())
+
+    def test_nothing_changes_while_the_files_do_not(self) -> None:
+        with patch.object(self.live, "load_cert_chain") as loaded:
+            self.watched.look()
+            self.watched.look()
+        loaded.assert_not_called()
+
+    def test_a_renewed_certificate_is_taken_at_the_next_look(self) -> None:
+        new_certificate, new_key = self._renewed()
+        expect(self._served()).to_equal(self._der(self.certificate))
+        self._put(new_certificate, new_key)
+        with self.assertLogs("mariner.server.tls", level="INFO") as logged:
+            self.watched.look()
+        expect(self._served()).to_equal(self._der(new_certificate))
+        expect("renewed" in " ".join(logged.output)).to_equal(True)
+
+    def test_half_of_a_renewal_leaves_the_one_in_use(self) -> None:
+        # Seen between the two files: the certificate is new, its key is
+        # not yet.
+        new_certificate, new_key = self._renewed()
+        before = self._der(self.certificate)
+        shutil.copyfile(new_certificate, self.certificate)
+        with self.assertLogs("mariner.server.tls", level="ERROR"):
+            self.watched.look()
+        expect(self._served()).to_equal(before)
+        # Said once, not at every look.
+        with self.assertNoLogs("mariner.server.tls", level="ERROR"):
+            self.watched.look()
+        # And taken once whole.
+        shutil.copyfile(new_key, self.key)
+        self.watched.look()
+        expect(self._served()).to_equal(self._der(new_certificate))
+
+    def test_files_that_are_gone_leave_the_one_in_use(self) -> None:
+        before = self._der(self.certificate)
+        os.unlink(self.key)
+        with self.assertLogs("mariner.server.tls", level="ERROR"):
+            self.watched.look()
+        expect(self._served()).to_equal(before)
+
+    def test_the_server_looks_as_it_goes_round_its_connections(self) -> None:
+        looked = threading.Event()
+        with patch.object(tls.Watched, "look", side_effect=lambda: looked.set()):
+            server = early.create_guarded_server(
+                lambda environ, start_response: [],
+                host="127.0.0.1",
+                port=0,
+                cleanup_interval=1,
+                asyncore_loop_timeout=1,
+                tls=self.live,
+                tls_files=(self.certificate, self.key),
+            )
+            self.addCleanup(server.close)
+
+            def run() -> None:
+                try:
+                    server.run()
+                except OSError:
+                    pass
+
+            threading.Thread(target=run, daemon=True).start()
+            expect(looked.wait(5)).to_equal(True)

@@ -61,6 +61,32 @@ Signing in from the Internet
   stranger can keep you from signing in from outside for a while, never at
   home.
 
+Its name and its certificate
+----------------------------
+
+.. code-block:: toml
+
+   [internet]
+   public_name = "printer.example.org"
+   public_port = 443
+
+   [https]
+   certificate = "/etc/letsencrypt/live/printer.example.org/fullchain.pem"
+   key = "/etc/letsencrypt/live/printer.example.org/privkey.pem"
+
+- ``public_name`` is the name Mariner has on the Internet. Mariner answers
+  to it without it being listed under ``allowed_hosts``.
+- ``public_port`` is the port the router listens on, where it is not the
+  one it passes on to (443 outside, 5443 on the computer, say). Asked for
+  in the clear under its public name, the page is sent on to that port.
+- The certificate of a public name comes from an authority (Let's Encrypt
+  and the like) and is renewed every other month or so by a program of its
+  own. Mariner looks at the two files every few seconds and takes a renewed
+  certificate without being restarted: pages that are open stay open. A
+  pair that cannot be used (half written, a key that is not the
+  certificate's) is said in the log once, and the one in use is kept.
+  Mariner's account must be able to read both files.
+
 Under load
 ----------
 

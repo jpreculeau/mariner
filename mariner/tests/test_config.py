@@ -197,10 +197,42 @@ certificate = "/etc/ssl/printer.pem"
         expect(config.get_https_certificate()).to_equal(None)
         expect("[https] certificate" in said).to_equal(True)
 
+    def test_the_public_name_and_port_are_read(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[internet]
+public_name = "Saturn.Example.org."
+public_port = 8443
+            """,
+        )
+        expect(config.get_public_name()).to_equal("saturn.example.org")
+        expect(config.get_public_port()).to_equal(8443)
+        expect(config.ignored_settings()).to_equal([])
+
+    def test_a_public_name_or_port_that_is_none_is_passed_over_and_named(
+        self,
+    ) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[internet]
+public_name = "https://saturn.example.org/"
+public_port = 70000
+            """,
+        )
+        expect(config.get_public_name()).to_equal(None)
+        expect(config.get_public_port()).to_equal(443)
+        said = " ".join(config.ignored_settings())
+        expect("[internet] public_name" in said).to_equal(True)
+        expect("[internet] public_port" in said).to_equal(True)
+
     def test_nothing_is_said_of_the_internet_by_default(self) -> None:
         expect(config.get_local_networks()).to_equal([])
         expect(config.get_not_local()).to_equal([])
         expect(config.get_host_commands_from_internet()).to_equal(False)
+        expect(config.get_public_name()).to_equal(None)
+        expect(config.get_public_port()).to_equal(443)
 
     def test_can_say_what_is_local_and_what_is_not(self) -> None:
         self.fs.create_file(

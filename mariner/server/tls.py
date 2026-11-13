@@ -9,6 +9,7 @@ blocks.
 """
 
 import logging
+import os
 import re
 import ssl
 import threading
@@ -37,6 +38,51 @@ def context(certificate: str, key: str) -> ssl.SSLContext:
     # terminal nobody sits at.
     made.load_cert_chain(certificate, key, password=lambda: "")
     return made
+
+
+class Watched:
+    """A certificate and its key, taken anew when their files change.
+
+    A certificate is renewed every other month or so, by a program of its
+    own. ``look`` is called now and then by the thread that speaks TLS;
+    connections under way keep the certificate they began with.
+    """
+
+    def __init__(self, live: ssl.SSLContext, certificate: str, key: str) -> None:
+        self._live = live
+        self._files = (certificate, key)
+        self._in_use = self._stamp()
+        # What was last said to be unusable: said once.
+        self._refused: object = None
+
+    def _stamp(self) -> object:
+        try:
+            found = [os.stat(one) for one in self._files]
+        except OSError as error:
+            return str(error)
+        return [(one.st_mtime_ns, one.st_size, one.st_ino) for one in found]
+
+    def look(self) -> None:
+        stamp = self._stamp()
+        if stamp == self._in_use or stamp == self._refused:
+            return
+        try:
+            # Whole, and made for each other: looked at apart, so that
+            # what is in use is left alone by a pair that is not.
+            context(*self._files)
+            self._live.load_cert_chain(*self._files, password=lambda: "")
+        except (OSError, ssl.SSLError, ValueError) as error:
+            self._refused = stamp
+            logger.error(
+                "The certificate in %s or its key in %s changed and cannot "
+                "be used (%s): the one in use is kept",
+                *self._files,
+                error,
+            )
+            return
+        self._in_use = stamp
+        self._refused = None
+        logger.info("Took the renewed certificate in %s", self._files[0])
 
 
 # What is taken over of the web server's connection, and relied on.

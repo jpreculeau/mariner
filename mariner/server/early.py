@@ -31,7 +31,7 @@ import struct
 import tempfile
 import termios
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from waitress import create_server
 from waitress.channel import ClientDisconnected, HTTPChannel
@@ -279,7 +279,11 @@ class _Channel(HTTPChannel):
             while self.connected and (
                 exception or self.total_outbufs_len > self.adj.outbuf_high_watermark
             ):
-                self.server.pull_trigger()
+                try:
+                    self.server.pull_trigger()
+                except OSError:
+                    # The server is being closed under it.
+                    return
                 self.outbuf_lock.wait(min(1.0, load.STALLED_SECS))
                 if exception:
                     # The thread that closes has been told.
@@ -342,12 +346,15 @@ def create_guarded_server(
     application: Any,
     tls: Optional[Any] = None,
     tls_port: Optional[int] = None,
+    tls_files: Optional[Tuple[str, str]] = None,
     **settings: Any,
 ) -> BaseWSGIServer:
     """A web server for *application* that refuses before taking a body in.
 
     With *tls* (see ``mariner.server.tls.context``) it speaks HTTPS: on
     every port it listens on, or on *tls_port* alone when one is named.
+    With *tls_files*, the certificate and key *tls* was made of, they are
+    taken anew when they change.
     """
     # How often the connections are gone round: see ``_tidying``.
     settings.setdefault("cleanup_interval", 5)
@@ -359,6 +366,12 @@ def create_guarded_server(
         else [one for one in server.map.values() if isinstance(one, BaseWSGIServer)]
     )
     door = load.Door()
+    renewed: Optional[Callable[[], None]] = None
+    if tls is not None and tls_files is not None:
+        from mariner.server.tls import Watched
+
+        # Its files are looked at as the connections are gone round.
+        renewed = Watched(tls, *tls_files).look
     for one in listening:
         channels: Any = _Channel
         # Named as a number or, listening on several, as text.
@@ -369,7 +382,9 @@ def create_guarded_server(
 
             channels = secured(_Channel, tls)
         one.channel_class = _admitting(channels, door, listening)
-        one.maintenance = _tidying(one, one.maintenance)
+        one.maintenance = _tidying(one, one.maintenance, renewed)
+        # Once a round, whatever the number of ports.
+        renewed = None
     return server
 
 
@@ -419,13 +434,19 @@ def _say_turned_away(address: object) -> None:
     _turned_away["said_at"] = now
 
 
-def _tidying(server: BaseWSGIServer, usual: Callable[[float], None]) -> Any:
+def _tidying(
+    server: BaseWSGIServer,
+    usual: Callable[[float], None],
+    also: Optional[Callable[[], None]] = None,
+) -> Any:
     """The web server's round of its connections, and Mariner's after it:
     those whose reader is gone, and those of the Internet that ask nothing
     (see ``mariner.server.load``). Run by the thread that closes."""
 
     def maintenance(now: float) -> None:
         usual(now)
+        if also is not None:
+            also()
         for channel in list(server.active_channels.values()):
             address = channel.addr[0] if isinstance(channel.addr, tuple) else None
             if getattr(channel, "_gone", False) or (

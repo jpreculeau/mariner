@@ -209,6 +209,8 @@ def _listening() -> Dict[str, Any]:
         "listen": f"{at}:{port} {at}:{secured_port}",
         "tls": tls.context(*pair),
         "tls_port": secured_port,
+        # Renewed by a program of its own: taken without a restart.
+        "tls_files": pair,
     }
 
 

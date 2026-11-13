@@ -10,6 +10,7 @@ read it.
 
 from typing import Dict, Optional
 
+from mariner import config
 from mariner.server import origin
 
 # Where slicers send and fetch: see mariner.server.providers.
@@ -26,6 +27,10 @@ def address(host: str, port: int) -> Optional[str]:
     if parts is None or not parts[0]:
         return None
     name = parts[0]
+    if name.lower().rstrip(".") == config.get_public_name():
+        # Reached from the Internet: at the port the router listens on,
+        # which is not always the one it passes connections on to.
+        port = config.get_public_port()
     if ":" in name:
         name = f"[{name}]"
     return f"https://{name}" + ("" if port == _USUAL_PORT else f":{port}")
