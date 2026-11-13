@@ -255,13 +255,14 @@ def main() -> None:
     )
 
     # Asked for before a body is taken in, not once it has been stored.
-    early.password_refusal = lambda method, path, headers: auth.refusal(
+    early.password_refusal = lambda method, path, headers, peer: auth.refusal(
         path,
         sessions.read(
             flask_app, headers.get("Cookie", ""), headers.get(auth.KEY_HEADER, "")
         ),
         headers.get(auth.KEY_HEADER, ""),
         method,
+        peer,
     )
 
     for ignored in config.ignored_settings() + origin.unusable_entries():

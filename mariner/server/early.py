@@ -47,11 +47,14 @@ KEPT_FREE_BYTES = 64 * 1024 * 1024
 # Where a file is sent: the only requests with a body of any size.
 UPLOAD_PREFIXES = ("/api/upload_file", "/uvtools/upload/")
 
-# Why a request (its method, path and headers) is not answered until
-# its sender signs in; None if it is. Set by whoever starts the server:
-# this module knows nothing of passwords.
+# Why a request (its method, path and headers, and the address it came
+# from) is not answered until its sender signs in; None if it is. Set by
+# whoever starts the server: this module knows nothing of passwords.
 password_refusal: Optional[
-    Callable[[str, str, Dict[str, str]], Optional[Dict[str, str]]]
+    Callable[
+        [str, str, Dict[str, str], Optional[str]],
+        Optional[Dict[str, str]],
+    ]
 ] = None
 # Why a request (its path and headers) that came in the clear is not
 # answered there; None if it is. Set by whoever starts the server, when
@@ -181,7 +184,9 @@ class _Parser(HTTPRequestParser):
                 self._refuse(403, in_the_clear)
                 return
         if password_refusal is not None:
-            not_signed_in = password_refusal(self.command, self.path, headers)
+            not_signed_in = password_refusal(
+                self.command, self.path, headers, self.peer
+            )
             if not_signed_in is not None:
                 # Not written to the log: it is what a page left open
                 # past its session sends, and says nothing of an attack.

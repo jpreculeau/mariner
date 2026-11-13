@@ -114,11 +114,12 @@ class StartupTest(TestCase):
                     "POST",
                     "/api/upload_file",
                     {"Cookie": "a=b", "X-Mariner-Key": "the key"},
+                    "203.0.113.5",
                 )
         self.assertEqual(answer, {"code": "x"})
         read.assert_called_once_with(server.flask_app, "a=b", "the key")
         refusal.assert_called_once_with(
-            "/api/upload_file", {"held": 1}, "the key", "POST"
+            "/api/upload_file", {"held": 1}, "the key", "POST", "203.0.113.5"
         )
 
     def test_a_password_that_is_lost_is_looked_for_on_the_boot_drive(self) -> None:

@@ -207,6 +207,10 @@ export const fr: Record<TextKey, string> = {
   "error.wrong_password": "Ce n'est pas le mot de passe.",
   "error.too_many_attempts":
     "Trop de mots de passe erronés. Réessayez dans {seconds}\u00a0s.",
+  "error.code_not_set":
+    "Depuis Internet, la connexion demande un code à usage unique en plus du mot de passe, et aucun n'est configuré. Configurez-le depuis le réseau local, dans les réglages de Mariner.",
+  "error.wrong_code":
+    "Ce n'est pas le code du moment. Vérifiez que le téléphone a bien pris la clé et que son horloge est à l'heure.",
   "error.sign_in_closed":
     "Trop de mots de passe erronés ont été envoyés depuis Internet. La connexion depuis Internet est fermée pendant {minutes}\u00a0min\u202f; elle reste possible depuis le réseau local.",
   "error.password_too_common":

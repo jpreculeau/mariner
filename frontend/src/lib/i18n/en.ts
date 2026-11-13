@@ -216,6 +216,10 @@ export const en = {
   "error.wrong_password": "This is not the password.",
   "error.too_many_attempts":
     "Too many wrong passwords. Try again in {seconds} s.",
+  "error.code_not_set":
+    "Signing in from the Internet takes a one-time code besides the password, and none is set up. Set it up from the local network, in Mariner's settings.",
+  "error.wrong_code":
+    "This is not the code of the moment. Check that the phone took the key in, and that its clock is right.",
   "error.sign_in_closed":
     "Too many wrong passwords were sent from the Internet. Signing in from there is closed for {minutes} min; it works from the local network.",
   "error.password_too_common":

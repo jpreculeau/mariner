@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -9,7 +10,7 @@ from unittest.mock import patch
 
 from pyexpect import expect
 
-from mariner import passwords
+from mariner import passwords, totp
 from mariner.server import app as application, auth, state
 
 PASSWORD = "correct horse battery"
@@ -289,7 +290,14 @@ class _WithClient(_WithState):
 
 class FirstVisitTest(_WithClient):
     def test_the_page_is_told_that_a_password_is_to_be_chosen(self) -> None:
-        expect(self.state_of()).to_equal({"password_set": False, "signed_in": False})
+        expect(self.state_of()).to_equal(
+            {
+                "password_set": False,
+                "signed_in": False,
+                "from_internet": False,
+                "code_set": False,
+            }
+        )
 
     def test_nothing_else_is_answered_until_one_is(self) -> None:
         for path in ("/api/print_status", "/api/list_files", "/api/settings"):
@@ -302,7 +310,7 @@ class FirstVisitTest(_WithClient):
     def test_choosing_one_signs_in(self) -> None:
         response = self.post("/api/auth/setup", password=PASSWORD)
         expect(response.status_code).to_equal(200)
-        expect(self.state_of()).to_equal({"password_set": True, "signed_in": True})
+        expect(self.state_of()["signed_in"]).to_equal(True)
         expect(auth.check_password(PASSWORD)).to_equal(True)
 
     def test_signing_in_when_there_is_none_says_that_one_is_to_be_chosen(
@@ -503,7 +511,7 @@ class SignInTest(_WithClient):
     def test_the_page_itself_is_still_served(self) -> None:
         # It is what asks for the password. The token it needs too.
         expect(self.client.get("/api/csrf_token").status_code).to_equal(200)
-        expect(self.state_of()).to_equal({"password_set": True, "signed_in": False})
+        expect(self.state_of()["signed_in"]).to_equal(False)
 
     def test_the_right_password_signs_in(self) -> None:
         response = self.post("/api/auth/login", password=PASSWORD)
@@ -758,7 +766,14 @@ class ChangeTest(_WithClient):
 
     def test_clearing_the_password_ends_every_session(self) -> None:
         auth.clear_password()
-        expect(self.state_of()).to_equal({"password_set": False, "signed_in": False})
+        expect(self.state_of()).to_equal(
+            {
+                "password_set": False,
+                "signed_in": False,
+                "from_internet": False,
+                "code_set": False,
+            }
+        )
         # And one chosen anew does not bring them back.
         auth.set_password(PASSWORD)
         expect(self.state_of()["signed_in"]).to_equal(False)
@@ -1063,7 +1078,7 @@ class OnlyTheCookieTest(_WithClient):
         # it has forgotten its key.
         self.post("/api/auth/logout")
         stranger = self.application.test_client()
-        stranger.environ_base["REMOTE_ADDR"] = "192.0.2.99"
+        stranger.environ_base["REMOTE_ADDR"] = "192.168.2.99"
         for _ in range(6):
             stranger.post("/api/auth/login", json={"password": "not the one"})
         expect(
@@ -1233,8 +1248,15 @@ class FromTheInternetTest(_WithClient):
         with auth._attempts_lock:
             auth._attempts.clear()
 
+    def _with_code(self) -> str:
+        # Signing in from the Internet takes one: see test_auth_code.
+        secret = auth.start_code()
+        auth.confirm_code(totp.code_at(secret, time.time()) or "")
+        return totp.code_at(secret, time.time() + 30) or ""
+
     def test_many_wrong_ones_from_all_over_close_it_to_the_internet(self) -> None:
         auth.set_password(PASSWORD)
+        self._with_code()
         for sent in range(auth.INTERNET_FAILURES_AN_HOUR):
             response = self._from(f"203.0.{sent}.5").post(
                 "/api/auth/login", json={"password": "not the one"}
@@ -1252,6 +1274,7 @@ class FromTheInternetTest(_WithClient):
 
     def test_which_leaves_the_local_network_as_it_was(self) -> None:
         auth.set_password(PASSWORD)
+        self._with_code()
         for sent in range(auth.INTERNET_FAILURES_AN_HOUR + 5):
             self._from(f"203.0.{sent}.5").post(
                 "/api/auth/login", json={"password": "not the one"}
@@ -1264,22 +1287,24 @@ class FromTheInternetTest(_WithClient):
 
     def test_wrong_ones_from_the_local_network_do_not_close_it(self) -> None:
         auth.set_password(PASSWORD)
+        code = self._with_code()
         for sent in range(auth.INTERNET_FAILURES_AN_HOUR + 5):
             self._from(f"192.168.{sent}.5").post(
                 "/api/auth/login", json={"password": "not the one"}
             )
             self._later()
         response = self._from("203.0.113.5").post(
-            "/api/auth/login", json={"password": PASSWORD}
+            "/api/auth/login", json={"password": PASSWORD, "code": code}
         )
         expect(response.status_code).to_equal(200)
 
     def test_one_address_made_to_wait_does_not_use_the_ceiling_up(self) -> None:
         auth.set_password(PASSWORD)
+        code = self._with_code()
         hammering = self._from("203.0.113.5")
         for _ in range(auth.INTERNET_FAILURES_AN_HOUR * 2):
             hammering.post("/api/auth/login", json={"password": "not the one"})
         response = self._from("198.51.100.9").post(
-            "/api/auth/login", json={"password": PASSWORD}
+            "/api/auth/login", json={"password": PASSWORD, "code": code}
         )
         expect(response.status_code).to_equal(200)

@@ -33,6 +33,20 @@ Signing in from the Internet
 - **The password is not chosen from there.** On a Mariner that has none
   yet, a visitor from the Internet is refused (``local_network_only``):
   choose it from the local network, or with ``sudo mariner set-password``.
+- **A one-time code is asked besides the password.** Six digits that an
+  application of the phone gives and that change every half minute (any
+  application that speaks TOTP: Aegis, FreeOTP, Google Authenticator…). A
+  password that was guessed, or read somewhere, opens nothing without the
+  phone. Until a code is set up, nobody signs in from the Internet
+  (``403`` ``code_not_set``). It is set up, and done away with, from the
+  local network alone, by who is signed in. A code serves once. Sent to
+  ``/api/auth/login`` as ``code``, beside ``password``; which of the two
+  was wrong is not told.
+- **Signed in at home is not signed in outside.** On the local network the
+  password is enough; a session opened that way is asked to sign in again,
+  with the code, once it comes from the Internet (a phone that leaves the
+  house, a cookie that was copied). One opened with the code holds
+  everywhere.
 - **Wrong passwords from the Internet are counted together**, whatever
   addresses they come from. Past 20 within the hour, signing in from the
   Internet is closed until the oldest is an hour old (``429``

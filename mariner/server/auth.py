@@ -32,7 +32,7 @@ from flask import (
 )
 from flask_wtf.csrf import generate_csrf
 
-from mariner import config, passwords
+from mariner import config, passwords, totp
 from mariner.passwords import PasswordNotAllowed  # noqa: F401
 from mariner.server import provenance, sessions, state
 
@@ -235,7 +235,7 @@ def forget_attempts() -> None:
     global _closed_said_at
     with _attempts_lock:
         _attempts.clear()
-        _from_internet.clear()
+        _internet_attempts.clear()
     _closed_said_at = 0.0
 
 
@@ -247,7 +247,7 @@ def forget_attempts() -> None:
 INTERNET_FAILURES_AN_HOUR = 20
 _HOUR_SECS = 3600
 # When each was looked at.
-_from_internet: List[float] = []
+_internet_attempts: List[float] = []
 
 
 def claim_internet_attempt(now: Optional[float] = None) -> int:
@@ -258,20 +258,21 @@ def claim_internet_attempt(now: Optional[float] = None) -> int:
     """
     moment = time.monotonic() if now is None else now
     with _attempts_lock:
-        _from_internet[:] = [
-            sent for sent in _from_internet if sent + _HOUR_SECS > moment
+        _internet_attempts[:] = [
+            sent for sent in _internet_attempts if sent + _HOUR_SECS > moment
         ]
-        if len(_from_internet) >= INTERNET_FAILURES_AN_HOUR:
-            return max(1, math.ceil(min(_from_internet) + _HOUR_SECS - moment))
-        _from_internet.append(moment)
+        if len(_internet_attempts) >= INTERNET_FAILURES_AN_HOUR:
+            oldest = min(_internet_attempts)
+            return max(1, math.ceil(oldest + _HOUR_SECS - moment))
+        _internet_attempts.append(moment)
         return 0
 
 
 def note_internet_success(claimed_at: float) -> None:
     """Take back the attempt claimed at *claimed_at*: it was not a wrong one."""
     with _attempts_lock:
-        if claimed_at in _from_internet:
-            _from_internet.remove(claimed_at)
+        if claimed_at in _internet_attempts:
+            _internet_attempts.remove(claimed_at)
 
 
 def claim_attempt(count: str, now: Optional[float] = None) -> int:
@@ -422,19 +423,30 @@ def _hash_of(key: str) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-def let_in(held: Mapping[str, Any], key: str) -> bool:
-    """Whether a session holding *held*, sent with *key*, is signed in."""
+def let_in(held: Mapping[str, Any], key: str, from_internet: bool = False) -> bool:
+    """Whether a session holding *held*, sent with *key*, is signed in.
+
+    *from_internet*: only one that signed in with the one-time code. A
+    phone signed in at home with the password alone is asked again once
+    it has left the house, and so is whoever copied its cookie.
+    """
     if not signed_in_with(held):
+        return False
+    if from_internet and held.get(_WITH_CODE_AS) is not True:
         return False
     expected = held.get(_KEY_AS)
     return isinstance(expected, str) and hmac.compare_digest(_hash_of(key), expected)
 
 
+def _from_internet() -> bool:
+    return not provenance.is_local(request.remote_addr)
+
+
 def is_signed_in() -> bool:
-    return let_in(session, request.headers.get(KEY_HEADER, ""))
+    return let_in(session, request.headers.get(KEY_HEADER, ""), _from_internet())
 
 
-def _sign_in(under: str) -> Response:
+def _sign_in(under: str, with_code: bool = False) -> Response:
     """Sign this browser in *under* the password of that number.
 
     The answer carries the key of the page, and a token for the new
@@ -451,6 +463,8 @@ def _sign_in(under: str) -> Response:
     session[_SIGNED_IN_AS] = under
     session[_SESSION_AS] = secrets.token_hex(8)
     session[_KEY_AS] = _hash_of(key)
+    if with_code:
+        session[_WITH_CODE_AS] = True
     session.permanent = True
     return jsonify({"success": True, "csrf_token": generate_csrf(), "page_key": key})
 
@@ -473,10 +487,14 @@ _OPEN_PREFIXES = ("/api/auth/",)
 
 
 def refusal(
-    path: str, held: Mapping[str, Any], key: str = "", method: str = "GET"
+    path: str,
+    held: Mapping[str, Any],
+    key: str = "",
+    method: str = "GET",
+    address: Optional[str] = None,
 ) -> Optional[Dict[str, str]]:
     """Why a request for *path* is not answered to who holds *held* and
-    sent *key*.
+    sent *key* from *address*.
 
     None when it is: not one of the page's own addresses, one that signs
     in, or a session that is signed in.
@@ -487,10 +505,12 @@ def refusal(
         return None
     if out_of_reach():
         return _unavailable()
-    if let_in(held, key):
+    from_internet = address is not None and not provenance.is_local(address)
+    if let_in(held, key, from_internet):
         return None
     if (method, path) in _WITHOUT_KEY and signed_in_with(held):
-        return None
+        if not from_internet or held.get(_WITH_CODE_AS) is True:
+            return None
     if not has_password():
         return {
             "code": "password_not_set",
@@ -508,6 +528,114 @@ def refusal(
 def status_of(refused: Mapping[str, str]) -> int:
     """The status a refusal is answered with."""
     return 503 if refused.get("code") == "state_unavailable" else 401
+
+
+# -- the one-time code -------------------------------------------------------
+
+# Asked, besides the password, of who signs in from the Internet (see
+# mariner.totp). Kept with the last half minute a code served for: none
+# opens anything twice.
+_WITH_CODE_AS = "code"
+_code_lock = threading.Lock()
+# The same, should it not be possible to keep it.
+_last_step_seen: Optional[int] = None
+
+
+def forget_code_seen() -> None:
+    global _last_step_seen
+    _last_step_seen = None
+
+
+def _code_record() -> Dict[str, Any]:
+    try:
+        record = json.loads(state.read(totp.KEPT_AS) or b"")
+    except ValueError:
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def _secret_in_force(record: Mapping[str, Any]) -> Optional[str]:
+    secret = record.get("secret")
+    return secret if isinstance(secret, str) and secret else None
+
+
+def code_is_set() -> bool:
+    return _secret_in_force(_code_record()) is not None
+
+
+def _last_step(record: Mapping[str, Any]) -> Optional[int]:
+    kept = record.get("last")
+    steps = [step for step in (kept, _last_step_seen) if isinstance(step, int)]
+    return max(steps) if steps else None
+
+
+def start_code() -> str:
+    """Make a secret for a phone to take in; in force once confirmed."""
+    secret = totp.new_secret()
+    with _code_lock:
+        record = _code_record()
+        record["pending"] = secret
+        state.write(totp.KEPT_AS, json.dumps(record).encode("ascii"))
+    return secret
+
+
+def confirm_code(candidate: str, now: Optional[float] = None) -> bool:
+    """Put the secret that was started in force, given a code of it."""
+    global _last_step_seen
+    moment = time.time() if now is None else now
+    with _code_lock:
+        record = _code_record()
+        pending = record.get("pending")
+        if not isinstance(pending, str):
+            return False
+        step = totp.step_of(pending, candidate, moment)
+        if step is None:
+            return False
+        state.write(
+            totp.KEPT_AS,
+            json.dumps({"secret": pending, "last": step}).encode("ascii"),
+        )
+        _last_step_seen = step
+    return True
+
+
+def remove_code() -> None:
+    with _code_lock:
+        state.remove(totp.KEPT_AS)
+    forget_code_seen()
+
+
+def code_step(candidate: str, now: Optional[float] = None) -> Optional[int]:
+    """Which half minute *candidate* is the code of, if it can still serve."""
+    moment = time.time() if now is None else now
+    record = _code_record()
+    secret = _secret_in_force(record)
+    if secret is None:
+        return None
+    return totp.step_of(secret, candidate, moment, after=_last_step(record))
+
+
+def use_code_step(step: int) -> bool:
+    """Have the code of *step* serve; False if it, or a later one, has."""
+    global _last_step_seen
+    with _code_lock:
+        record = _code_record()
+        last = _last_step(record)
+        if _secret_in_force(record) is None or (last is not None and step <= last):
+            return False
+        _last_step_seen = step
+        record["last"] = step
+        try:
+            state.write(totp.KEPT_AS, json.dumps(record).encode("ascii"))
+        except OSError as error:
+            # Held in memory until the next start.
+            logger.warning("The code that served could not be kept (%s)", error)
+    return True
+
+
+def check_code(candidate: str, now: Optional[float] = None) -> bool:
+    step = code_step(candidate, now)
+    return step is not None and use_code_step(step)
 
 
 # -- addresses -------------------------------------------------------------
@@ -578,7 +706,15 @@ def auth_state() -> Response:
         # The month starts again here: when the page is opened, not with
         # every answer (see SESSION_REFRESH_EACH_REQUEST).
         session.modified = True
-    return jsonify({"password_set": has_password(), "signed_in": signed_in})
+    return jsonify(
+        {
+            "password_set": has_password(),
+            "signed_in": signed_in,
+            # For the page to ask for the code, or say that there is none.
+            "from_internet": _from_internet(),
+            "code_set": code_is_set(),
+        }
+    )
 
 
 def _shut() -> Optional[Response]:
@@ -686,8 +822,18 @@ def login() -> Response:
         # the page offers to choose one.
         body = refusal("/api/auth-login", session) or {}
         return make_response(jsonify(body), status_of(body))
-    from_internet = not provenance.is_local(request.remote_addr)
+    from_internet = _from_internet()
     claimed_at = time.monotonic()
+    if from_internet and not code_is_set():
+        # Before the password is looked at: nothing is told of it.
+        return _refuse(
+            "code_not_set",
+            "No One-Time Code Set Up",
+            "Signing in from the Internet takes a one-time code besides the "
+            "password, and none is set up. Set it up from the local network, "
+            "in Mariner's settings.",
+            403,
+        )
     if from_internet:
         closed_for = claim_internet_attempt(claimed_at)
         if closed_for:
@@ -700,15 +846,27 @@ def login() -> Response:
         note_internet_success(claimed_at)
         return _wait_answer(wait)
     current = generation()
-    if current is None or not check_password(given[0]):
+    right = current is not None and check_password(given[0])
+    if from_internet:
+        # Both are looked at whichever is wrong, and which one was is not
+        # told. The code serves only once the password was right.
+        body = request.get_json(silent=True)
+        code = body.get("code") if isinstance(body, dict) else None
+        step = code_step(code if isinstance(code, str) else "")
+        right = right and step is not None and use_code_step(step)
+    if not right or current is None:
         logger.warning("Wrong password from %s", request.remote_addr)
         return _refuse(
-            "wrong_password", "Wrong Password", "This is not the password.", 401
+            "wrong_password",
+            "Wrong Password",
+            "This is not the password"
+            + (", or not the code of the moment." if from_internet else "."),
+            401,
         )
     note_success(count)
     note_internet_success(claimed_at)
     _use_the_key_that_is_kept()
-    return _sign_in(current)
+    return _sign_in(current, with_code=from_internet)
 
 
 @auth_api.route("/logout", methods=["POST"])
@@ -772,3 +930,86 @@ def _rank(held: Mapping[str, Any], key: str) -> int:
 # Among the cookies a request carries, the session that goes with the
 # key comes first, then one that is signed in.
 sessions.rank = _rank
+
+
+def _for_the_code() -> Optional[Response]:
+    """Why the one-time code is not set up by this request; None if it is."""
+    shut = _shut()
+    if shut is not None:
+        return shut
+    if not is_signed_in():
+        body = refusal("/api/auth-code", session) or {}
+        return make_response(jsonify(body), status_of(body))
+    if _from_internet():
+        # Else whoever got in from outside could put a phone of theirs in
+        # the place of the owner's.
+        return _refuse(
+            "local_network_only",
+            "Local Network Only",
+            "The one-time code is set up from the local network, not from "
+            "the Internet.",
+            403,
+        )
+    return None
+
+
+@auth_api.route("/code/start", methods=["POST"])
+def code_start() -> Response:
+    refused = _for_the_code()
+    if refused is not None:
+        return refused
+    try:
+        secret = start_code()
+    except OSError as error:
+        return _not_kept(error)
+    name = config.get_printer_display_name() or "Mariner"
+    return jsonify({"secret": secret, "uri": totp.uri(secret, name)})
+
+
+@auth_api.route("/code/confirm", methods=["POST"])
+def code_confirm() -> Response:
+    refused = _for_the_code()
+    if refused is not None:
+        return refused
+    given = _given("code")
+    try:
+        confirmed = given is not None and confirm_code(given[0])
+    except OSError as error:
+        return _not_kept(error)
+    if not confirmed:
+        return _refuse(
+            "wrong_code",
+            "Wrong Code",
+            "This is not the code of the moment. Check that the phone took "
+            "the key in, and that its clock is right.",
+            400,
+        )
+    logger.warning("A one-time code was set up from %s", request.remote_addr)
+    return jsonify({"success": True})
+
+
+@auth_api.route("/code/remove", methods=["POST"])
+def code_remove() -> Response:
+    refused = _for_the_code()
+    if refused is not None:
+        return refused
+    given = _given("current")
+    if given is None:
+        return _not_a_password()
+    wait = claim_attempt("change")
+    if wait:
+        return _wait_answer(wait)
+    if not check_password(given[0]):
+        return _refuse(
+            "wrong_password",
+            "Wrong Password",
+            "This is not the password in place.",
+            401,
+        )
+    note_success("change")
+    try:
+        remove_code()
+    except OSError as error:
+        return _not_kept(error)
+    logger.warning("The one-time code was removed from %s", request.remote_addr)
+    return jsonify({"success": True})

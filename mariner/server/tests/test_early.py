@@ -121,7 +121,9 @@ class EarlyRefusalTest(TestCase):
         expect(self.called).to_equal([])
 
     def _asking_for_the_password(self) -> None:
-        def unless_signed_in(method: str, path: str, headers: Dict[str, str]) -> Any:
+        def unless_signed_in(
+            method: str, path: str, headers: Dict[str, str], peer: Any
+        ) -> Any:
             cookies = headers.get("Cookie", "")
             if path.startswith("/api/") and "signed-in" not in cookies:
                 return {"code": "login_required"}
@@ -185,7 +187,7 @@ class EarlyRefusalTest(TestCase):
         patcher = patch.object(
             early,
             "password_refusal",
-            lambda method, path, headers: {"code": "state_unavailable"},
+            lambda method, path, headers, peer: {"code": "state_unavailable"},
         )
         patcher.start()
         self.addCleanup(patcher.stop)

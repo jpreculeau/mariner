@@ -252,6 +252,7 @@ def ask_for_the_password() -> Optional[Tuple[Response, int]]:
         session,
         request.headers.get(auth.KEY_HEADER, ""),
         request.method,
+        request.remote_addr,
     )
     if refused is None:
         return None
