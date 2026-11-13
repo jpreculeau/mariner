@@ -132,9 +132,14 @@ def _too_large_body() -> Dict[str, str]:
 class _Parser(HTTPRequestParser):
     # Whose request this is, for the log. Set by the channel.
     peer: Optional[str] = None
+    # Whether it came over TLS. Set by the channel.
+    secured: bool = False
 
     def parse_header(self, header_plus: bytes) -> None:
         super().parse_header(header_plus)
+        if self.secured:
+            # What the application is told the request came by.
+            self.url_scheme = "https"
         if (
             self.error is not None
             or self.content_length > self.adj.max_request_body_size
@@ -219,8 +224,17 @@ class _Channel(HTTPChannel):
         super().send_continue()
 
 
-def create_guarded_server(application: Any, **settings: Any) -> BaseWSGIServer:
-    """A web server for *application* that refuses before taking a body in."""
+def create_guarded_server(
+    application: Any,
+    tls: Optional[Any] = None,
+    tls_port: Optional[int] = None,
+    **settings: Any,
+) -> BaseWSGIServer:
+    """A web server for *application* that refuses before taking a body in.
+
+    With *tls* (see ``mariner.server.tls.context``) it speaks HTTPS: on
+    every port it listens on, or on *tls_port* alone when one is named.
+    """
     server = create_server(application, **settings)
     # Listening on several addresses makes one server for each.
     listening = (
@@ -230,6 +244,10 @@ def create_guarded_server(application: Any, **settings: Any) -> BaseWSGIServer:
     )
     for one in listening:
         one.channel_class = _Channel
+        if tls is not None and tls_port in (None, one.effective_port):
+            from mariner.server.tls import secured
+
+            one.channel_class = secured(_Channel, tls)
     return server
 
 

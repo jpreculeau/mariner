@@ -1,0 +1,209 @@
+"""HTTPS for Mariner's page, spoken by the web server itself.
+
+The web server Mariner uses knows nothing of TLS, and a Raspberry Pi
+Zero has no room for a second program in front of it. A connection of
+the web server is taken as it is, and what it reads and writes goes
+through a TLS engine that works on memory: the web server goes on
+believing that it reads and writes plain bytes on a socket that never
+blocks.
+"""
+
+import logging
+import ssl
+import threading
+import time
+from typing import Any, Optional, Type
+
+from waitress.channel import HTTPChannel
+
+logger: logging.Logger = logging.getLogger(__name__)
+
+# Encrypted bytes that wait for the client to take them: past this much,
+# nothing more is encrypted until some have gone.
+_MOST_WAITING = 256 * 1024
+# What is read from the engine at a time.
+_READ_AT_ONCE = 64 * 1024
+# How long a connection that is to be closed may go on sending what is
+# left for its client.
+_LONGEST_FAREWELL_SECS = 30
+
+
+def context(certificate: str, key: str) -> ssl.SSLContext:
+    """What a server needs to speak TLS with *certificate* and its *key*."""
+    made = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    made.minimum_version = ssl.TLSVersion.TLSv1_2
+    made.load_cert_chain(certificate, key)
+    return made
+
+
+class _Closed(Exception):
+    """The client ended the conversation, or spoke something else."""
+
+
+def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]:
+    """A kind of connection like *base* that speaks TLS with *using*."""
+
+    class Secured(base):  # type: ignore[valid-type, misc]
+        def __init__(self, server: Any, sock: Any, addr: Any, adj: Any, **more: Any):
+            # One at a time through the engine: the web server reads in
+            # one thread and may write from another.
+            self._tls_lock = threading.RLock()
+            self._arrived = ssl.MemoryBIO()
+            self._leaving = ssl.MemoryBIO()
+            self._tls = using.wrap_bio(self._arrived, self._leaving, server_side=True)
+            self._greeted = False
+            # Encrypted, and not yet taken by the client.
+            self._waiting = b""
+            self._close_asked_at: Optional[float] = None
+            super().__init__(server, sock, addr, adj, **more)
+
+        # -- what the web server asks of a socket ------------------------
+
+        def parser_class(self, adj: Any) -> Any:
+            parser = super().parser_class(adj)
+            parser.secured = True
+            return parser
+
+        def recv(self, buffer_size: int) -> bytes:
+            raise NotImplementedError("read through handle_read")
+
+        def handle_read(self) -> None:
+            try:
+                raw = self.socket.recv(self.adj.recv_bytes)
+            except BlockingIOError:
+                return
+            except OSError:
+                self._end()
+                return
+            if not raw:
+                # The client hung up.
+                self._end()
+                return
+            try:
+                with self._tls_lock:
+                    self._arrived.write(raw)
+                    plain = self._decrypted()
+                    self._push()
+            except _Closed:
+                self._end()
+                return
+            except OSError:
+                self._end()
+                return
+            if plain:
+                self.last_activity = time.time()
+                self.received(plain)
+
+        def send(self, data: bytes, do_close: bool = True) -> int:
+            """Take *data* to be sent encrypted; how much of it was taken.
+
+            All of it or none: none while the client is slow to take what
+            was encrypted before, so that what waits stays small.
+            """
+            with self._tls_lock:
+                if not self._greeted or len(self._waiting) >= _MOST_WAITING:
+                    return 0
+                try:
+                    self._tls.write(data)
+                    self._push()
+                except (ssl.SSLError, OSError):
+                    self._waiting = b""
+                    if do_close:
+                        self._end()
+                    return 0
+            return len(data)
+
+        def writable(self) -> bool:
+            return bool(self._waiting) or bool(super().writable())
+
+        def handle_write(self) -> None:
+            with self._tls_lock:
+                try:
+                    self._push()
+                except OSError:
+                    self._end()
+                    return
+                waiting = bool(self._waiting)
+            if self._close_asked_at is not None:
+                # Only what is left to send keeps it open.
+                overdue = time.time() - self._close_asked_at > _LONGEST_FAREWELL_SECS
+                if not waiting or overdue:
+                    self._end()
+                return
+            if waiting:
+                # Not before the client has what was encrypted for it.
+                return
+            super().handle_write()
+
+        def readable(self) -> bool:
+            if self._close_asked_at is not None:
+                return False
+            if not self._greeted:
+                return True
+            return bool(super().readable())
+
+        def handle_close(self) -> None:
+            """Close, once the client has what was encrypted for it.
+
+            The web server closes as soon as it has handed over the last
+            of an answer; handed to the engine, part of it may still wait.
+            """
+            if self._waiting and self.connected:
+                if self._close_asked_at is None:
+                    self._close_asked_at = time.time()
+                return
+            self._end()
+
+        # -- the engine --------------------------------------------------
+
+        def _end(self) -> None:
+            """Close now, whatever waits."""
+            self._waiting = b""
+            self._close_asked_at = None
+            super().handle_close()
+
+        def _decrypted(self) -> bytes:
+            """What the client sent, in the clear; greets it first."""
+            try:
+                if not self._greeted:
+                    try:
+                        self._tls.do_handshake()
+                    except ssl.SSLWantReadError:
+                        return b""
+                    self._greeted = True
+                pieces = []
+                while True:
+                    try:
+                        piece = self._tls.read(_READ_AT_ONCE)
+                    except ssl.SSLWantReadError:
+                        break
+                    if not piece:
+                        if not pieces:
+                            raise _Closed()
+                        break
+                    pieces.append(piece)
+                return b"".join(pieces)
+            except ssl.SSLZeroReturnError:
+                raise _Closed()
+            except ssl.SSLError as error:
+                # Not TLS at all (a browser asked for http:// on this
+                # port), or a client that does not take the certificate.
+                logger.debug("TLS with %s failed: %s", self.addr, error)
+                raise _Closed()
+
+        def _push(self) -> None:
+            """Send the client as much as it takes of what is encrypted."""
+            fresh = self._leaving.read()
+            if fresh:
+                self._waiting += fresh
+            while self._waiting:
+                try:
+                    sent = self.socket.send(self._waiting)
+                except BlockingIOError:
+                    return
+                if not sent:
+                    return
+                self._waiting = self._waiting[sent:]
+
+    Secured.__name__ = f"Secured{base.__name__}"
+    return Secured
