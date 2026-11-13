@@ -21,10 +21,13 @@ logger: logging.Logger = logging.getLogger(__name__)
 
 KEPT_AS = "sign-ins"
 KEPT = 50
+_WRONG = "wrong_password"
 # What can be noted. The page words each of them.
 WHATS = (
     "signed_in",
     "wrong_password",
+    "wrong_code",
+    "code_locked",
     "sign_in_closed",
     "password_chosen",
     "password_changed",
@@ -33,15 +36,19 @@ WHATS = (
 )
 
 _lock = threading.Lock()
-# The oldest first; None until read.
-_entries: Optional[List[Dict[str, Any]]] = None
+# What is remembered, the oldest first; None until read. Wrong passwords
+# apart from the rest: sent by the hundred, from as many addresses, they
+# must not push out the sign-in or the change an owner looks for.
+_events: Optional[List[Dict[str, Any]]] = None
+_wrong: List[Dict[str, Any]] = []
 _said_unkept = False
 
 
 def forget() -> None:
-    global _entries, _said_unkept
+    global _events, _wrong, _said_unkept
     with _lock:
-        _entries = None
+        _events = None
+        _wrong = []
         _said_unkept = False
 
 
@@ -52,37 +59,66 @@ def _is_one(entry: object) -> bool:
         and entry.get("what") in WHATS
         and isinstance(entry.get("from"), str)
         and isinstance(entry.get("internet"), bool)
+        and isinstance(entry.get("count", 1), int)
+        and isinstance(entry.get("n", 0), int)
     )
 
 
-def _read() -> List[Dict[str, Any]]:
-    """The entries, read once. Called with the lock held."""
-    global _entries
-    if _entries is None:
-        try:
-            kept = json.loads(state.read(KEPT_AS) or b"[]")
-        except (ValueError, OSError):
-            kept = []
-        found = kept if isinstance(kept, list) else []
-        _entries = [entry for entry in found if _is_one(entry)][-KEPT:]
-    return _entries
+def _read() -> None:
+    """Read what is kept, once. Called with the lock held."""
+    global _events, _wrong
+    if _events is not None:
+        return
+    try:
+        kept = json.loads(state.read(KEPT_AS) or b"[]")
+    except (ValueError, OSError):
+        kept = []
+    found = (
+        [entry for entry in kept if _is_one(entry)] if isinstance(kept, list) else []
+    )
+    _wrong = [entry for entry in found if entry["what"] == _WRONG][-KEPT:]
+    _events = [entry for entry in found if entry["what"] != _WRONG][-KEPT:]
+
+
+def _all() -> List[Dict[str, Any]]:
+    """Both, in the order they came. Called with the lock held."""
+    _read()
+    return sorted((_events or []) + _wrong, key=lambda entry: entry.get("n", 0))
 
 
 def note(what: str, address: object, now: Optional[float] = None) -> None:
     """Remember that *what* happened, from *address*."""
     global _said_unkept
-    entry = {
+    entry: Dict[str, Any] = {
         "at": int(time.time() if now is None else now),
         "what": what,
         "from": provenance.shown(address),
         "internet": not provenance.is_local(address),
     }
     with _lock:
-        entries = _read()
-        entries.append(entry)
-        del entries[:-KEPT]
+        _read()
+        assert _events is not None
+        # Its place among the others: two can come within one second.
+        latest = max([one.get("n", 0) for one in _events + _wrong] or [0])
+        entry["n"] = latest + 1
+        if what != _WRONG:
+            _events.append(entry)
+            del _events[:-KEPT]
+        elif (
+            _wrong
+            and _wrong[-1]["from"] == entry["from"]
+            and _wrong[-1].get("n", 0) == latest
+        ):
+            # One after the other from one place, with nothing between:
+            # one line, with how many.
+            _wrong[-1]["count"] = _wrong[-1].get("count", 1) + 1
+            _wrong[-1]["at"] = entry["at"]
+            _wrong[-1]["n"] = entry["n"]
+        else:
+            _wrong.append(entry)
+            del _wrong[:-KEPT]
         try:
-            state.write(KEPT_AS, json.dumps(entries).encode("ascii"))
+            state.write(KEPT_AS, json.dumps(_all()).encode("ascii"))
         except OSError as error:
             if not _said_unkept:
                 _said_unkept = True
@@ -96,7 +132,10 @@ def note(what: str, address: object, now: Optional[float] = None) -> None:
 def entries() -> List[Dict[str, Any]]:
     """What is remembered, the latest first."""
     with _lock:
-        return [dict(entry) for entry in reversed(_read())]
+        return [
+            {name: value for name, value in entry.items() if name != "n"}
+            for entry in reversed(_all())
+        ]
 
 
 def wrong_since_the_visit_before() -> int:
@@ -109,6 +148,6 @@ def wrong_since_the_visit_before() -> int:
             if within:
                 break
             within = True
-        elif within and entry["what"] == "wrong_password":
-            count += 1
+        elif within and entry["what"] in (_WRONG, "wrong_code"):
+            count += entry.get("count", 1)
     return count

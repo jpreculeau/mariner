@@ -277,7 +277,11 @@ def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]
             self._end()
 
         def drop(self) -> None:
-            self._end()
+            # As the connection it is made of, and with nothing more
+            # encrypted for a client that is not to have it: see
+            # ``handle_write``, which ends a connection that is broken.
+            self._broken = True
+            super().drop()
 
         # -- the engine --------------------------------------------------
 

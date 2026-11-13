@@ -425,6 +425,25 @@ class CommandLineTest(TestCase):
         expect((self.state / totp.KEPT_AS).exists()).to_equal(False)
         expect("Internet" in self.out.getvalue()).to_equal(True)
 
+    def test_reset_code_says_so_when_it_may_not_look(self) -> None:
+        # Run without sudo: not "there was none", which would leave its
+        # owner believing the code gone.
+        with patch("os.lstat", side_effect=PermissionError("no")):
+            expect(self._run("reset-code")).to_equal(1)
+        expect("sudo" in self.out.getvalue()).to_equal(True)
+        expect("no one-time code" in self.out.getvalue().lower()).to_equal(False)
+
+    def test_set_code_shows_no_key_where_it_could_not_keep_it(self) -> None:
+        # Else the phone is left with an account that opens nothing.
+        self._run("set-password", typed=("long enough now!", "long enough now!"))
+        os.chmod(self.state, 0o500)
+        self.addCleanup(os.chmod, self.state, 0o700)
+        if os.access(self.state, os.W_OK):
+            self.skipTest("run by an account nothing is closed to")
+        expect(self._run("set-code", typed=("000000",))).to_equal(1)
+        expect("secret=" in self.out.getvalue()).to_equal(False)
+        expect("sudo" in self.out.getvalue()).to_equal(True)
+
     def test_reset_code_says_so_when_there_was_none(self) -> None:
         expect(self._run("reset-code")).to_equal(0)
         expect("no one-time code" in self.out.getvalue().lower()).to_equal(True)

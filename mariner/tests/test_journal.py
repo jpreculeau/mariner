@@ -40,10 +40,45 @@ class JournalTest(_WithState):
 
     def test_only_the_latest_are_kept(self) -> None:
         for sent in range(journal.KEPT + 30):
-            journal.note("wrong_password", INTERNET, now=float(sent))
+            journal.note("signed_in", LOCAL, now=float(sent))
         kept = journal.entries()
         expect(len(kept)).to_equal(journal.KEPT)
         expect(kept[0]["at"]).to_equal(journal.KEPT + 29)
+
+    def test_wrong_ones_in_a_row_from_one_place_are_one_line(self) -> None:
+        for sent in range(5):
+            journal.note("wrong_password", INTERNET, now=10.0 + sent)
+        kept = journal.entries()
+        expect(len(kept)).to_equal(1)
+        expect(kept[0]["count"]).to_equal(5)
+        # When the last of them came.
+        expect(kept[0]["at"]).to_equal(14)
+
+    def test_wrong_ones_do_not_push_out_what_matters(self) -> None:
+        # Sent by the hundred from as many addresses, they would leave no
+        # trace of the sign-in an owner looks for.
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("code_removed", LOCAL, now=2.0)
+        for sent in range(journal.KEPT * 3):
+            journal.note(
+                "wrong_password",
+                f"203.0.{sent % 250}.{sent // 250 + 1}",
+                now=10.0 + sent,
+            )
+        whats = [entry["what"] for entry in journal.entries()]
+        expect("signed_in" in whats).to_equal(True)
+        expect("code_removed" in whats).to_equal(True)
+        expect(whats.count("wrong_password")).to_equal(journal.KEPT)
+        # And the count above the list still says that somebody tried.
+        journal.note("signed_in", LOCAL, now=5000.0)
+        expect(journal.wrong_since_the_visit_before()).to_equal(journal.KEPT)
+
+    def test_the_count_adds_up_those_folded_into_one_line(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        for sent in range(7):
+            journal.note("wrong_password", INTERNET, now=10.0 + sent)
+        journal.note("signed_in", LOCAL, now=50.0)
+        expect(journal.wrong_since_the_visit_before()).to_equal(7)
 
     def test_an_address_that_is_none_is_kept_as_it_is_read(self) -> None:
         # Whatever a header or a peer gives, nothing is kept that could

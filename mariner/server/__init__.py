@@ -130,11 +130,34 @@ class _OneLine(logging.Filter):
         return True
 
 
+class _NotAtEveryTask(logging.Filter):
+    """Let through, once a minute, the line the web server writes for
+    each request that waits its turn.
+
+    Under a crowd they come by the thousand, and push Mariner's own lines
+    out of a log that keeps only so much.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._said_at = float("-inf")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name != "waitress.queue":
+            return True
+        if record.created - self._said_at < 60:
+            return False
+        self._said_at = record.created
+        return True
+
+
 def keep_requests_on_one_line() -> None:
-    """Have every log handler in place escape the web server's records."""
+    """Have every log handler in place escape the web server's records,
+    and hold back its lines that come by the thousand."""
     for handler in logging.getLogger().handlers:
-        if not any(isinstance(known, _OneLine) for known in handler.filters):
-            handler.addFilter(_OneLine())
+        for kind in (_OneLine, _NotAtEveryTask):
+            if not any(isinstance(known, kind) for known in handler.filters):
+                handler.addFilter(kind())
 
 
 # Connections taken at once. Those of the Internet are held to part of
@@ -273,9 +296,19 @@ def main() -> None:
         logger.warning("Configuration: %s", ignored)
     use_spool_directory()
     listening = _listening()
+    # Whether the ports were had: what goes wrong after is something else.
+    had = []
+    said = listening.pop("once_listening", None)
+
+    def once_listening() -> None:
+        had.append(True)
+        if said is not None:
+            said()
+
     try:
         serve(
             flask_app,
+            once_listening=once_listening,
             **listening,
             # Left to itself the web server refuses anything over a gigabyte.
             max_request_body_size=config.get_max_upload_bytes() + UPLOAD_OVERHEAD_BYTES,
@@ -286,6 +319,10 @@ def main() -> None:
             channel_timeout=CHANNEL_TIMEOUT_SECONDS,
         )
     except OSError as error:
+        if had:
+            # Not a port: said as it is, with where it came from.
+            logger.exception("Mariner stopped serving: %s", error)
+            raise SystemExit(1)
         # A port another program holds, most often.
         at = listening.get("listen") or f"{listening['host']}:{listening['port']}"
         logger.error(

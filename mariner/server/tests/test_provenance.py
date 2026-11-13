@@ -18,8 +18,6 @@ class LocalOrNotTest(TestCase):
             "172.16.5.4",
             "172.31.255.254",
             "169.254.10.10",
-            # What a VPN of the Tailscale kind gives.
-            "100.64.0.3",
             "::1",
             "fe80::1",
             "fe80::1%eth0",
@@ -35,6 +33,9 @@ class LocalOrNotTest(TestCase):
             "8.8.8.8",
             "172.32.0.1",
             "100.128.0.1",
+            # Shared by a provider among its customers: a neighbour's, as
+            # much as a VPN's. Local only where the owner says so.
+            "100.64.0.3",
             "2001:db8::1",
             "::ffff:203.0.113.5",
         ):

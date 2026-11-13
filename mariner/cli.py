@@ -79,14 +79,23 @@ def _reset_password() -> int:
     return 0
 
 
-def _holds_a_password(folder: str) -> bool:
+def _holds(folder: str, name: str) -> bool:
+    """Whether *folder* holds something under *name*.
+
+    Raises PermissionError where this account may not look: that is not
+    "nothing there".
+    """
     try:
-        os.lstat(passwords.kept_path(folder))
+        os.lstat(os.path.join(os.path.expanduser(folder), name))
     except PermissionError:
         raise
     except OSError:
         return False
     return True
+
+
+def _holds_a_password(folder: str) -> bool:
+    return _holds(folder, passwords.KEPT_AS)
 
 
 _SERVICE_ACCOUNT = "mariner"
@@ -226,6 +235,11 @@ def _set_code() -> int:
             print(f"There is no {_folders()[0]} yet: start Mariner once first,")
             print("then run this command again with sudo.")
         return 1
+    if not os.access(directory, os.W_OK):
+        # Said before the phone is given a key that would open nothing.
+        print(f"This account may not write into {directory}.")
+        print("Run this command with sudo. Nothing was changed.")
+        return 1
     secret = totp.new_secret()
     print("In an application that gives one-time codes (Aegis, FreeOTP,")
     print("Google Authenticator...), add an account with this key:")
@@ -265,9 +279,7 @@ def _set_code() -> int:
 def _reset_code() -> int:
     folders = _folders()
     try:
-        holding = [
-            one for one in folders if os.path.lexists(os.path.join(one, totp.KEPT_AS))
-        ]
+        holding = [one for one in folders if _holds(one, totp.KEPT_AS)]
     except PermissionError:
         print("This account may not look into the folder Mariner keeps things in.")
         print("Run this command with sudo.")

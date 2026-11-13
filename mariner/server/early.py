@@ -20,6 +20,12 @@ closed without an answer.
 The application makes the checks of name and site again, and alone for a
 request without a body: this reader belongs to one web server,
 and the application must not depend on being run by it.
+
+Here too, since Mariner can be reached from the Internet, what keeps it
+standing when leaned on (the figures are in ``mariner.server.load``): who
+comes in (``_admitting``), the round that closes connections which ask
+nothing (``_tidying``), and the guard against a reader that reads nothing
+(``_Channel._flush_outbufs_below_high_watermark``).
 """
 
 import fcntl
@@ -27,6 +33,7 @@ import json
 import logging
 import os
 import shutil
+import socket
 import struct
 import tempfile
 import termios
@@ -233,10 +240,26 @@ class _Channel(HTTPChannel):
     # Its reader reads nothing any more: to be closed, by the thread
     # that closes.
     _gone = False
+    # Since when a request has been coming without the end of its
+    # headers; None when none is.
+    _headers_since: Optional[float] = None
 
     def drop(self) -> None:
-        """Close now, whatever is left to send."""
-        self.handle_close()
+        """Have this connection closed, whatever is left to send.
+
+        Not closed here: this is called as the connections are gone
+        round, while the web server is listing those it will wait on. One
+        closed under it is still on that list, and waiting on a closed
+        connection brings the whole server down. So it is marked and
+        hung up on; the web server then finds it ended, as it does one
+        its client left, and closes it where it closes the others.
+        """
+        self.will_close = True
+        try:
+            self.socket.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            # Gone already.
+            pass
 
     def _left_to_take(self) -> int:
         """How much of what was asked for its reader has yet to take:
@@ -312,9 +335,19 @@ class _Channel(HTTPChannel):
                 return False
         took = bool(super().received(data))
         request = self.request
-        if self.requests or (request is not None and request.headers_finished):
+        if request is None or request.headers_finished:
+            self._headers_since = None
+        elif self._headers_since is None:
+            self._headers_since = time.time()
+        if request is not None and request.headers_finished:
+            # Something is being sent: whole requests are seen by
+            # ``service``, which may already have answered them.
             self._asked = True
         return took
+
+    def service(self) -> None:
+        self._asked = True
+        super().service()
 
     def parser_class(self, adj: Any) -> _Parser:
         """A reader of headers that knows whose request it reads.
@@ -356,6 +389,7 @@ def create_guarded_server(
     With *tls_files*, the certificate and key *tls* was made of, they are
     taken anew when they change.
     """
+    _check_the_web_server()
     # How often the connections are gone round: see ``_tidying``.
     settings.setdefault("cleanup_interval", 5)
     server = create_server(application, **settings)
@@ -386,6 +420,39 @@ def create_guarded_server(
         # Once a round, whatever the number of ports.
         renewed = None
     return server
+
+
+# What is taken over, or called, of the web server's inner workings.
+_RELIED_ON = {
+    HTTPChannel: (
+        "write_soon",
+        "_flush_outbufs_below_high_watermark",
+        "_flush_exception",
+        "_flush_some",
+        "received",
+        "service",
+        "send_continue",
+        "handle_close",
+    ),
+    BaseWSGIServer: ("maintenance", "pull_trigger"),
+}
+
+
+def _check_the_web_server() -> None:
+    """Say at start that the web server is no longer made the same.
+
+    The guards of this module stand on names it does not promise to
+    keep. Renamed, they would be passed by without a word: Mariner would
+    start, and hold nothing.
+    """
+    for made, names in _RELIED_ON.items():
+        for name in names:
+            if not callable(getattr(made, name, None)):
+                raise RuntimeError(
+                    f"waitress is not made as Mariner expects: its "
+                    f"{made.__name__} has no {name}. Mariner needs a "
+                    "version of waitress it was tried with (3.0)"
+                )
 
 
 def _held(servers: List[BaseWSGIServer]) -> List[Any]:
@@ -449,14 +516,23 @@ def _tidying(
             also()
         for channel in list(server.active_channels.values()):
             address = channel.addr[0] if isinstance(channel.addr, tuple) else None
-            if getattr(channel, "_gone", False) or (
-                not channel.requests
-                and load.outstayed(
-                    address,
-                    getattr(channel, "_asked", True),
-                    channel.creation_time,
-                    channel.last_activity,
-                    now,
+            coming_since = getattr(channel, "_headers_since", None)
+            if (
+                getattr(channel, "_gone", False)
+                or (
+                    not channel.requests
+                    and load.outstayed(
+                        address,
+                        getattr(channel, "_asked", True),
+                        channel.creation_time,
+                        channel.last_activity,
+                        now,
+                    )
+                )
+                # A byte now and then would hold a place for good.
+                or (
+                    coming_since is not None
+                    and load.outstayed(address, False, coming_since, now, now)
                 )
             ):
                 channel.drop()

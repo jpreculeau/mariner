@@ -37,7 +37,8 @@ class RequestLogTest(TestCase):
 
     def test_installing_it_twice_escapes_once(self) -> None:
         keep_requests_on_one_line()
-        expect(len(self.handler.filters)).to_equal(1)
+        # That one, and the one that holds back lines by the thousand.
+        expect(len(self.handler.filters)).to_equal(2)
         logging.getLogger("waitress").warning("a\nb")
         expect(self.stream.getvalue()).to_equal("a\\nb\n")
 

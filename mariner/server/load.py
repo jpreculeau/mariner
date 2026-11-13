@@ -70,8 +70,10 @@ class Door:
         if provenance.is_local(address):
             return True
         moment = time.monotonic() if now is None else now
-        name = str(address)
-        outside = [str(one) for one in held if not provenance.is_local(one)]
+        name = provenance.place_of(address)
+        outside = [
+            provenance.place_of(one) for one in held if not provenance.is_local(one)
+        ]
         if len(outside) >= FROM_INTERNET or outside.count(name) >= PER_ADDRESS:
             return False
         self._forget_the_old(moment)

@@ -110,7 +110,11 @@ def clear_password() -> None:
 
 
 def check_password(candidate: str) -> bool:
-    return passwords.matches(_record(), candidate)
+    try:
+        return passwords.matches(_record(), candidate)
+    except UnicodeError:
+        # Half of a pair of characters: nothing that was ever chosen.
+        return False
 
 
 # -- a password that is lost ------------------------------------------------
@@ -193,6 +197,7 @@ _MOST_ADDRESSES = 8
 _FORGOTTEN_AFTER_SECS = 600
 _SHARED = "others"
 _OWN = "from "
+_OUTSIDE = "internet: "
 _attempts_lock = threading.Lock()
 # For each count: wrong ones so far, and when the last was looked at.
 _attempts: Dict[str, Tuple[int, float]] = {}
@@ -217,18 +222,21 @@ def _place_of(address: Optional[str]) -> Optional[str]:
 def count_of(address: Optional[str], now: Optional[float] = None) -> str:
     """The count the passwords sent from *address* go to."""
     place = _place_of(address)
+    # The Internet apart from the local network: wrong passwords sent from
+    # all over must not make a computer of the house wait its turn.
+    apart = "" if provenance.is_local(address) else _OUTSIDE
     if place is None:
-        return _SHARED
-    own = _OWN + place
+        return apart + _SHARED
+    own = apart + _OWN + place
     moment = time.monotonic() if now is None else now
     with _attempts_lock:
         for name, (_, last) in list(_attempts.items()):
-            if name.startswith(_OWN) and last + _FORGOTTEN_AFTER_SECS < moment:
+            if _OWN in name and last + _FORGOTTEN_AFTER_SECS < moment:
                 del _attempts[name]
         if own in _attempts:
             return own
-        taken = sum(1 for name in _attempts if name.startswith(_OWN))
-        return own if taken < _MOST_ADDRESSES else _SHARED
+        taken = sum(1 for name in _attempts if name.startswith(apart + _OWN))
+        return own if taken < _MOST_ADDRESSES else apart + _SHARED
 
 
 def forget_attempts() -> None:
@@ -238,6 +246,7 @@ def forget_attempts() -> None:
         _internet_attempts.clear()
     _closed_said_at = 0.0
     journal.forget()
+    forget_code_seen()
 
 
 # From the Internet, addresses are had by the thousand: a count for each
@@ -426,9 +435,11 @@ def _hash_of(key: str) -> str:
 
 def _came_in_with_the_code(held: Mapping[str, Any]) -> bool:
     """Whether a session is one the Internet is answered: it signed in
-    with the one-time code, and there still is one. Done away with, the
-    code ends what it opened from outside."""
-    return held.get(_WITH_CODE_AS) is True and code_is_set()
+    with the one-time code that is in force. Done away with or replaced,
+    a code ends what it opened from outside: the browser of a phone that
+    was lost does not come back with the next one."""
+    which = code_identity()
+    return which is not None and held.get(_WITH_CODE_AS) == which
 
 
 def let_in(held: Mapping[str, Any], key: str, from_internet: bool = False) -> bool:
@@ -455,7 +466,7 @@ def is_signed_in() -> bool:
 
 
 def _sign_in(
-    under: str, with_code: bool = False, tried: Optional[int] = None
+    under: str, with_code: Optional[str] = None, tried: Optional[int] = None
 ) -> Response:
     """Sign this browser in *under* the password of that number.
 
@@ -474,7 +485,8 @@ def _sign_in(
     session[_SESSION_AS] = secrets.token_hex(8)
     session[_KEY_AS] = _hash_of(key)
     if with_code:
-        session[_WITH_CODE_AS] = True
+        # Which code it came in with: see ``_came_in_with_the_code``.
+        session[_WITH_CODE_AS] = with_code
     session.permanent = True
     answer: Dict[str, Any] = {
         "success": True,
@@ -581,10 +593,66 @@ def code_is_set() -> bool:
     return _secret_in_force(_code_record()) is not None
 
 
-def _last_step(record: Mapping[str, Any]) -> Optional[int]:
+def code_identity() -> Optional[str]:
+    """What tells the code in force from the one before, or the one
+    after; None when there is none. Says nothing of the secret."""
+    secret = _secret_in_force(_code_record())
+    if secret is None:
+        return None
+    return hashlib.sha256(b"mariner one-time code " + secret.encode()).hexdigest()[:16]
+
+
+def _last_step(
+    record: Mapping[str, Any], moment: Optional[float] = None
+) -> Optional[int]:
+    """The last half minute a code served for.
+
+    One later than any code can now be for is passed over: it served
+    while the clock was ahead, and would else shut the Internet out until
+    the clock caught up, a day or a year later. (That one code could then
+    serve once more when its time comes: it would take a clock that was
+    wrong and somebody who kept the code.)
+    """
     kept = record.get("last")
-    steps = [step for step in (kept, _last_step_seen) if isinstance(step, int)]
+    now = time.time() if moment is None else moment
+    to_come = int(now) // totp.PERIOD_SECS + 1
+    steps = [
+        step
+        for step in (kept, _last_step_seen)
+        if isinstance(step, int) and step <= to_come
+    ]
     return max(steps) if steps else None
+
+
+# With the password known, the code is all that is left to guess: three
+# chances in a million at each try, which over months is no longer
+# nothing. So wrong codes sent with the right password are counted, kept
+# through restarts, and past this many signing in from the Internet is
+# closed until somebody signs in from the local network.
+WRONG_CODES_BEFORE_CLOSING = 10
+
+
+def wrong_codes() -> int:
+    kept = _code_record().get("wrong")
+    return kept if isinstance(kept, int) else 0
+
+
+def _count_wrong_codes(to: Optional[int] = None) -> int:
+    """One more wrong code with the right password; or *to* that many."""
+    with _code_lock:
+        record = _code_record()
+        if _secret_in_force(record) is None:
+            return 0
+        kept = record.get("wrong")
+        was = kept if isinstance(kept, int) else 0
+        now = was + 1 if to is None else to
+        if now != was:
+            record["wrong"] = now
+            try:
+                state.write(totp.KEPT_AS, json.dumps(record).encode("ascii"))
+            except OSError as error:
+                logger.warning("The count of wrong codes could not be kept (%s)", error)
+        return now
 
 
 def start_code() -> str:
@@ -630,15 +698,15 @@ def code_step(candidate: str, now: Optional[float] = None) -> Optional[int]:
     secret = _secret_in_force(record)
     if secret is None:
         return None
-    return totp.step_of(secret, candidate, moment, after=_last_step(record))
+    return totp.step_of(secret, candidate, moment, after=_last_step(record, moment))
 
 
-def use_code_step(step: int) -> bool:
+def use_code_step(step: int, now: Optional[float] = None) -> bool:
     """Have the code of *step* serve; False if it, or a later one, has."""
     global _last_step_seen
     with _code_lock:
         record = _code_record()
-        last = _last_step(record)
+        last = _last_step(record, now)
         if _secret_in_force(record) is None or (last is not None and step <= last):
             return False
         _last_step_seen = step
@@ -653,7 +721,7 @@ def use_code_step(step: int) -> bool:
 
 def check_code(candidate: str, now: Optional[float] = None) -> bool:
     step = code_step(candidate, now)
-    return step is not None and use_code_step(step)
+    return step is not None and use_code_step(step, now)
 
 
 # -- addresses -------------------------------------------------------------
@@ -696,7 +764,11 @@ def _use_the_key_that_is_kept() -> None:
 
 def _given(*names: str) -> Optional[Tuple[str, ...]]:
     """The texts sent under *names*, or None if any is not one."""
-    body = request.get_json(silent=True)
+    try:
+        body = request.get_json(silent=True)
+    except RecursionError:
+        # Nested beyond reason: nothing of what is asked for.
+        return None
     if not isinstance(body, dict):
         return None
     values = tuple(body.get(name) for name in names)
@@ -857,6 +929,16 @@ def login() -> Response:
             "in Mariner's settings.",
             403,
         )
+    if from_internet and wrong_codes() >= WRONG_CODES_BEFORE_CLOSING:
+        # Somebody has the password and is guessing at the code.
+        return _refuse(
+            "code_locked",
+            "Sign-In Closed From The Internet",
+            "Too many wrong one-time codes were sent with the right password: "
+            "somebody else may know it. Signing in from the Internet is "
+            "closed until somebody signs in from the local network.",
+            403,
+        )
     if from_internet:
         closed_for = claim_internet_attempt(claimed_at)
         if closed_for:
@@ -870,6 +952,7 @@ def login() -> Response:
         return _wait_answer(wait)
     current = generation()
     right = current is not None and check_password(given[0])
+    knows_the_password = right
     if from_internet:
         # Both are looked at whichever is wrong, and which one was is not
         # told. The code serves only once the password was right.
@@ -877,9 +960,25 @@ def login() -> Response:
         code = body.get("code") if isinstance(body, dict) else None
         step = code_step(code if isinstance(code, str) else "")
         right = right and step is not None and use_code_step(step)
-    if not right or current is None:
+    if knows_the_password and not right:
+        # Told as a wrong password is, and noted for what it is: its
+        # owner must learn that the password is known.
+        logger.warning(
+            "Right password and wrong one-time code from %s", request.remote_addr
+        )
+        journal.note("wrong_code", request.remote_addr)
+        if _count_wrong_codes() == WRONG_CODES_BEFORE_CLOSING:
+            journal.note("code_locked", request.remote_addr)
+            logger.warning(
+                "Signing in from the Internet is closed until somebody signs "
+                "in from the local network: %d wrong one-time codes were sent "
+                "with the right password",
+                WRONG_CODES_BEFORE_CLOSING,
+            )
+    elif not right:
         logger.warning("Wrong password from %s", request.remote_addr)
         journal.note("wrong_password", request.remote_addr)
+    if not right or current is None:
         return _refuse(
             "wrong_password",
             "Wrong Password",
@@ -890,10 +989,12 @@ def login() -> Response:
     note_success(count)
     note_internet_success(claimed_at)
     _use_the_key_that_is_kept()
+    # The owner's own slips, or a guesser sent away by the owner's return.
+    _count_wrong_codes(to=0)
     journal.note("signed_in", request.remote_addr)
     return _sign_in(
         current,
-        with_code=from_internet,
+        with_code=code_identity() if from_internet else None,
         tried=journal.wrong_since_the_visit_before(),
     )
 
@@ -946,7 +1047,13 @@ def change_password() -> Response:
     current_app.config["SECRET_KEY"] = state.new_session_key()
     logger.warning("The password was changed from %s", request.remote_addr)
     journal.note("password_changed", request.remote_addr)
-    return _sign_in(changed)
+    # What the session came in with, it keeps: changed from outside, the
+    # password does not sign its owner out.
+    came_with = session.get(_WITH_CODE_AS)
+    return _sign_in(
+        changed,
+        with_code=came_with if _came_in_with_the_code(session) else None,
+    )
 
 
 def _rank(held: Mapping[str, Any], key: str) -> int:
@@ -983,11 +1090,37 @@ def _for_the_code() -> Optional[Response]:
     return None
 
 
+def _unless_the_password_is_given() -> Optional[Response]:
+    """What is answered when the request does not carry, as ``current``,
+    the password in place; None when it does."""
+    given = _given("current")
+    if given is None:
+        return _not_a_password()
+    wait = claim_attempt("change")
+    if wait:
+        return _wait_answer(wait)
+    if not check_password(given[0]):
+        return _refuse(
+            "wrong_password",
+            "Wrong Password",
+            "This is not the password in place.",
+            401,
+        )
+    note_success("change")
+    return None
+
+
 @auth_api.route("/code/start", methods=["POST"])
 def code_start() -> Response:
     refused = _for_the_code()
     if refused is not None:
         return refused
+    if code_is_set():
+        # Another in the place of the one in force: as for doing away
+        # with it, a page left open is not enough.
+        not_the_owner = _unless_the_password_is_given()
+        if not_the_owner is not None:
+            return not_the_owner
     try:
         secret = start_code()
     except OSError as error:
@@ -1024,20 +1157,9 @@ def code_remove() -> Response:
     refused = _for_the_code()
     if refused is not None:
         return refused
-    given = _given("current")
-    if given is None:
-        return _not_a_password()
-    wait = claim_attempt("change")
-    if wait:
-        return _wait_answer(wait)
-    if not check_password(given[0]):
-        return _refuse(
-            "wrong_password",
-            "Wrong Password",
-            "This is not the password in place.",
-            401,
-        )
-    note_success("change")
+    not_the_owner = _unless_the_password_is_given()
+    if not_the_owner is not None:
+        return not_the_owner
     try:
         remove_code()
     except OSError as error:

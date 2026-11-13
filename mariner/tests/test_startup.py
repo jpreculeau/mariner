@@ -205,6 +205,40 @@ class StartupTest(TestCase):
             self._started()
         self.assertTrue(any("one thing" in r.getMessage() for r in logs.records))
 
+    def test_a_server_that_falls_while_serving_is_not_said_to_lack_a_port(
+        self,
+    ) -> None:
+        # Else its owner looks for another program on the port.
+        def fall(application: Any, once_listening: Any = None, **settings: Any) -> None:
+            if once_listening is not None:
+                once_listening()
+            raise OSError(9, "Bad file descriptor")
+
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.logging, "basicConfig"
+        ), patch.object(server.logging.getLogger(), "handlers", []), patch.object(
+            server, "empty_cache"
+        ), patch.object(
+            server, "remove_stale_scratch_files"
+        ), patch.object(
+            server, "CacheBootstrapper"
+        ), patch.object(
+            server, "start_providers"
+        ), patch.object(
+            server.state, "session_key", return_value=b"k" * 32
+        ), patch.object(
+            server.auth, "clear_if_asked_on_the_boot_drive"
+        ), patch.object(
+            server, "serve", side_effect=fall
+        ), self.assertLogs(
+            "mariner.server", level="ERROR"
+        ) as logged:
+            with self.assertRaises(SystemExit):
+                server.main()
+        said = " ".join(logged.output)
+        expect("cannot listen" in said).to_equal(False)
+        expect("stopped" in said).to_equal(True)
+
     def test_the_web_server_takes_a_bounded_number_of_connections(self) -> None:
         # Each can hold an upload waiting on the drive.
         with patch.object(server, "use_spool_directory"):
@@ -356,3 +390,27 @@ class StartupTest(TestCase):
         expect(stopped.exception.code).to_equal(1)
         said = " ".join(logged.output)
         expect("5050" in said and "Address already in use" in said).to_equal(True)
+
+
+class QueueNoiseTest(TestCase):
+    def test_the_web_server_s_line_for_each_waiting_request_is_said_now_and_then(
+        self,
+    ) -> None:
+        # One for each request that waits its turn: under a crowd, by the
+        # thousand, which pushes Mariner's own lines out of the log.
+        import logging
+
+        quiet = server._NotAtEveryTask()
+
+        def record(name: str, at: float) -> logging.LogRecord:
+            made = logging.LogRecord(name, logging.WARNING, "", 0, "depth", None, None)
+            made.created = at
+            return made
+
+        expect(quiet.filter(record("waitress.queue", 100.0))).to_equal(True)
+        expect(quiet.filter(record("waitress.queue", 101.0))).to_equal(False)
+        expect(quiet.filter(record("waitress.queue", 159.0))).to_equal(False)
+        expect(quiet.filter(record("waitress.queue", 161.0))).to_equal(True)
+        # Nothing else is held back.
+        expect(quiet.filter(record("waitress", 101.0))).to_equal(True)
+        expect(quiet.filter(record("mariner.server", 101.0))).to_equal(True)

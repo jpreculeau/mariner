@@ -8,10 +8,13 @@ anyone. Some of what it does is then kept for the local network:
 - stopping or restarting the computer, unless the owner allows it.
 
 What is local: this computer itself, the private ranges of a home or an
-office, those a VPN gives, and over IPv6 the network this computer has
-an address in. The configuration can add networks, and take addresses
-out: a router that passes connections on under its own address, or a
-tunnel that ends on this very computer, makes everything look local.
+office, and over IPv6 the network this computer has an address in. Not
+100.64.0.0/10: a VPN of the Tailscale kind gives such addresses, and so
+does a provider that shares one address among its customers, whose
+neighbours would then be at home here. Whoever uses such a VPN adds it.
+The configuration can add networks, and take addresses out: a router
+that passes connections on under its own address, or a tunnel that ends
+on this very computer, makes everything look local.
 An address that cannot be read is not local: in doubt, the stricter rule.
 """
 
@@ -33,8 +36,6 @@ _LOCAL: Tuple[_Network, ...] = tuple(
         "172.16.0.0/12",
         "192.168.0.0/16",
         "169.254.0.0/16",
-        # Shared address space: what a VPN of the Tailscale kind gives.
-        "100.64.0.0/10",
         "::1/128",
         "fe80::/10",
         "fc00::/7",
@@ -88,6 +89,17 @@ def shown(address: object) -> str:
     peer or a header could have put in its place."""
     read = _read(address)
     return "unknown" if read is None else str(read)
+
+
+def place_of(address: object) -> str:
+    """What stands for *address* where addresses are counted: itself, or
+    over IPv6 its network, of which whoever has one has billions."""
+    read = _read(address)
+    if read is None:
+        return "unknown"
+    if read.version == 6:
+        return str(ipaddress.ip_network(f"{read}/64", strict=False))
+    return str(read)
 
 
 def _networks(given: List[str]) -> List[_Network]:
