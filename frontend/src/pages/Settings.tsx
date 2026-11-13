@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, LogOut, RotateCcw, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { OneTimeCode } from "@/components/OneTimeCode";
+import { SignIns } from "@/components/SignIns";
 import { PasswordField } from "@/components/PasswordField";
 import { toast } from "@/components/ui/sonner";
 import {
@@ -292,6 +293,10 @@ export default function Settings() {
 
         <Part title={t("settings.code")}>
           <OneTimeCode />
+        </Part>
+
+        <Part title={t("settings.journal")}>
+          <SignIns />
         </Part>
 
         <Part title={t("settings.password")}>

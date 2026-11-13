@@ -416,6 +416,19 @@ async function signedInBy(url: string, body?: unknown): Promise<void> {
   if (typeof answer?.page_key === "string") setPageKey(answer.page_key);
 }
 
+export interface SignInJournal {
+  /** The latest first. */
+  entries: {
+    /** Seconds since 1970. */
+    at: number;
+    what: string;
+    from: string;
+    internet: boolean;
+  }[];
+  /** Wrong passwords sent between the last sign-in and the one before. */
+  wrong_since_last_visit: number;
+}
+
 export const api = {
   async authState(): Promise<AuthState> {
     const answer = await apiFetch<AuthState>("/api/auth/state");
@@ -453,6 +466,18 @@ export const api = {
   /** Replace the password. Every other page is signed out. */
   async changePassword(current: string, next: string): Promise<void> {
     await signedInBy("/api/auth/password", { current, new: next });
+  },
+
+  /** The last sign-ins and attempts Mariner remembers. */
+  async journal(): Promise<SignInJournal> {
+    const answer = await apiFetch<SignInJournal>("/api/auth/journal");
+    return {
+      entries: Array.isArray(answer?.entries) ? answer.entries : [],
+      wrong_since_last_visit:
+        typeof answer?.wrong_since_last_visit === "number"
+          ? answer.wrong_since_last_visit
+          : 0,
+    };
   },
 
   /** A key for a phone to take in; in force once confirmed. */

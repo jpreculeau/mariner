@@ -71,6 +71,20 @@ signed out.
 A lost phone locks nobody out at home: sign in from the local network, or
 use the terminal, and set the code up on the new phone.
 
+Recent sign-ins
+---------------
+
+**Settings**, **Recent sign-ins** lists the last fifty things that happened
+at the door: sign-ins, wrong passwords, the password or the one-time code
+being changed, sign-in being closed to the Internet. Each with when, and
+where from: the local network or the Internet, and the address. Above the
+list, Mariner says how many wrong passwords were sent between your last two
+visits. What was typed is never kept.
+
+A few wrong passwords from the Internet are the lot of anything reachable
+from there. Many of them, or one from the local network that is not yours,
+are worth a look: see :doc:`internet`.
+
 Signing in and out
 ------------------
 

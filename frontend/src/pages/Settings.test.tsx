@@ -75,7 +75,7 @@ describe("Settings", () => {
     expect(screen.getByText(/without the password/)).toBeInTheDocument();
     // One heading for the page, one for each part.
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-    expect(screen.getAllByRole("heading", { level: 2 }).length).toBe(5);
+    expect(screen.getAllByRole("heading", { level: 2 }).length).toBe(6);
   });
 
   it("keeps a switch as soon as it is changed, and says so", async () => {

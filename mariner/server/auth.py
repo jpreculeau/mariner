@@ -34,7 +34,7 @@ from flask_wtf.csrf import generate_csrf
 
 from mariner import config, passwords, totp
 from mariner.passwords import PasswordNotAllowed  # noqa: F401
-from mariner.server import provenance, sessions, state
+from mariner.server import journal, provenance, sessions, state
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -237,6 +237,7 @@ def forget_attempts() -> None:
         _attempts.clear()
         _internet_attempts.clear()
     _closed_said_at = 0.0
+    journal.forget()
 
 
 # From the Internet, addresses are had by the thousand: a count for each
@@ -453,7 +454,9 @@ def is_signed_in() -> bool:
     return let_in(session, request.headers.get(KEY_HEADER, ""), _from_internet())
 
 
-def _sign_in(under: str, with_code: bool = False) -> Response:
+def _sign_in(
+    under: str, with_code: bool = False, tried: Optional[int] = None
+) -> Response:
     """Sign this browser in *under* the password of that number.
 
     The answer carries the key of the page, and a token for the new
@@ -473,7 +476,15 @@ def _sign_in(under: str, with_code: bool = False) -> Response:
     if with_code:
         session[_WITH_CODE_AS] = True
     session.permanent = True
-    return jsonify({"success": True, "csrf_token": generate_csrf(), "page_key": key})
+    answer: Dict[str, Any] = {
+        "success": True,
+        "csrf_token": generate_csrf(),
+        "page_key": key,
+    }
+    if tried is not None:
+        # How many wrong passwords were sent since the visit before.
+        answer["wrong_since_last_visit"] = tried
+    return jsonify(answer)
 
 
 def _unavailable() -> Dict[str, str]:
@@ -770,6 +781,7 @@ def _say_closed(wait: int) -> None:
     if _closed_said_at and now - _closed_said_at < 600:
         return
     _closed_said_at = now
+    journal.note("sign_in_closed", request.remote_addr)
     logger.warning(
         "Signing in from the Internet is closed for %d s: %d wrong passwords "
         "were sent from there within the hour",
@@ -815,6 +827,7 @@ def setup() -> Response:
     except OSError as error:
         return _not_kept(error)
     logger.warning("A password was chosen from %s", request.remote_addr)
+    journal.note("password_chosen", request.remote_addr)
     _use_the_key_that_is_kept()
     return _sign_in(chosen)
 
@@ -866,6 +879,7 @@ def login() -> Response:
         right = right and step is not None and use_code_step(step)
     if not right or current is None:
         logger.warning("Wrong password from %s", request.remote_addr)
+        journal.note("wrong_password", request.remote_addr)
         return _refuse(
             "wrong_password",
             "Wrong Password",
@@ -876,7 +890,12 @@ def login() -> Response:
     note_success(count)
     note_internet_success(claimed_at)
     _use_the_key_that_is_kept()
-    return _sign_in(current, with_code=from_internet)
+    journal.note("signed_in", request.remote_addr)
+    return _sign_in(
+        current,
+        with_code=from_internet,
+        tried=journal.wrong_since_the_visit_before(),
+    )
 
 
 @auth_api.route("/logout", methods=["POST"])
@@ -926,6 +945,7 @@ def change_password() -> Response:
     # could be forged from a copy of it, is of no use.
     current_app.config["SECRET_KEY"] = state.new_session_key()
     logger.warning("The password was changed from %s", request.remote_addr)
+    journal.note("password_changed", request.remote_addr)
     return _sign_in(changed)
 
 
@@ -995,6 +1015,7 @@ def code_confirm() -> Response:
             400,
         )
     logger.warning("A one-time code was set up from %s", request.remote_addr)
+    journal.note("code_set", request.remote_addr)
     return jsonify({"success": True})
 
 
@@ -1022,4 +1043,22 @@ def code_remove() -> Response:
     except OSError as error:
         return _not_kept(error)
     logger.warning("The one-time code was removed from %s", request.remote_addr)
+    journal.note("code_removed", request.remote_addr)
     return jsonify({"success": True})
+
+
+@auth_api.route("/journal", methods=["GET"])
+def sign_ins() -> Response:
+    """The last sign-ins and attempts, for who is signed in."""
+    shut = _shut()
+    if shut is not None:
+        return shut
+    if not is_signed_in():
+        body = refusal("/api/auth-journal", session) or {}
+        return make_response(jsonify(body), status_of(body))
+    return jsonify(
+        {
+            "entries": journal.entries(),
+            "wrong_since_last_visit": journal.wrong_since_the_visit_before(),
+        }
+    )

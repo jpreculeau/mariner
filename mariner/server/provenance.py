@@ -83,6 +83,13 @@ def _read(address: object) -> Optional[_Address]:
     return read
 
 
+def shown(address: object) -> str:
+    """*address* as it can be shown: itself if it is one, and nothing a
+    peer or a header could have put in its place."""
+    read = _read(address)
+    return "unknown" if read is None else str(read)
+
+
 def _networks(given: List[str]) -> List[_Network]:
     found = []
     for one in given:
