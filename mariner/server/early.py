@@ -243,6 +243,14 @@ class _Channel(HTTPChannel):
     # Since when a request has been coming without the end of its
     # headers; None when none is.
     _headers_since: Optional[float] = None
+    # More was asked at once, from the Internet, than is answered: closed
+    # once what is answered has been.
+    _cut_short = False
+    # How many of the requests last received have been answered.
+    _answered_of_these = 0
+
+    def _address(self) -> Optional[str]:
+        return str(self.addr[0]) if isinstance(self.addr, tuple) else None
 
     def drop(self) -> None:
         """Have this connection closed, whatever is left to send.
@@ -299,6 +307,7 @@ class _Channel(HTTPChannel):
             (_, exception) = self._flush_exception(self._flush_some, do_close=False)
             left = self._left_to_take()
             since = time.monotonic()
+            patience = load.stalled_after(self._address())
             while self.connected and (
                 exception or self.total_outbufs_len > self.adj.outbuf_high_watermark
             ):
@@ -307,7 +316,7 @@ class _Channel(HTTPChannel):
                 except OSError:
                     # The server is being closed under it.
                     return
-                self.outbuf_lock.wait(min(1.0, load.STALLED_SECS))
+                self.outbuf_lock.wait(min(1.0, patience))
                 if exception:
                     # The thread that closes has been told.
                     return
@@ -316,7 +325,7 @@ class _Channel(HTTPChannel):
                 if still < left:
                     left = still
                     since = now
-                elif now - since > load.STALLED_SECS:
+                elif now - since > patience:
                     self._gone = True
                     logger.warning(
                         "%s reads nothing of what it asked for: closed",
@@ -333,6 +342,7 @@ class _Channel(HTTPChannel):
                 # headers that never come, it would for half a minute.
                 self.will_close = True
                 return False
+        self._answered_of_these = 0
         took = bool(super().received(data))
         request = self.request
         if request is None or request.headers_finished:
@@ -343,11 +353,43 @@ class _Channel(HTTPChannel):
             # Something is being sent: whole requests are seen by
             # ``service``, which may already have answered them.
             self._asked = True
+        self._hold_to_a_few()
         return took
+
+    def _hold_to_a_few(self) -> None:
+        """Answer only a few of the requests the Internet sent in one go.
+
+        See ``load.ASKED_AT_ONCE``. Those past them are let go of, and the
+        connection is closed once the few are answered: it cannot be told
+        which of its requests were dropped.
+        """
+        if len(self.requests) <= load.ASKED_AT_ONCE:
+            return
+        if provenance.is_local(self._address()):
+            return
+        with self.requests_lock:
+            # Less those already answered since they came. Never the
+            # first of those left: it may be the one being answered.
+            few = max(1, load.ASKED_AT_ONCE - self._answered_of_these)
+            dropped = self.requests[few:]
+            del self.requests[few:]
+            self._cut_short = True
+        for request in dropped:
+            request.close()
 
     def service(self) -> None:
         self._asked = True
         super().service()
+        self._answered_of_these += 1
+        if self._cut_short:
+            with self.requests_lock:
+                if not self.requests:
+                    self.close_when_flushed = True
+            try:
+                self.server.pull_trigger()
+            except OSError:
+                # The server is being closed under it.
+                pass
 
     def parser_class(self, adj: Any) -> _Parser:
         """A reader of headers that knows whose request it reads.

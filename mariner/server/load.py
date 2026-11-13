@@ -11,7 +11,8 @@ owner from being shut out at home:
   connections in a while: each one over HTTPS costs the computer work;
 - a connection from the Internet that asks nothing is not kept, and one
   that has been answered is not kept idle for long;
-- a reader that reads nothing does not hold what serves it.
+- a reader that reads nothing does not hold what serves it, and one from
+  the Internet has only a few requests answered of those it sends at once.
 
 Addresses of the local network (see ``mariner.server.provenance``) are
 under none of this. Nothing here knows of the web server: the figures,
@@ -37,8 +38,16 @@ KNOCKS_FROM_INTERNET = 150
 FIRST_REQUEST_SECS = 10.0
 IDLE_SECS = 30.0
 # How long what was asked for can go unread, not a byte of it, before
-# its reader is taken for gone.
+# its reader is taken for gone: on the local network, and from the
+# Internet, where what waits on a reader is one of the few threads Mariner
+# answers with.
 STALLED_SECS = 60.0
+STALLED_FROM_INTERNET_SECS = 3.0
+# How many requests one connection from the Internet has answered of those
+# it sent in one go; it is closed after them. A browser sends one at a
+# time. A packet can hold a hundred, each for the largest thing Mariner
+# serves, from a reader that then reads nothing.
+ASKED_AT_ONCE = 4
 
 
 class Door:
@@ -85,6 +94,11 @@ class Door:
             return False
         self._knocks.setdefault(name, []).append(moment)
         return True
+
+
+def stalled_after(address: object) -> float:
+    """How long a reader at *address* may take nothing of what waits."""
+    return STALLED_SECS if provenance.is_local(address) else STALLED_FROM_INTERNET_SECS
 
 
 def outstayed(

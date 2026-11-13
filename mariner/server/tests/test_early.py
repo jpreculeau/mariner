@@ -3,7 +3,6 @@
 import json
 import shutil
 import socket
-import threading
 import time
 from typing import Any, Dict, List, Tuple
 from unittest import TestCase
@@ -12,6 +11,7 @@ from unittest.mock import patch
 from pyexpect import expect
 
 from mariner.server import early, refusals
+from mariner.server.tests.running import run_checked
 
 
 class EarlyRefusalTest(TestCase):
@@ -29,18 +29,7 @@ class EarlyRefusalTest(TestCase):
         )
         self.port = self.server.effective_port
 
-        def run() -> None:
-            try:
-                self.server.run()
-            except OSError:
-                # Closed under it, at the end of the test.
-                pass
-
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        self.addCleanup(self.server.close)
-        # Before that, let what is being answered finish.
-        self.addCleanup(self.server.task_dispatcher.shutdown)
+        run_checked(self, self.server)
 
     def _exchange(
         self, head: str, body: bytes = b"", wait_for_body: bool = False

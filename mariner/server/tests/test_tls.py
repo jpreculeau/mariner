@@ -19,6 +19,7 @@ from pyexpect import expect
 from waitress.channel import HTTPChannel
 
 from mariner.server import early, tls
+from mariner.server.tests.running import run_checked
 
 LARGE = 5 * 1024 * 1024
 HUGE = 24 * 1024 * 1024
@@ -101,16 +102,7 @@ class SecuredConnectionTest(TestCase):
         )
         self.port = self.server.effective_port
 
-        def run() -> None:
-            try:
-                self.server.run()
-            except OSError:
-                # Closed under it, at the end of the test.
-                pass
-
-        threading.Thread(target=run, daemon=True).start()
-        self.addCleanup(self.server.close)
-        self.addCleanup(self.server.task_dispatcher.shutdown)
+        run_checked(self, self.server)
 
     def _connected(self) -> ssl.SSLSocket:
         trusting = ssl.create_default_context(cafile=self.certificate)
@@ -501,14 +493,7 @@ class TwoPortsTest(TestCase):
             tls_port=self.secured,
         )
 
-        def run() -> None:
-            try:
-                self.server.run()
-            except OSError:
-                pass
-
-        threading.Thread(target=run, daemon=True).start()
-        self.addCleanup(self.server.close)
+        run_checked(self, self.server)
 
     def test_the_one_named_speaks_tls_and_the_other_does_not(self) -> None:
         with socket.create_connection(("127.0.0.1", self.plain), timeout=5) as raw:
@@ -661,13 +646,5 @@ class RenewedCertificateTest(TestCase):
                 tls=self.live,
                 tls_files=(self.certificate, self.key),
             )
-            self.addCleanup(server.close)
-
-            def run() -> None:
-                try:
-                    server.run()
-                except OSError:
-                    pass
-
-            threading.Thread(target=run, daemon=True).start()
+            run_checked(self, server)
             expect(looked.wait(5)).to_equal(True)

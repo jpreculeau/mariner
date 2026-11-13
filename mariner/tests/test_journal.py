@@ -73,6 +73,40 @@ class JournalTest(_WithState):
         journal.note("signed_in", LOCAL, now=5000.0)
         expect(journal.wrong_since_the_visit_before()).to_equal(journal.KEPT)
 
+    def test_sign_in_being_closed_again_and_again_pushes_nothing_out(self) -> None:
+        # A bot that keeps it closed for days: a line every ten minutes.
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("password_changed", LOCAL, now=2.0)
+        for sent in range(journal.KEPT * 3):
+            journal.note(
+                "sign_in_closed", f"203.0.113.{sent % 200 + 1}", now=10.0 + sent
+            )
+        whats = [entry["what"] for entry in journal.entries()]
+        expect("signed_in" in whats).to_equal(True)
+        expect("password_changed" in whats).to_equal(True)
+
+    def test_the_owner_s_own_slip_before_signing_in_is_not_somebody_trying(
+        self,
+    ) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("wrong_password", INTERNET, now=2.0)
+        journal.note("wrong_password", LOCAL, now=3.0)
+        journal.note("wrong_password", LOCAL, now=4.0)
+        journal.note("signed_in", LOCAL, now=5.0)
+        expect(journal.since_the_visit_before()).to_equal(
+            {"wrong_passwords": 1, "wrong_codes": 0}
+        )
+
+    def test_wrong_codes_are_counted_for_what_they_are(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        for sent in range(3):
+            journal.note("wrong_code", INTERNET, now=2.0 + sent)
+        journal.note("wrong_password", INTERNET, now=8.0)
+        journal.note("signed_in", LOCAL, now=9.0)
+        expect(journal.since_the_visit_before()).to_equal(
+            {"wrong_passwords": 1, "wrong_codes": 3}
+        )
+
     def test_the_count_adds_up_those_folded_into_one_line(self) -> None:
         journal.note("signed_in", LOCAL, now=1.0)
         for sent in range(7):
@@ -190,4 +224,6 @@ class WhatIsNotedTest(_WithClient):
                 "/api/auth/login", json={"password": "not the one at all"}
             )
         answer = self._from(LOCAL).post("/api/auth/login", json={"password": PASSWORD})
-        expect(answer.get_json()["wrong_since_last_visit"]).to_equal(2)
+        told = answer.get_json()
+        expect(told["wrong_since_last_visit"]).to_equal(2)
+        expect(told["wrong_codes_since_last_visit"]).to_equal(0)

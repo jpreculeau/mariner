@@ -72,6 +72,13 @@ def scrypt(password: str, salt: bytes, n: int, r: int, p: int) -> bytes:
 
 def record_for(password: str) -> Dict[str, Any]:
     """What is kept of *password*; PasswordNotAllowed if it is not one."""
+    try:
+        password.encode("utf-8")
+    except UnicodeError:
+        # Half of a pair of characters: nothing a keyboard types.
+        raise PasswordNotAllowed(
+            "password_not_text", "This password holds what is not text."
+        )
     if len(password) < MIN_LENGTH:
         raise PasswordNotAllowed(
             "password_too_short",

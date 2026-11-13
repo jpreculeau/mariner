@@ -22,6 +22,9 @@ logger: logging.Logger = logging.getLogger(__name__)
 KEPT_AS = "sign-ins"
 KEPT = 50
 _WRONG = "wrong_password"
+# What a stranger can have noted as often as wished: kept apart from what
+# the owner looks for, so that it pushes none of it out.
+_NOISE = (_WRONG, "sign_in_closed")
 # What can be noted. The page words each of them.
 WHATS = (
     "signed_in",
@@ -76,8 +79,8 @@ def _read() -> None:
     found = (
         [entry for entry in kept if _is_one(entry)] if isinstance(kept, list) else []
     )
-    _wrong = [entry for entry in found if entry["what"] == _WRONG][-KEPT:]
-    _events = [entry for entry in found if entry["what"] != _WRONG][-KEPT:]
+    _wrong = [entry for entry in found if entry["what"] in _NOISE][-KEPT:]
+    _events = [entry for entry in found if entry["what"] not in _NOISE][-KEPT:]
 
 
 def _all() -> List[Dict[str, Any]]:
@@ -101,11 +104,12 @@ def note(what: str, address: object, now: Optional[float] = None) -> None:
         # Its place among the others: two can come within one second.
         latest = max([one.get("n", 0) for one in _events + _wrong] or [0])
         entry["n"] = latest + 1
-        if what != _WRONG:
+        if what not in _NOISE:
             _events.append(entry)
             del _events[:-KEPT]
         elif (
             _wrong
+            and _wrong[-1]["what"] == what
             and _wrong[-1]["from"] == entry["from"]
             and _wrong[-1].get("n", 0) == latest
         ):
@@ -138,16 +142,39 @@ def entries() -> List[Dict[str, Any]]:
         ]
 
 
-def wrong_since_the_visit_before() -> int:
-    """How many wrong passwords were sent between the last sign-in and the
-    one before it: what happened while the owner was away."""
-    count = 0
+def since_the_visit_before() -> Dict[str, int]:
+    """What was tried between the last sign-in and the one before it,
+    while the owner was away: wrong passwords, and wrong one-time codes
+    sent with the right password, which say that the password is known.
+
+    Not what came from the same place just before that last sign-in: the
+    owner's own slips of the finger.
+    """
+    passwords = codes = 0
     within = False
+    where: Optional[str] = None
+    own_slips = True
     for entry in entries():
-        if entry["what"] in ("signed_in", "password_chosen"):
+        what = entry["what"]
+        if what in ("signed_in", "password_chosen"):
             if within:
                 break
             within = True
-        elif within and entry["what"] in (_WRONG, "wrong_code"):
-            count += entry.get("count", 1)
-    return count
+            where = entry["from"]
+            continue
+        if not within:
+            continue
+        if what not in (_WRONG, "wrong_code"):
+            continue
+        if own_slips and entry["from"] == where:
+            continue
+        own_slips = False
+        if what == _WRONG:
+            passwords += entry.get("count", 1)
+        else:
+            codes += entry.get("count", 1)
+    return {"wrong_passwords": passwords, "wrong_codes": codes}
+
+
+def wrong_since_the_visit_before() -> int:
+    return since_the_visit_before()["wrong_passwords"]

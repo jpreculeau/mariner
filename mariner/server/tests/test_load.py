@@ -4,7 +4,6 @@ import shutil
 import socket
 import ssl
 import tempfile
-import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List
@@ -14,6 +13,7 @@ from unittest.mock import patch
 from pyexpect import expect
 
 from mariner.server import early, load, tls
+from mariner.server.tests.running import run_checked
 
 OUTSIDE = "203.0.113.5"
 OTHER = "198.51.100.9"
@@ -107,28 +107,10 @@ class _Served(TestCase):
         )
         self.port = int(self.server.effective_port)
 
-        self.raised: List[BaseException] = []
-        self.closing = False
-
-        def run() -> None:
-            try:
-                self.server.run()
-            except BaseException as error:
-                # Closed under it at the end of the test, and nothing else:
-                # a server that falls is not one that holds.
-                if not self.closing:
-                    self.raised.append(error)
-
-        threading.Thread(target=run, daemon=True).start()
-        self.addCleanup(self._close)
+        self.raised = run_checked(self, self.server)
 
     def _settings(self) -> Dict[str, Any]:
         return dict(self.SETTINGS)
-
-    def _close(self) -> None:
-        self.closing = True
-        self.server.close()
-        expect(self.raised).to_equal([])
 
     def _still_answers(self) -> None:
         """The server goes on, after what it did to one connection."""
@@ -138,10 +120,14 @@ class _Served(TestCase):
         answer = self._asked(self._connected())
         expect(answer.startswith(b"HTTP/1.1 200")).to_equal(True)
 
-    def _connected(self, receive_buffer: int = 0) -> socket.socket:
+    def _connected(self, receive_buffer: int = 0, source: str = "") -> socket.socket:
         connection = socket.socket()
         if receive_buffer:
             connection.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, receive_buffer)
+        if source:
+            # Another address of this computer: it stands for the Internet
+            # where a test says that it is not local.
+            connection.bind((source, 0))
         connection.settimeout(8)
         connection.connect(("127.0.0.1", self.port))
         self.addCleanup(connection.close)
@@ -325,15 +311,15 @@ class SilentVisitorOverTlsTest(_Served):
         return secured
 
     def _asked(self, connection: socket.socket) -> bytes:
-        return super()._asked(
-            connection
-            if isinstance(connection, ssl.SSLSocket)
-            else self._greet(connection)
-        )
+        if not isinstance(connection, ssl.SSLSocket):
+            connection = self._greeted_on(connection)
+        return super()._asked(connection)
 
-    def _greet(self, connection: socket.socket) -> ssl.SSLSocket:
+    def _greeted_on(self, connection: socket.socket) -> ssl.SSLSocket:
         trusting = ssl.create_default_context(cafile=self.certificate)
-        return trusting.wrap_socket(connection, server_hostname="localhost")
+        secured = trusting.wrap_socket(connection, server_hostname="localhost")
+        self.addCleanup(secured.close)
+        return secured
 
     def test_one_that_says_nothing_or_only_greets_is_not_kept(self) -> None:
         with patch.object(
@@ -360,3 +346,70 @@ class WebServerStillMadeTheSameTest(TestCase):
                 lambda environ, start_response: [], host="127.0.0.1", port=0
             )
         expect("waitress" in str(refused.exception)).to_equal(True)
+
+
+class DeafCrowdFromTheInternetTest(_Served):
+    """With the figures Mariner runs with: its own number of threads, its
+    own limits, an answer the size of the page's script."""
+
+    BODY = b"x" * 460_000
+
+    def test_readers_that_read_nothing_do_not_make_home_wait(self) -> None:
+        # One packet asks for the page's script a hundred times over; who
+        # sent it reads nothing. As many of those as one address may hold.
+        outside = patch.object(
+            early.provenance.config, "get_not_local", return_value=["127.0.0.2"]
+        )
+        outside.start()
+        self.addCleanup(outside.stop)
+        asked = b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" * 120
+        longest = 0.0
+        for _ in range(load.PER_ADDRESS):
+            deaf = self._connected(receive_buffer=4096, source="127.0.0.2")
+            deaf.sendall(asked)
+        for _ in range(4):
+            time.sleep(0.5)
+            started = time.monotonic()
+            answer = self._asked(self._connected())
+            longest = max(longest, time.monotonic() - started)
+            expect(answer.startswith(b"HTTP/1.1 200")).to_equal(True)
+        expect(longest < 2.0).to_equal(True)
+
+    def test_what_one_connection_from_the_internet_asks_at_once_is_held_to_a_few(
+        self,
+    ) -> None:
+        outside = patch.object(
+            early.provenance.config, "get_not_local", return_value=["127.0.0.2"]
+        )
+        outside.start()
+        self.addCleanup(outside.stop)
+        greedy = self._connected(source="127.0.0.2")
+        greedy.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" * 40)
+        taken = b""
+        greedy.settimeout(3)
+        try:
+            while True:
+                piece = greedy.recv(1024 * 1024)
+                if not piece:
+                    break
+                taken += piece
+        except socket.timeout:
+            pass
+        answers = taken.count(b"HTTP/1.1 200")
+        # One more at most: the one being answered as the rest were let go.
+        expect(answers in (load.ASKED_AT_ONCE, load.ASKED_AT_ONCE + 1)).to_equal(True)
+
+    def test_the_local_network_asks_for_as_much_as_it_likes(self) -> None:
+        many = self._connected()
+        many.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n" * 12)
+        taken = b""
+        many.settimeout(5)
+        try:
+            while taken.count(b"HTTP/1.1 200") < 12 or not taken.endswith(b"x" * 64):
+                piece = many.recv(1024 * 1024)
+                if not piece:
+                    break
+                taken += piece
+        except socket.timeout:
+            pass
+        expect(taken.count(b"HTTP/1.1 200")).to_equal(12)

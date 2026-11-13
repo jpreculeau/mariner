@@ -388,6 +388,21 @@ class PasswordKnownTest(_FromPlaces):
         for _ in range(auth.WRONG_CODES_BEFORE_CLOSING - 1):
             expect(self._guess().status_code).to_equal(401)
 
+    def test_they_are_counted_even_where_nothing_can_be_kept(self) -> None:
+        # A card gone read-only: the page stays open, and so must this.
+        _set_up()
+        real = state.write
+
+        def not_the_code(name: str, content: bytes) -> None:
+            if name == totp.KEPT_AS:
+                raise OSError(30, "Read-only file system")
+            real(name, content)
+
+        with patch.object(state, "write", side_effect=not_the_code):
+            for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+                self._guess()
+            expect(self._guess().get_json()["code"]).to_equal("code_locked")
+
     def test_a_new_code_starts_from_nothing(self) -> None:
         _set_up()
         for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
@@ -430,6 +445,19 @@ class OddBodiesTest(_FromPlaces):
         )
         expect(answer.status_code).to_equal(401)
         expect(journal.entries()[0]["what"]).to_equal("wrong_password")
+
+    def test_a_new_password_that_is_no_text_is_not_taken(self) -> None:
+        answer = self._from(LOCAL).post("/api/auth/login", json={"password": PASSWORD})
+        client = self._from(LOCAL)
+        client.post("/api/auth/login", json={"password": PASSWORD})
+        answer = client.post(
+            "/api/auth/password",
+            data='{"current": "%s", "new": "\\ud800 correct horse battery"}' % PASSWORD,
+            content_type="application/json",
+        )
+        expect(answer.status_code).to_equal(400)
+        expect(answer.get_json()["code"]).to_equal("password_not_text")
+        expect(auth.check_password(PASSWORD)).to_equal(True)
 
     def test_a_body_nested_beyond_reason_is_no_password(self) -> None:
         deep = "[" * 100000 + "]" * 100000

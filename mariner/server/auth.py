@@ -466,7 +466,9 @@ def is_signed_in() -> bool:
 
 
 def _sign_in(
-    under: str, with_code: Optional[str] = None, tried: Optional[int] = None
+    under: str,
+    with_code: Optional[str] = None,
+    tried: Optional[Mapping[str, int]] = None,
 ) -> Response:
     """Sign this browser in *under* the password of that number.
 
@@ -494,8 +496,9 @@ def _sign_in(
         "page_key": key,
     }
     if tried is not None:
-        # How many wrong passwords were sent since the visit before.
-        answer["wrong_since_last_visit"] = tried
+        # What was tried since the visit before.
+        answer["wrong_since_last_visit"] = tried["wrong_passwords"]
+        answer["wrong_codes_since_last_visit"] = tried["wrong_codes"]
     return jsonify(answer)
 
 
@@ -572,8 +575,9 @@ _last_step_seen: Optional[int] = None
 
 
 def forget_code_seen() -> None:
-    global _last_step_seen
+    global _last_step_seen, _wrong_codes_seen
     _last_step_seen = None
+    _wrong_codes_seen = None
 
 
 def _code_record() -> Dict[str, Any]:
@@ -632,21 +636,32 @@ def _last_step(
 WRONG_CODES_BEFORE_CLOSING = 10
 
 
+# The same as it stands since Mariner started, should it not be possible
+# to keep it; None until it changes.
+_wrong_codes_seen: Optional[int] = None
+
+
 def wrong_codes() -> int:
+    if _wrong_codes_seen is not None:
+        return _wrong_codes_seen
     kept = _code_record().get("wrong")
     return kept if isinstance(kept, int) else 0
 
 
 def _count_wrong_codes(to: Optional[int] = None) -> int:
     """One more wrong code with the right password; or *to* that many."""
+    global _wrong_codes_seen
     with _code_lock:
         record = _code_record()
         if _secret_in_force(record) is None:
+            _wrong_codes_seen = None
             return 0
         kept = record.get("wrong")
-        was = kept if isinstance(kept, int) else 0
+        kept_count = kept if isinstance(kept, int) else 0
+        was = kept_count if _wrong_codes_seen is None else _wrong_codes_seen
         now = was + 1 if to is None else to
-        if now != was:
+        _wrong_codes_seen = now
+        if now != kept_count:
             record["wrong"] = now
             try:
                 state.write(totp.KEPT_AS, json.dumps(record).encode("ascii"))
@@ -667,7 +682,7 @@ def start_code() -> str:
 
 def confirm_code(candidate: str, now: Optional[float] = None) -> bool:
     """Put the secret that was started in force, given a code of it."""
-    global _last_step_seen
+    global _last_step_seen, _wrong_codes_seen
     moment = time.time() if now is None else now
     with _code_lock:
         record = _code_record()
@@ -682,6 +697,8 @@ def confirm_code(candidate: str, now: Optional[float] = None) -> bool:
             json.dumps({"secret": pending, "last": step}).encode("ascii"),
         )
         _last_step_seen = step
+        # Another code: what was guessed at the one before is nothing to it.
+        _wrong_codes_seen = None
     return True
 
 
@@ -995,7 +1012,7 @@ def login() -> Response:
     return _sign_in(
         current,
         with_code=code_identity() if from_internet else None,
-        tried=journal.wrong_since_the_visit_before(),
+        tried=journal.since_the_visit_before(),
     )
 
 
@@ -1178,9 +1195,11 @@ def sign_ins() -> Response:
     if not is_signed_in():
         body = refusal("/api/auth-journal", session) or {}
         return make_response(jsonify(body), status_of(body))
+    tried = journal.since_the_visit_before()
     return jsonify(
         {
             "entries": journal.entries(),
-            "wrong_since_last_visit": journal.wrong_since_the_visit_before(),
+            "wrong_since_last_visit": tried["wrong_passwords"],
+            "wrong_codes_since_last_visit": tried["wrong_codes"],
         }
     )
