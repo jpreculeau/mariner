@@ -15,7 +15,7 @@ from flask_wtf.csrf import CSRFError, CSRFProtect
 from whitenoise import WhiteNoise
 
 from mariner import config
-from mariner.server import auth, https, origin, refusals, sessions
+from mariner.server import auth, https, origin, provenance, refusals, sessions
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -198,6 +198,27 @@ def refuse_other_sites() -> Optional[Tuple[Response, int]]:
 
 
 @app.before_request
+def keep_to_the_local_network() -> Optional[Tuple[Response, int]]:
+    """Keep for the local network what is not for the Internet.
+
+    See ``mariner.server.provenance``. As above, the web server Mariner
+    runs under has already refused a request that has a body.
+    """
+    refused = provenance.refusal(request.path, request.remote_addr)
+    if refused is None:
+        return None
+    refusals.log(
+        "Web",
+        request.remote_addr,
+        refused["code"],
+        request.headers,
+        request.method,
+        request.path,
+    )
+    return jsonify(refused), 403
+
+
+@app.before_request
 def ask_for_https() -> Optional[Union[Response, Tuple[Response, int]]]:
     """Answer nothing of the page's own in the clear, once it has HTTPS.
 
@@ -239,7 +260,12 @@ def ask_for_the_password() -> Optional[Tuple[Response, int]]:
 
 # First of all: before the check of the token a form carries, which reads
 # the whole form, file included.
-for early in (ask_for_the_password, ask_for_https, refuse_other_sites):
+for early in (
+    ask_for_the_password,
+    ask_for_https,
+    keep_to_the_local_network,
+    refuse_other_sites,
+):
     app.before_request_funcs.setdefault(None, []).remove(early)
     app.before_request_funcs[None].insert(0, early)
 

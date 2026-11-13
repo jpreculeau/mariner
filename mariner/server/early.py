@@ -36,7 +36,7 @@ from waitress.server import BaseWSGIServer
 from waitress.utilities import Error
 
 from mariner import config
-from mariner.server import origin, refusals
+from mariner.server import origin, provenance, refusals
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -169,6 +169,11 @@ class _Parser(HTTPRequestParser):
         if refusal is not None:
             self._log(refusal.code, headers)
             self._refuse(403, refusal.body())
+            return
+        not_local = provenance.refusal(self.path, self.peer)
+        if not_local is not None:
+            self._log(not_local["code"], headers)
+            self._refuse(403, not_local)
             return
         if plain_refusal is not None and not self.secured:
             in_the_clear = plain_refusal(self.path, headers)

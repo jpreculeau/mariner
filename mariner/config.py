@@ -3,6 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, MutableMapping, Optional, Sequence, Tuple
 
+import ipaddress
 import toml
 
 
@@ -149,6 +150,53 @@ def get_https_key() -> Optional[str]:
     return own[1] if own else None
 
 
+def _internet() -> MutableMapping[str, object]:
+    section = _get_config().get("internet")
+    return section if isinstance(section, dict) else {}
+
+
+def _is_a_network(given: object) -> bool:
+    if not isinstance(given, str):
+        return False
+    try:
+        ipaddress.ip_network(given, strict=False)
+    except ValueError:
+        return False
+    return True
+
+
+def _networks(name: str) -> List[str]:
+    given = _internet().get(name, [])
+    if not isinstance(given, list):
+        return []
+    return [one for one in given if _is_a_network(one)]
+
+
+def get_local_networks() -> List[str]:
+    """Networks taken for local besides the usual ones.
+
+    ``local_networks`` under ``[internet]``: see mariner.server.provenance.
+    """
+    return _networks("local_networks")
+
+
+def get_not_local() -> List[str]:
+    """Addresses and networks that are not local, whatever they look like.
+
+    ``not_local`` under ``[internet]``: a router that passes connections
+    on under its own address, a tunnel that ends on this computer.
+    """
+    return _networks("not_local")
+
+
+def get_host_commands_from_internet() -> bool:
+    """Whether the computer can be stopped or restarted from the Internet.
+
+    Only when plainly allowed.
+    """
+    return _internet().get("host_commands", False) is True
+
+
 def get_http_allowed_hosts() -> List[str]:
     """Names Mariner answers to besides its address and local names.
 
@@ -231,6 +279,29 @@ def ignored_settings() -> List[str]:
         found.append(
             "[https] certificate and [https] key go together, each the path "
             "of a file: Mariner makes a certificate of its own instead"
+        )
+    for name in ("local_networks", "not_local"):
+        if name not in _internet():
+            continue
+        given = _internet()[name]
+        if not isinstance(given, list):
+            found.append(
+                f"[internet] {name} = {given!r} is not a list of networks: "
+                "it is passed over"
+            )
+            continue
+        for one in given:
+            if not _is_a_network(one):
+                found.append(
+                    f"[internet] {name}: {one!r} is neither an address nor a "
+                    "network (as in 192.168.1.0/24): it is passed over"
+                )
+    if "host_commands" in _internet() and not isinstance(
+        _internet()["host_commands"], bool
+    ):
+        found.append(
+            f"[internet] host_commands = {_internet()['host_commands']!r} is "
+            "neither true nor false: it is taken for false"
         )
     for section in ("uvtools", "sdcp"):
         section_config = _get_config().get(section)

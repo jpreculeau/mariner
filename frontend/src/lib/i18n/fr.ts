@@ -219,6 +219,8 @@ export const fr: Record<TextKey, string> = {
   "error.password_not_set": "Aucun mot de passe n'a encore été choisi.",
   "error.https_required":
     "La page de Mariner est servie en HTTPS et ne répond plus en clair. Ouvrez-la à son adresse en https://.",
+  "error.local_network_only":
+    "Cela se fait uniquement depuis le réseau local, pas depuis Internet.",
   "error.state_not_written":
     "Mariner n'a pas pu l'enregistrer\u202f: le dossier où il garde son mot de passe et ses réglages ne peut pas être écrit. Le disque est peut-être plein ou en lecture seule. Rien n'a été modifié.",
   "error.login_required": "Connectez-vous d'abord.",

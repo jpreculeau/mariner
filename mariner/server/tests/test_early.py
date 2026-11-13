@@ -171,6 +171,16 @@ class EarlyRefusalTest(TestCase):
         expect(time.monotonic() - started < 2).to_equal(True)
         expect(self.called).to_equal([])
 
+    def test_a_slicer_s_file_from_the_internet_is_not_taken_in(self) -> None:
+        with patch("mariner.server.provenance.is_local", return_value=False):
+            status, _, body = self._exchange(
+                "PUT /uvtools/upload/x.ctb HTTP/1.1\nHost: 127.0.0.1\n"
+                "Content-Length: 500000000\n"
+            )
+        expect(status).to_equal(403)
+        expect(json.loads(body)["code"]).to_equal("local_network_only")
+        expect(self.called).to_equal([])
+
     def test_a_password_out_of_reach_is_not_said_as_one_to_give(self) -> None:
         patcher = patch.object(
             early,

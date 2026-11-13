@@ -42,6 +42,14 @@ class DiscoveryProtocolTest(TestCase):
         )
         self.transport.sendto.assert_called_once()
 
+    def test_who_is_not_on_the_local_network_is_not_answered(self) -> None:
+        # Not even told that a printer is here.
+        self._connect()
+        self.protocol.datagram_received(
+            constants.DISCOVERY_MAGIC, ("203.0.113.5", 3000)
+        )
+        self.transport.sendto.assert_not_called()
+
     def test_reply_is_json_sent_back_to_the_sender(self) -> None:
         self._connect()
         addr = ("192.168.1.5", 55000)

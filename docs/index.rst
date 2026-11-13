@@ -35,6 +35,7 @@ Mariner 2 provides the following features:
    install
    password-and-settings
    https
+   internet
    network-printing
    troubleshooting
    contributing

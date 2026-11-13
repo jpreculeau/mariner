@@ -17,7 +17,7 @@ from pyre_extensions import none_throws
 
 from mariner import config
 from mariner.server import state
-from mariner.server import origin, refusals
+from mariner.server import origin, provenance, refusals
 from mariner.server.providers.sdcp import constants, identity, messages
 from mariner.server.providers.sdcp.bridge import PrinterBridge
 from mariner.server.providers.sdcp.history import HistoryStore, TaskStatus
@@ -57,6 +57,9 @@ class _DiscoveryProtocol(asyncio.DatagramProtocol):
         if transport is None:
             return
         peer = addr[0] if addr else None
+        if not provenance.is_local(peer):
+            # Not told that a printer is here.
+            return
         payload = self._service.build_discovery_response(peer)
         logger.info("SDCP: discovery request from %s", peer)
         transport.sendto(json.dumps(payload).encode("utf-8"), addr)
@@ -78,8 +81,19 @@ async def refuse_other_sites(request: web.Request, handler: Any) -> Any:
     or stop a print. Slicers are not browsers and say nothing of a site;
     see ``mariner.server.origin``.
     """
+    not_local = provenance.slicer_refusal(request.remote)
     refusal = origin.refusal_for(request.headers)
-    if refusal is not None:
+    if not_local is not None:
+        refusals.log(
+            "SDCP",
+            request.remote,
+            not_local["code"],
+            request.headers,
+            request.method,
+            request.path,
+        )
+        response = web.json_response(not_local, status=403)
+    elif refusal is not None:
         refusals.log(
             "SDCP",
             request.remote,

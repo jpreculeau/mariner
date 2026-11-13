@@ -1696,6 +1696,22 @@ class ServiceCrossSiteTest(IsolatedAsyncioTestCase):
             response = await self._answered(headers)
             expect(response.status).to_equal(200)
 
+    async def test_a_slicer_on_the_internet_is_not_served(self) -> None:
+        # SDCP gives no password: nothing of it is for who is not on the
+        # local network, should its port ever be let through a router.
+        request = _BrowserRequest({"Host": "192.168.1.20:3030"})
+        request.remote = "203.0.113.5"
+        from mariner.server.providers.sdcp.service import refuse_other_sites
+
+        async def handler(request: Any) -> Any:
+            raise AssertionError("served")
+
+        refusals.said.clear()
+        with self.assertLogs("mariner.server.refusals", level="WARNING"):
+            response = await refuse_other_sites(cast(Any, request), handler)
+        expect(response.status).to_equal(403)
+        expect(json.loads(response.body)["code"]).to_equal("local_network_only")
+
     async def test_a_refusal_says_who_was_refused(self) -> None:
         # Should a slicer be turned away, the log must tell enough to see it.
         headers = {"Host": "192.168.1.20:3030", "Origin": "http://evil.example\nX"}

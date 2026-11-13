@@ -197,6 +197,47 @@ certificate = "/etc/ssl/printer.pem"
         expect(config.get_https_certificate()).to_equal(None)
         expect("[https] certificate" in said).to_equal(True)
 
+    def test_nothing_is_said_of_the_internet_by_default(self) -> None:
+        expect(config.get_local_networks()).to_equal([])
+        expect(config.get_not_local()).to_equal([])
+        expect(config.get_host_commands_from_internet()).to_equal(False)
+
+    def test_can_say_what_is_local_and_what_is_not(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[internet]
+local_networks = ["203.0.113.0/24"]
+not_local = ["192.168.1.1", "127.0.0.0/8"]
+host_commands = true
+            """,
+        )
+        expect(config.get_local_networks()).to_equal(["203.0.113.0/24"])
+        expect(config.get_not_local()).to_equal(["192.168.1.1", "127.0.0.0/8"])
+        expect(config.get_host_commands_from_internet()).to_equal(True)
+        expect(config.ignored_settings()).to_equal([])
+
+    def test_internet_settings_that_are_passed_over_are_named(self) -> None:
+        self.fs.create_file(
+            "/etc/mariner/config.toml",
+            contents="""
+[internet]
+local_networks = ["203.0.113.0/24", "everything"]
+not_local = "192.168.1.1"
+host_commands = "yes"
+            """,
+        )
+        # What can be read is used, the rest is said.
+        expect(config.get_local_networks()).to_equal(["203.0.113.0/24"])
+        expect(config.get_not_local()).to_equal([])
+        # Not allowed by something that is neither true nor false.
+        expect(config.get_host_commands_from_internet()).to_equal(False)
+        said = " ".join(config.ignored_settings())
+        expect("[internet] local_networks" in said).to_equal(True)
+        expect("'everything'" in said).to_equal(True)
+        expect("[internet] not_local" in said).to_equal(True)
+        expect("[internet] host_commands" in said).to_equal(True)
+
     def test_a_port_for_https_that_is_not_one_is_the_default(self) -> None:
         for given in ('"abc"', "70000", "0", "true"):
             config._get_config.cache_clear()

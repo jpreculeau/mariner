@@ -182,3 +182,40 @@ class PlainPortTest(TestCase):
             expect(
                 server.sessions.read(app, f"__Host-mariner_session={signed}", "")
             ).to_equal({"held": 1})
+
+
+class FromTheInternetTest(TestCase):
+    """What is answered to who is not on the local network."""
+
+    def setUp(self) -> None:
+        app.config["TESTING"] = True
+        self.client = app.test_client()
+        self.client.environ_base["REMOTE_ADDR"] = "203.0.113.5"
+        let_in = patch("mariner.server.auth.let_in", return_value=True)
+        let_in.start()
+        self.addCleanup(let_in.stop)
+
+    def test_a_slicer_s_address_is_not_answered(self) -> None:
+        response = self.client.get("/uvtools/files", headers={"User-Agent": "UVtools"})
+        expect(response.status_code).to_equal(403)
+        expect(response.get_json()["code"]).to_equal("local_network_only")
+
+    def test_the_computer_is_not_stopped(self) -> None:
+        with patch("mariner.server.api._run_host_command") as run:
+            response = self.client.post("/api/host/shutdown")
+        expect(response.status_code).to_equal(403)
+        expect(response.get_json()["code"]).to_equal("local_network_only")
+        run.assert_not_called()
+
+    def test_the_page_is_answered(self) -> None:
+        expect(self.client.get("/api/csrf_token").status_code).to_equal(200)
+
+    def test_the_same_from_the_local_network_is_answered(self) -> None:
+        self.client.environ_base["REMOTE_ADDR"] = "192.168.1.20"
+        with tempfile.TemporaryDirectory() as files, patch(
+            "mariner.config.get_files_directory", return_value=Path(files)
+        ):
+            response = self.client.get(
+                "/uvtools/files", headers={"User-Agent": "UVtools"}
+            )
+        expect(response.status_code).to_equal(200)

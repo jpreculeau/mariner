@@ -72,6 +72,21 @@ spool_directory = "/var/tmp"
 #certificate = "/etc/mariner/printer.pem"
 #key = "/etc/mariner/printer.key"
 
+[internet]
+# Some of what Mariner does is kept for the local network: what serves
+# slicers (they give no password), and stopping or restarting the computer.
+# Local is this computer, the private ranges (10.x, 172.16-31.x, 192.168.x),
+# those a VPN gives, and over IPv6 the network this computer is in.
+# Networks to take for local besides those:
+#local_networks = ["203.0.113.0/24"]
+# Addresses or networks that are NOT local whatever they look like. Needed
+# where the Internet arrives under a local address: a router that passes
+# connections on under its own address, a tunnel or a relay on this computer
+# (then "127.0.0.1").
+#not_local = ["192.168.1.1"]
+# Let who is signed in stop or restart the computer from the Internet.
+#host_commands = false
+
 [state]
 # Directory in which Mariner keeps what must outlast a restart, for itself
 # alone: the key that signs sessions, the password's hash, the settings
