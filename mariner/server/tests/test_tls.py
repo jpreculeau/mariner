@@ -451,6 +451,25 @@ class SecuredConnectionTest(TestCase):
 
 
 @skipUnless(shutil.which("openssl"), "needs the openssl command")
+
+    def test_readers_that_read_nothing_do_not_stop_the_answers(self) -> None:
+        # As many as there are threads to answer, and one more: each asks
+        # for much, several times over, and takes none of it.
+        from mariner.server import load
+
+        with patch.object(load, "STALLED_SECS", 1.0):
+            for _ in range(5):
+                deaf = self._connected()
+                deaf.sendall(b"GET /huge HTTP/1.1\r\nHost: localhost\r\n\r\n" * 4)
+            time.sleep(0.5)
+            other = self._connected()
+            other.settimeout(10)
+            started = time.monotonic()
+            other.sendall(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            expect(self._answer(other).endswith(b"served 0")).to_equal(True)
+            expect(time.monotonic() - started < 9).to_equal(True)
+
+
 class TwoPortsTest(TestCase):
     """As Mariner listens: in the clear on one port, over TLS on another."""
 
