@@ -446,6 +446,12 @@ class SignInTest(_WithClient):
                 response = self.post("/api/auth/login", password=PASSWORD)
                 expect(response.status_code).to_equal(503)
                 expect(response.get_json()["code"]).to_equal("state_unavailable")
+        # Put right: none of those was counted as a wrong password.
+        import os
+
+        os.chmod(self.root / "s" / "password", 0o600)
+        response = self.post("/api/auth/login", password=PASSWORD)
+        expect(response.status_code).to_equal(200)
 
     def test_signing_in_while_the_folder_is_out_of_reach_says_so(self) -> None:
         with patch.object(state, "is_makeshift", return_value=True):

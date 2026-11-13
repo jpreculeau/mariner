@@ -205,6 +205,34 @@ class CommandLineTest(TestCase):
         self.addCleanup(patcher.stop)
         return own
 
+    def test_set_password_keeps_it_where_mariner_will_read_it(self) -> None:
+        # The folder asked for is not there yet and can be made: Mariner
+        # will make it and read there, not in the one a run by hand left
+        # in the account's home.
+        own = self._home_folder()
+        own.mkdir(mode=0o700)
+        expect(
+            self._run("set-password", typed=("long enough!", "long enough!"))
+        ).to_equal(0)
+        expect((self.state / "password").exists()).to_equal(True)
+        expect((own / "password").exists()).to_equal(False)
+
+    def test_set_password_does_not_write_through_a_link(self) -> None:
+        # Mariner does not use a folder reached by a link: it reads in
+        # the account's home, and so the password goes there.
+        own = self._home_folder()
+        (self.root / "real").mkdir()
+        os.symlink(self.root / "real", self.root / "link")
+        with patch(
+            "mariner.config.get_state_directory",
+            return_value=str(self.root / "link" / "state"),
+        ):
+            expect(
+                self._run("set-password", typed=("long enough!", "long enough!"))
+            ).to_equal(0)
+        expect((own / "password").exists()).to_equal(True)
+        expect((self.root / "real" / "state").exists()).to_equal(False)
+
     def test_they_work_on_the_folder_mariner_fell_back_on(self) -> None:
         # Run by hand under an ordinary account, Mariner keeps its
         # password in that account's home when it cannot make the folder

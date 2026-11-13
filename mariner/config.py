@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, MutableMapping, Optional, Sequence
@@ -215,6 +216,26 @@ def get_state_directory() -> str:
 # Where things are kept when the state directory cannot be made: in the
 # home of the account Mariner runs under, as when it is run by hand.
 STATE_FALLBACKS: List[str] = ["~/.mariner/state"]
+
+
+def state_directory_can_be_made(wanted: str) -> bool:
+    """Whether Mariner would make and use a folder at *wanted*.
+
+    Nothing is made for asking. Mariner and the commands about the
+    password go by this, so that they look in the same folder. One
+    reached through a link is not used: it could lead to where another
+    account reads or writes.
+    """
+    above = os.path.abspath(os.path.expanduser(wanted))
+    if os.path.realpath(above) != above:
+        return False
+    while not os.path.lexists(above):
+        parent = os.path.dirname(above)
+        if parent == above:
+            return False
+        above = parent
+    return os.path.isdir(above) and os.access(above, os.W_OK | os.X_OK)
+
 
 DEFAULT_CACHE_DIRECTORY = "/var/cache/mariner"
 

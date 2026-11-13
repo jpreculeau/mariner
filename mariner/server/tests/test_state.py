@@ -214,7 +214,7 @@ class DegradedTest(TestCase):
         self._configured(self.root / "state")
         state.write("anything", b"x")
         expect(state.is_makeshift()).to_equal(False)
-        with patch("mariner.server.state._usable", return_value=False):
+        with patch("os.geteuid", return_value=os.geteuid() + 1):
             expect(state.is_makeshift()).to_equal(True)
 
     def test_none_that_can_be_made_is_known_before_one_is_looked_for(self) -> None:
@@ -282,6 +282,42 @@ class DegradedTest(TestCase):
         self._configured(blocked / "state")
         with patch("mariner.server.state._FALLBACKS", [str(own)]):
             expect(state.read("password")).to_equal(b"x")
+
+    def test_reading_and_keeping_agree_when_the_folder_is_reached_by_a_link(
+        self,
+    ) -> None:
+        # Not used, for where a link could lead: what is read before
+        # anything is kept is then what the other folder holds, the one
+        # things will be kept in.
+        (self.root / "real").mkdir()
+        os.symlink(self.root / "real", self.root / "link")
+        own = self.root / "own"
+        own.mkdir(mode=0o700)
+        (own / "settings.json").write_bytes(b"{}")
+        os.chmod(own / "settings.json", 0o600)
+        self._configured(self.root / "link" / "state")
+        with patch("mariner.server.state._FALLBACKS", [str(own)]):
+            expect(state.read("settings.json")).to_equal(b"{}")
+            with self.assertLogs("mariner.server.state", level="WARNING"):
+                expect(state.directory()).to_equal(own)
+            expect(state.read("settings.json")).to_equal(b"{}")
+        expect((self.root / "real" / "state").exists()).to_equal(False)
+
+    def test_a_folder_that_goes_while_mariner_runs_is_not_made_again(self) -> None:
+        # Moved aside for a copy to be put back: made again, empty, it
+        # would say that no password was ever chosen.
+        import shutil
+
+        wanted = self.root / "state"
+        self._configured(wanted)
+        state.write("password", b"x")
+        shutil.rmtree(wanted)
+        expect(state.is_makeshift()).to_equal(True)
+        expect(state.read("password")).to_equal(None)
+        expect(wanted.exists()).to_equal(False)
+        with self.assertRaises(OSError):
+            state.write("password", b"y")
+        expect(wanted.exists()).to_equal(False)
 
     def test_a_new_key_that_could_not_be_kept_is_not_replaced_by_the_old_one(
         self,

@@ -97,23 +97,34 @@ def _runs_under_another_account() -> bool:
 def _folder_to_write() -> Optional[str]:
     """The folder Mariner keeps things in, made if this account may."""
     folders = _folders()
-    for one in folders:
+    wanted, others = folders[0], folders[1:]
+    if os.path.lexists(wanted):
+        return wanted
+    # As Mariner chooses: the folder it was told when it can be made,
+    # else the first of the others that is there or can be.
+    may_make = os.geteuid() != 0 and not _runs_under_another_account()
+    if config.state_directory_can_be_made(wanted):
+        # Made by root, or in a home the service does not read, it would
+        # be of no use to the service.
+        return _made(wanted) if may_make else None
+    for one in others:
         if os.path.lexists(one):
             return one
-    if os.geteuid() == 0:
-        # Made by root, the service would not use it, and its page would
-        # stay shut.
+    if not may_make:
         return None
-    if _runs_under_another_account():
-        # Made in the home of this account, the service would not read it.
-        return None
-    for one in folders:
-        try:
-            os.makedirs(one, mode=0o700, exist_ok=True)
-            return one
-        except OSError:
-            continue
+    for one in others:
+        made = _made(one)
+        if made is not None:
+            return made
     return None
+
+
+def _made(folder: str) -> Optional[str]:
+    try:
+        os.makedirs(folder, mode=0o700, exist_ok=True)
+    except OSError:
+        return None
+    return folder
 
 
 def _set_password() -> int:

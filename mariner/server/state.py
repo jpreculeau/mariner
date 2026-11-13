@@ -58,7 +58,7 @@ def is_makeshift() -> bool:
     if _directory is not None:
         # Looked at each time: given to another account while Mariner
         # runs, by a restore say, it is out of reach from then on.
-        return _makeshift or not _usable(str(_directory))
+        return _makeshift or not _still_usable(_directory)
     # Not yet looked for, and not made for the sake of asking: the one
     # asked for is there and cannot be used.
     wanted = os.path.expanduser(config.get_state_directory())
@@ -70,13 +70,24 @@ def is_makeshift() -> bool:
 
 def _can_be_made(wanted: str) -> bool:
     """Whether a folder could be made at *wanted*, without making it."""
-    above = os.path.abspath(os.path.expanduser(wanted))
-    while not os.path.lexists(above):
-        parent = os.path.dirname(above)
-        if parent == above:
-            return False
-        above = parent
-    return os.path.isdir(above) and os.access(above, os.W_OK | os.X_OK)
+    return config.state_directory_can_be_made(wanted)
+
+
+def _still_usable(folder: Path) -> bool:
+    """Whether the folder in use is still there and this account's.
+
+    Nothing is made, nor put right: made again after it went, it would
+    be empty, and say that no password was ever chosen.
+    """
+    try:
+        status = os.lstat(folder)
+    except OSError:
+        return False
+    return (
+        stat.S_ISDIR(status.st_mode)
+        and status.st_uid == os.geteuid()
+        and os.access(folder, os.R_OK | os.W_OK | os.X_OK)
+    )
 
 
 def _usable(wanted: str) -> bool:
@@ -106,7 +117,9 @@ def directory() -> Path:
     that Mariner starts all the same.
     """
     global _directory, _makeshift
-    if _directory is not None and os.path.isdir(_directory):
+    if _directory is not None:
+        # Even gone: another is not taken in its place while Mariner
+        # runs (see ``is_makeshift``).
         return _directory
     wanted = config.get_state_directory()
     # Looked at before anything is made: was something kept there?
