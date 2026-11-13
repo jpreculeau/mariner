@@ -1047,4 +1047,111 @@ describe("Gate", () => {
 
     expect(screen.queryByText("the printer's page")).toBeNull();
   });
+
+  describe("seen from the Internet", () => {
+    const from = (more: object) =>
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        from_internet: true,
+        ...more,
+      });
+
+    it("asks for the code besides the password", async () => {
+      from({ code_set: true });
+      const signIn = vi.spyOn(api, "signIn").mockResolvedValue();
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      const code = screen.getByLabelText("One-time code");
+      expect(code).toHaveAttribute("autocomplete", "one-time-code");
+      expect(code).toHaveAttribute("inputmode", "numeric");
+      type("Password", "correct horse battery");
+      type("One-time code", "287 082");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      await waitFor(() =>
+        expect(signIn).toHaveBeenCalledWith("correct horse battery", "287 082"),
+      );
+    });
+
+    it("does not send the password without the code", async () => {
+      from({ code_set: true });
+      const signIn = vi.spyOn(api, "signIn").mockResolvedValue();
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      type("Password", "correct horse battery");
+      fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Type the code your phone gives.",
+      );
+      const code = screen.getByLabelText("One-time code");
+      expect(code).toHaveAttribute("aria-invalid", "true");
+      expect(document.activeElement).toBe(code);
+      expect(signIn).not.toHaveBeenCalled();
+    });
+
+    it("does not say which of the two was wrong", async () => {
+      from({ code_set: true });
+      vi.spyOn(api, "signIn").mockRejectedValue(
+        new ApiError(
+          401,
+          "This is not the password, or not the code of the moment.",
+          "wrong_password",
+        ),
+      );
+      vi.spyOn(navigator, "languages", "get").mockReturnValue(["fr-FR"]);
+      renderGate();
+      await screen.findByRole("heading", { name: "Connexion à Mariner" });
+      type("Mot de passe", "correct horse battery");
+      type("Code à usage unique", "000000");
+      fireEvent.click(screen.getByRole("button", { name: "Se connecter" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Ce n'est pas le mot de passe, ou pas le code du moment.",
+      );
+      // Neither field is marked: it may be either.
+      expect(screen.getByLabelText("Mot de passe")).toHaveAttribute(
+        "aria-invalid",
+        "false",
+      );
+    });
+
+    it("asks for no code on the local network", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: true,
+        signed_in: false,
+        from_internet: false,
+        code_set: true,
+      });
+      renderGate();
+      await screen.findByRole("heading", { name: "Sign in to Mariner" });
+      expect(screen.queryByLabelText("One-time code")).toBeNull();
+    });
+
+    it("says that no code is set up, in place of a form that cannot serve", async () => {
+      from({ code_set: false });
+      renderGate();
+      expect(
+        await screen.findByRole("heading", {
+          name: "Signing in from the Internet is not set up",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("Password")).toBeNull();
+      expect(screen.getByText(/one-time code/)).toBeInTheDocument();
+    });
+
+    it("does not offer to choose the password from there", async () => {
+      vi.spyOn(api, "authState").mockResolvedValue({
+        password_set: false,
+        signed_in: false,
+        from_internet: true,
+        code_set: false,
+      });
+      renderGate();
+      expect(
+        await screen.findByRole("heading", {
+          name: "Mariner is not set up yet",
+        }),
+      ).toBeInTheDocument();
+      expect(screen.queryByLabelText("New password")).toBeNull();
+    });
+  });
 });

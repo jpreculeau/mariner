@@ -20,8 +20,12 @@ export interface AccessState {
   signedOutUnasked: boolean;
   /** Choose the password, at the first visit. Rejects with the reason. */
   choosePassword: (password: string) => Promise<void>;
+  /** Whether the page is seen from outside the local network. */
+  fromInternet: boolean;
+  /** Whether a one-time code is set up: asked for, from the Internet. */
+  codeSet: boolean;
   /** Rejects with the reason when the password is not taken. */
-  signIn: (password: string) => Promise<void>;
+  signIn: (password: string, code?: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 

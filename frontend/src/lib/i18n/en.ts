@@ -28,6 +28,17 @@ export const en = {
   "signIn.submitting": "Signing in…",
   "signIn.lost":
     "Password lost? On the computer Mariner runs on, run “sudo mariner reset-password”, or put an empty file named “reset-password” on the boot drive of its card and restart it. A new one is then chosen here.",
+  "signIn.code": "One-time code",
+  "signIn.code.hint": "The six digits your phone gives.",
+  "signIn.code.missing": "Type the code your phone gives.",
+  "signIn.wrongEither":
+    "This is not the password, or not the code of the moment.",
+  "internet.noCode.heading": "Signing in from the Internet is not set up",
+  "internet.noCode.text":
+    "From the Internet, Mariner asks for a one-time code besides the password, and none is set up. Sign in from the local network and set it up in the settings.",
+  "internet.notSetUp.heading": "Mariner is not set up yet",
+  "internet.notSetUp.text":
+    "Its password is chosen from the local network, not from the Internet.",
   "choose.heading": "Choose a password",
   "choose.intro":
     "It will be asked of anyone who opens this page. Slicers (UVtools, ChiTuBox) send files without it: their access can be switched off in the settings.",

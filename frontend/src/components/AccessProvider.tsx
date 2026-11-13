@@ -95,6 +95,8 @@ export function AccessProvider({ children }: { children: ReactNode }) {
   }, [access, queryClient]);
 
   const failure = failed.current;
+  const fromInternet = data?.from_internet === true;
+  const codeSet = data?.code_set === true;
   const value = useMemo<AccessState>(() => {
     const signedIn = async () => {
       // An answer asked for before this must not come after it and
@@ -106,10 +108,11 @@ export function AccessProvider({ children }: { children: ReactNode }) {
       queryClient.removeQueries({
         predicate: (query) => query.queryKey[0] !== KEY[0],
       });
-      queryClient.setQueryData<AuthState>(KEY, {
+      queryClient.setQueryData<AuthState>(KEY, (was) => ({
+        ...was,
         password_set: true,
         signed_in: true,
-      });
+      }));
     };
     return {
       access,
@@ -123,25 +126,36 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         await api.choosePassword(password);
         await signedIn();
       },
-      signIn: async (password) => {
-        await api.signIn(password);
+      fromInternet,
+      codeSet,
+      signIn: async (password, code) => {
+        await api.signIn(password, code);
         await signedIn();
       },
       signOut: async () => {
         await api.signOut();
         await queryClient.cancelQueries({ queryKey: KEY });
         leftByItself.current = true;
-        queryClient.setQueryData<AuthState>(KEY, {
+        queryClient.setQueryData<AuthState>(KEY, (was) => ({
+          ...was,
           password_set: true,
           signed_in: false,
-        });
+        }));
         // Nothing of the printer stays in the page of who signed out.
         queryClient.removeQueries({
           predicate: (query) => query.queryKey[0] !== KEY[0],
         });
       },
     };
-  }, [access, queryClient, refetch, signedOutUnasked, failure]);
+  }, [
+    access,
+    queryClient,
+    refetch,
+    signedOutUnasked,
+    failure,
+    fromInternet,
+    codeSet,
+  ]);
 
   return (
     <AccessContext.Provider value={value}>{children}</AccessContext.Provider>

@@ -29,6 +29,18 @@ export const fr: Record<TextKey, string> = {
   "signIn.submitting": "Connexion…",
   "signIn.lost":
     "Mot de passe perdu\u202f? Sur l'ordinateur qui fait tourner Mariner, lancez «\u00a0sudo mariner reset-password\u00a0», ou déposez un fichier vide nommé «\u00a0reset-password\u00a0» sur la partition de démarrage de sa carte puis redémarrez-le. Un nouveau mot de passe se choisit alors ici.",
+  "signIn.code": "Code à usage unique",
+  "signIn.code.hint": "Les six chiffres donnés par votre téléphone.",
+  "signIn.code.missing": "Saisissez le code donné par votre téléphone.",
+  "signIn.wrongEither":
+    "Ce n'est pas le mot de passe, ou pas le code du moment.",
+  "internet.noCode.heading":
+    "La connexion depuis Internet n'est pas configurée",
+  "internet.noCode.text":
+    "Depuis Internet, Mariner demande un code à usage unique en plus du mot de passe, et aucun n'est configuré. Connectez-vous depuis le réseau local et configurez-le dans les réglages.",
+  "internet.notSetUp.heading": "Mariner n'est pas encore configuré",
+  "internet.notSetUp.text":
+    "Son mot de passe se choisit depuis le réseau local, pas depuis Internet.",
   "choose.heading": "Choisir un mot de passe",
   "choose.intro":
     "Il sera demandé à toute personne qui ouvre cette page. Les trancheurs (UVtools, ChiTuBox) envoient leurs fichiers sans lui\u00a0: leur accès se coupe dans les réglages.",

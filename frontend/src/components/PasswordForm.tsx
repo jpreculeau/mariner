@@ -9,22 +9,36 @@ import { errorText } from "@/lib/errors";
 import { useI18n, type TextKey } from "@/lib/i18n";
 import { usePageTitle } from "@/hooks/use-page-title";
 
+type Field = "password" | "repeat" | "code" | "form";
+
 /**
  * Asks for the password, or at the first visit for one to be chosen.
+ * From the Internet: for the one-time code too, and nothing is chosen.
  */
 export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const choosing = mode === "choose";
-  const { choosePassword, signIn, signedOutUnasked, retry } = useAccess();
+  const {
+    choosePassword,
+    signIn,
+    signedOutUnasked,
+    retry,
+    fromInternet,
+    codeSet,
+  } = useAccess();
+  // From the Internet the password is not enough, and is not chosen.
+  const withCode = !choosing && fromInternet && codeSet;
+  const notFromHere = fromInternet && (choosing || !codeSet);
   const { t, lang } = useI18n();
   usePageTitle(t(choosing ? "title.choosePassword" : "title.signIn"));
 
   const [password, setPassword] = useState("");
   const [repeated, setRepeated] = useState("");
+  const [code, setCode] = useState("");
   // Why it was not taken, and which field it is about.
   // Kept as it came, and worded when drawn: in the language the page is
   // in by then.
   const [refused, setRefused] = useState<{
-    on: "password" | "repeat" | "form";
+    on: Field;
     why: TextKey | { failure: unknown };
     said: number;
   } | null>(null);
@@ -34,6 +48,7 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
   const underWay = useRef(false);
   const passwordField = useRef<HTMLInputElement>(null);
   const repeatField = useRef<HTMLInputElement>(null);
+  const codeField = useRef<HTMLInputElement>(null);
 
   // The form became the other one: what was typed for one is not for
   // the other. What was said of the form as a whole stays.
@@ -43,16 +58,19 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     shownAs.current = mode;
     setPassword("");
     setRepeated("");
+    setCode("");
     setRefused((was) => (was?.on === "form" ? was : null));
   }, [mode]);
 
-  const refuse = (
-    on: "password" | "repeat" | "form",
-    why: TextKey | { failure: unknown },
-  ) => {
+  const refuse = (on: Field, why: TextKey | { failure: unknown }) => {
     setRefused({ on, why, said: ++said.current });
     // Back to the field, to type it again.
-    (on === "repeat" ? repeatField : passwordField).current?.focus();
+    (on === "repeat"
+      ? repeatField
+      : on === "code"
+        ? codeField
+        : passwordField
+    ).current?.focus();
   };
 
   const submit = async (event: FormEvent) => {
@@ -67,14 +85,32 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
       refuse("repeat", "choose.mismatch");
       return;
     }
+    if (withCode && !code.trim()) {
+      refuse("code", "signIn.code.missing");
+      return;
+    }
     underWay.current = true;
     setBusy(true);
     setRefused(null);
     try {
-      await (choosing ? choosePassword(password) : signIn(password));
+      await (choosing
+        ? choosePassword(password)
+        : signIn(password, withCode ? code : undefined));
+      setCode("");
     } catch (failure) {
       // Mariner is shut: the screen that replaces the form says it.
       if (failure instanceof ApiError && failure.code === "state_unavailable") {
+        return;
+      }
+      if (
+        withCode &&
+        failure instanceof ApiError &&
+        failure.code === "wrong_password"
+      ) {
+        // It may be either: neither field is marked, and the code, which
+        // will not serve again, is to be typed anew.
+        setCode("");
+        refuse("form", "signIn.wrongEither");
         return;
       }
       // Only what is about the password marks its field as wrong.
@@ -102,12 +138,27 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
     }
   };
 
-  const error = (on: "password" | "repeat" | "form") =>
+  const error = (on: Field) =>
     refused?.on !== on
       ? null
       : typeof refused.why === "string"
         ? t(refused.why)
         : errorText(refused.why.failure, t, lang);
+
+  if (notFromHere) {
+    return (
+      <div className="grid gap-3 rounded-lg border bg-card p-6">
+        <h1 className="text-2xl font-bold">
+          {t(
+            choosing ? "internet.notSetUp.heading" : "internet.noCode.heading",
+          )}
+        </h1>
+        <p className="text-base leading-relaxed text-muted-foreground">
+          {t(choosing ? "internet.notSetUp.text" : "internet.noCode.text")}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <form
@@ -169,6 +220,24 @@ export function PasswordForm({ mode }: { mode: "choose" | "sign-in" }) {
           errorSaid={refused?.said}
           onChange={(value) => {
             setRepeated(value);
+            setRefused(null);
+          }}
+        />
+      )}
+
+      {withCode && (
+        <PasswordField
+          ref={codeField}
+          id="one-time-code"
+          label={t("signIn.code")}
+          hint={t("signIn.code.hint")}
+          autoComplete="one-time-code"
+          inSight
+          value={code}
+          error={error("code")}
+          errorSaid={refused?.said}
+          onChange={(value) => {
+            setCode(value);
             setRefused(null);
           }}
         />

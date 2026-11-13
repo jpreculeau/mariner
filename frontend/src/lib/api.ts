@@ -46,6 +46,10 @@ export interface AuthState {
   signed_in: boolean;
   /** Mariner cannot reach what it keeps: its page stays shut. */
   unavailable?: boolean;
+  /** The page is seen from outside the local network. */
+  from_internet?: boolean;
+  /** A one-time code is set up: asked for, from the Internet. */
+  code_set?: boolean;
 }
 
 /** The settings that can be changed from the page. */
@@ -430,8 +434,12 @@ export const api = {
     await signedInBy("/api/auth/setup", { password });
   },
 
-  async signIn(password: string): Promise<void> {
-    await signedInBy("/api/auth/login", { password });
+  /** With the one-time code, from the Internet. */
+  async signIn(password: string, code?: string): Promise<void> {
+    await signedInBy(
+      "/api/auth/login",
+      code === undefined ? { password } : { password, code },
+    );
   },
 
   async signOut(): Promise<void> {

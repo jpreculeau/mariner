@@ -7,7 +7,9 @@ interface PasswordFieldProps {
   hint?: string;
   /** Something else on the page that says what it is for. */
   describedBy?: string;
-  autoComplete: "new-password" | "current-password";
+  autoComplete: "new-password" | "current-password" | "one-time-code";
+  /** For what is typed in sight: a code that serves once. */
+  inSight?: boolean;
   autoFocus?: boolean;
   value: string;
   /** Why it was not taken, if it was not. */
@@ -27,6 +29,7 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
       describedBy,
       autoComplete,
       autoFocus,
+      inSight,
       value,
       error,
       errorSaid,
@@ -49,7 +52,8 @@ export const PasswordField = forwardRef<HTMLInputElement, PasswordFieldProps>(
         <input
           ref={ref}
           id={id}
-          type="password"
+          type={inSight ? "text" : "password"}
+          inputMode={inSight ? "numeric" : undefined}
           autoComplete={autoComplete}
           autoFocus={autoFocus}
           value={value}
