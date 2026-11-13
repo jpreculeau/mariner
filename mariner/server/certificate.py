@@ -78,6 +78,9 @@ def _usable(certificate: Path, key: Path) -> bool:
     except (OSError, ValueError):
         # ssl.SSLError is an OSError.
         return False
+    if shutil.which("openssl") is None:
+        # How long it lasts cannot be looked at: used as it is.
+        return True
     lasting = subprocess.run(
         [
             "openssl",
@@ -100,15 +103,15 @@ def self_signed(folder: Path) -> Optional[Tuple[str, str]]:
     browser told to trust it is not asked again. None when it cannot be
     made.
     """
+    certificate, key = folder / CERTIFICATE_AS, folder / KEY_AS
+    if _usable(certificate, key):
+        return str(certificate), str(key)
     if shutil.which("openssl") is None:
         logger.warning(
             "The openssl command is not installed: no certificate can be "
             "made, and Mariner's page is served without HTTPS"
         )
         return None
-    certificate, key = folder / CERTIFICATE_AS, folder / KEY_AS
-    if _usable(certificate, key):
-        return str(certificate), str(key)
     if certificate.exists() or key.exists():
         logger.warning(
             "The certificate in %s cannot be used any longer (it runs out, "

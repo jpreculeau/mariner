@@ -379,6 +379,35 @@ class SecuredConnectionTest(TestCase):
             connection.sendall(piece)
         expect(self._answer(connection).endswith(b"served 6")).to_equal(True)
 
+    def test_a_connection_that_failed_while_written_to_is_closed_at_the_next_turn(
+        self,
+    ) -> None:
+        # Noted by the thread that was writing, which may not close it:
+        # the thread that runs the connections must be brought to.
+        connection = self._connected()
+        connection.sendall(b"GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        self._answer(connection)
+        channel = next(
+            one for one in list(self.server._map.values()) if hasattr(one, "_broken")
+        )
+        channel._broken = True
+        expect(channel.writable()).to_equal(True)
+        expect(channel.readable()).to_equal(False)
+        self.server.pull_trigger()
+        connection.settimeout(5)
+        expect(connection.recv(1024)).to_equal(b"")
+
+    def test_what_comes_decrypted_is_not_taken_for_a_greeting_of_tls(self) -> None:
+        # The first bytes of a request, read from under TLS, may be any:
+        # hanging up on the greeting of TLS is for the port in the clear.
+        connection = self._connected()
+        connection.sendall(b"\x16\x03\x01 not a request\r\n\r\n")
+        answer = self._answer(connection)
+        # Answered by the web server as what it is: a request it cannot
+        # read.
+        expect(answer.startswith(b"HTTP/1.")).to_equal(True)
+        expect(b" 400 " in answer.split(b"\r\n")[0]).to_equal(True)
+
     def test_many_at_once_are_each_answered(self) -> None:
         answers: List[bool] = []
 
@@ -494,3 +523,20 @@ class ContextTest(TestCase):
         with self.assertRaises(RuntimeError) as refused:
             tls.secured(Changed, ssl.create_default_context())  # type: ignore
         expect("waitress" in str(refused.exception)).to_equal(True)
+
+    def test_what_is_looked_at_is_the_web_server_s_own_connection(self) -> None:
+        # Not only what Mariner's own kind of connection adds to it.
+        gone = patch.object(HTTPChannel, "received", None)
+        gone.start()
+        self.addCleanup(gone.stop)
+        with self.assertRaises(RuntimeError) as refused:
+            tls.secured(early._Channel, ssl.create_default_context())
+        expect("received" in str(refused.exception)).to_equal(True)
+
+    def test_a_key_under_a_password_is_never_asked_for(self) -> None:
+        with patch.object(ssl.SSLContext, "load_cert_chain") as loaded:
+            tls.context("c.pem", "k.pem")
+        answer = loaded.call_args.kwargs["password"]
+        # Something to call, that gives nothing: with none, the system
+        # asks on the terminal.
+        expect(answer()).to_equal("")

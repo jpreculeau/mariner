@@ -199,8 +199,11 @@ def _listening() -> Dict[str, Any]:
         else None
     )
     at = f"[{host}]" if ":" in host else host
-    logger.info("Mariner's page is served over HTTPS on port %d", secured_port)
     return {
+        # Said once the ports are had: one of them may be taken.
+        "once_listening": lambda: logger.info(
+            "Mariner's page is served over HTTPS on port %d", secured_port
+        ),
         "listen": f"{at}:{port} {at}:{secured_port}",
         "tls": tls.context(*pair),
         "tls_port": secured_port,

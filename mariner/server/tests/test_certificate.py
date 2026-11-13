@@ -151,6 +151,12 @@ class CertificateTest(TestCase):
             cert, _ = self._made()
         expect(Path(cert).read_bytes() == first).to_equal(False)
 
+    def test_the_one_that_is_there_is_used_without_the_openssl_command(self) -> None:
+        # Making one takes the command; using one does not.
+        cert, key = self._made()
+        with patch("shutil.which", return_value=None):
+            expect(certificate.self_signed(self.folder)).to_equal((cert, key))
+
     def test_without_the_openssl_command_there_is_none(self) -> None:
         with patch("shutil.which", return_value=None):
             with self.assertLogs("mariner.server.certificate", level="WARNING"):

@@ -68,7 +68,14 @@ class _Closed(Exception):
 
 def secured(base: Type[HTTPChannel], using: ssl.SSLContext) -> Type[HTTPChannel]:
     """A kind of connection like *base* that speaks TLS with *using*."""
-    missing = [name for name in _RELIED_ON if not callable(getattr(base, name, None))]
+    # Of the web server's own connection too: Mariner's kind of it has
+    # some of these of its own, which call the web server's.
+    missing = [
+        name
+        for name in _RELIED_ON
+        if not callable(getattr(base, name, None))
+        or not callable(getattr(HTTPChannel, name, None))
+    ]
     if missing:
         # Said at start, not found out by a page that does not open.
         raise RuntimeError(

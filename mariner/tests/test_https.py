@@ -87,20 +87,27 @@ class PlainPortTest(TestCase):
         # from: other sites are told apart before this, by what they do
         # say (see mariner.server.origin).
         secured = "https://saturn.local:5443"
-        with patch("mariner.server.auth.check_password", return_value="g1"):
-            with patch("mariner.server.auth.has_password", return_value=True):
-                token = self.client.get("/api/csrf_token", base_url=secured).get_json()[
-                    "csrf_token"
-                ]
-                response = self.client.post(
-                    "/api/auth/login",
-                    base_url=secured,
-                    json={"password": "long enough!"},
-                    headers={"X-CSRFToken": token},
-                )
-        expect((response.get_json() or {}).get("code") == "token_refused").to_equal(
-            False
-        )
+        # Whatever another test left the application with: the token is
+        # asked for, as it is when Mariner runs.
+        with patch.dict(app.config, {"WTF_CSRF_ENABLED": True}):
+            token = self.client.get("/api/csrf_token", base_url=secured).get_json()[
+                "csrf_token"
+            ]
+            without = self.client.post(
+                "/api/auth/login", base_url=secured, json={"password": "x" * 12}
+            )
+            response = self.client.post(
+                "/api/auth/login",
+                base_url=secured,
+                json={"password": "x" * 12},
+                headers={"X-CSRFToken": token},
+            )
+        # The token is looked at...
+        expect(without.get_json()["code"]).to_equal("token_refused")
+        # ...and taken without a Referer: what is answered is about the
+        # password.
+        expect(response.get_json().get("code") == "token_refused").to_equal(False)
+        expect(response.status_code).to_equal(401)
 
     def test_no_session_is_given_in_the_clear(self) -> None:
         response = self.client.get(

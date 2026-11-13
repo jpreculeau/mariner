@@ -37,9 +37,12 @@ again, give it Mariner's certificate to trust:
 
       $ sudo cat /var/lib/mariner/https-certificate.pem > mariner.pem
 
-2. Add ``mariner.pem`` to the certificates your computer or phone trusts
-   ("install a certificate" in the settings of the system or of the
-   browser), for identifying web sites.
+2. Add ``mariner.pem`` to the certificates your computer trusts ("install a
+   certificate" in the settings of the system or of the browser), for
+   identifying web sites. Some systems, phones among them, only take the
+   certificate of an *authority* there, which this one is not: on those,
+   keep to accepting the warning, or give Mariner a certificate of your
+   own (below).
 3. Open the page under a name or an address the certificate lists: the name
    of the Pi (``printer.local`` if it is called ``printer``) or the address
    it had when the certificate was made.
@@ -51,6 +54,20 @@ is left out, and the certificate then lists the addresses alone. In Docker
 the name and address are the container's, which nothing outside reaches it
 by: the browser warns every time unless you give Mariner a certificate of
 your own (below), made for the name of the host.
+
+The port of HTTPS must be reachable
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Once Mariner has HTTPS, the address in the clear only sends browsers on to
+port 5443: if that port cannot be reached, the page cannot be opened at
+all, and the browser says only that the site cannot be reached. This is the
+case of a container made before this version, with ``-p 5000:5000`` alone:
+make it again with ``-p 5443:5443`` as well (see :doc:`software-setup`).
+Publish the port under its own number, or set ``port`` under ``[https]`` to
+the number it is published under: Mariner sends browsers to the port it is
+told. The same goes for a firewall, or a relay, that lets through port 5000
+alone. Where HTTPS cannot be reached, set ``enabled = false`` under
+``[https]`` to have the page in the clear as before.
 
 The certificate lasts thirteen months, the longest browsers accept, and
 Mariner makes a new one in its last month, at a restart: the warning then
@@ -109,8 +126,8 @@ A port that is not one (not a whole number from 1 to 65535) is passed over
 for 5443, which the log says too.
 
 If another program already uses one of the two ports, Mariner does not
-start at all, slicers' interfaces included: its log names the port
-(``journalctl -u mariner3d``). Give Mariner another one under ``[http]`` or
+start at all, slicers' interfaces included: its log says so and names both
+ports (``journalctl -u mariner3d``). Give Mariner another one under ``[http]`` or
 ``[https]``.
 
 Where Mariner cannot use its state directory (see

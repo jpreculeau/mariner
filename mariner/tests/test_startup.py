@@ -295,6 +295,20 @@ class StartupTest(TestCase):
             server.early.plain_refusal("/uvtools/upload/x.ctb", {"Host": "saturn"})
         ).to_equal(None)
 
+    def test_https_is_said_to_be_served_once_the_ports_are_had(self) -> None:
+        # Not before: one of them may be taken.
+        self.certificate.return_value = ("/c.pem", "/k.pem")
+        with patch.object(server, "use_spool_directory"), patch.object(
+            server.tls, "context"
+        ):
+            with self.assertNoLogs("mariner.server", level="INFO"):
+                serve = self._started()
+        with self.assertLogs("mariner.server", level="INFO") as logged:
+            serve.call_args.kwargs["once_listening"]()
+        expect("served over HTTPS on port 5443" in " ".join(logged.output)).to_equal(
+            True
+        )
+
     def test_an_address_of_the_newer_kind_is_listened_on_in_brackets(self) -> None:
         self.certificate.return_value = ("/c.pem", "/k.pem")
         with patch.object(server, "use_spool_directory"), patch.object(

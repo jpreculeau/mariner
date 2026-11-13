@@ -209,7 +209,10 @@ class _Parser(HTTPRequestParser):
 
 
 class _Channel(HTTPChannel):
-    # Whether anything came from the client yet.
+    # Whether anything came from the client yet. A connection over TLS
+    # (see mariner.server.tls) sets it on what comes encrypted, before
+    # anything reaches ``received``: what it decrypts is never looked at
+    # here as the first bytes of a connection.
     _heard = False
 
     def received(self, data: bytes) -> bool:
@@ -279,6 +282,17 @@ def create_guarded_server(
     return server
 
 
-def serve(application: Any, **settings: Any) -> None:
-    """As ``waitress.serve``, with the refusals made early."""
-    create_guarded_server(application, **settings).run()
+def serve(
+    application: Any,
+    once_listening: Optional[Callable[[], None]] = None,
+    **settings: Any,
+) -> None:
+    """As ``waitress.serve``, with the refusals made early.
+
+    *once_listening* is called when the ports are had, before anything
+    is served.
+    """
+    server = create_guarded_server(application, **settings)
+    if once_listening is not None:
+        once_listening()
+    server.run()
