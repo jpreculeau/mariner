@@ -8,6 +8,7 @@ import tempfile
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional, Sequence, Tuple, Union, cast
+from urllib.parse import quote
 
 from flask import Flask, Response, jsonify, make_response, redirect, request, session
 from werkzeug.exceptions import HTTPException
@@ -235,8 +236,11 @@ def ask_for_https() -> Optional[Union[Response, Tuple[Response, int]]]:
         request.path == "/api" or request.path.startswith("/api/")
     )
     if reading_the_page and where is not None:
-        # Kept as it was asked for: the method, and where in the page.
-        return redirect(where + request.full_path.rstrip("?"), code=307)
+        # Kept as it was asked for: the method, and where in the page,
+        # written as an address is (a line end in it is no header's).
+        asked = quote(request.path, safe="/:@!$&'()*+,;=~-._")
+        query = request.query_string.decode("latin-1")
+        return redirect(where + asked + ("?" + query if query else ""), code=307)
     return jsonify(https.refusal(request.host, port)), 403
 
 

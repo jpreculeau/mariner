@@ -649,9 +649,14 @@ WRONG_CODES_BEFORE_CLOSING = 10
 _wrong_codes_seen: Optional[int] = None
 
 
-# Which code that count is of: nothing to the next one, set up from the
-# page or from a terminal.
-_wrong_codes_seen_of: Optional[str] = None
+# Which code and which password that count is of: nothing to the next
+# code, set up from the page or from a terminal, and nothing to the next
+# password, which whoever was guessing does not have. (A password changed
+# from the Internet takes the count along: see ``change_password``.)
+_wrong_codes_seen_of: Optional[Tuple[str, Optional[str]]] = None
+
+# Where the record says which password its count is of.
+_WRONG_UNDER = "wrong_under"
 
 
 def _wrong_codes_of(record: Mapping[str, Any]) -> int:
@@ -659,11 +664,16 @@ def _wrong_codes_of(record: Mapping[str, Any]) -> int:
     if (
         _wrong_codes_seen is not None
         and secret is not None
-        and _identity_of(secret) == _wrong_codes_seen_of
+        and (_identity_of(secret), generation()) == _wrong_codes_seen_of
     ):
         return _wrong_codes_seen
     kept = record.get("wrong")
-    return kept if isinstance(kept, int) else 0
+    if not isinstance(kept, int):
+        return 0
+    under = record.get(_WRONG_UNDER)
+    if under is not None and under != generation():
+        return 0
+    return kept
 
 
 def wrong_codes() -> int:
@@ -679,14 +689,16 @@ def _count_wrong_codes(to: Optional[int] = None) -> int:
         if secret is None:
             _wrong_codes_seen = None
             return 0
+        under = generation()
         kept = record.get("wrong")
         kept_count = kept if isinstance(kept, int) else 0
         was = _wrong_codes_of(record)
         now = was + 1 if to is None else to
         _wrong_codes_seen = now
-        _wrong_codes_seen_of = _identity_of(secret)
-        if now != kept_count:
+        _wrong_codes_seen_of = (_identity_of(secret), under)
+        if now != kept_count or (now and record.get(_WRONG_UNDER) != under):
             record["wrong"] = now
+            record[_WRONG_UNDER] = under
             try:
                 state.write(totp.KEPT_AS, json.dumps(record).encode("ascii"))
             except OSError as error:
@@ -1079,6 +1091,7 @@ def change_password() -> Response:
         )
     # The current one was right: whatever follows is not a wrong attempt.
     note_success("change")
+    wrong_before = wrong_codes()
     try:
         changed = set_password(new)
     except PasswordNotAllowed as error:
@@ -1094,8 +1107,11 @@ def change_password() -> Response:
         # Changed at home: whoever was guessing at the code no longer has
         # the password, and its owner, away, must not find the Internet
         # still closed. Not from the Internet, where the one who changes
-        # it may be the one who guessed.
+        # it may be the one who guessed: the count goes on under the new
+        # password, as it does not under one set any other way.
         _count_wrong_codes(to=0)
+    else:
+        _count_wrong_codes(to=wrong_before)
     # What the session came in with, it keeps: changed from outside, the
     # password does not sign its owner out.
     came_with = session.get(_WITH_CODE_AS)

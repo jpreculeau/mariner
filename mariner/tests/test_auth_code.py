@@ -1,12 +1,13 @@
 """The one-time code asked of who signs in from the Internet."""
 
+import json
 import time
 from typing import Any
 from unittest.mock import patch
 
 from pyexpect import expect
 
-from mariner import totp
+from mariner import passwords, totp
 from mariner.server import auth, journal, state
 from mariner.tests.test_auth import PASSWORD, _WithClient, _WithState
 
@@ -64,8 +65,6 @@ class CodeKeptTest(_WithState):
     def test_a_code_set_up_from_a_terminal_serves_at_once(self) -> None:
         # ``mariner set-code`` while Mariner runs: what is remembered of
         # the last code of the old secret is nothing to the new one.
-        import json
-
         old = _set_up()
         expect(auth.check_code(_code(old, 30))).to_equal(True)
         new = totp.new_secret()
@@ -420,8 +419,6 @@ class PasswordKnownTest(_FromPlaces):
     def test_a_code_set_up_from_a_terminal_starts_from_nothing_too(self) -> None:
         # ``mariner reset-code`` then ``set-code`` while Mariner runs,
         # after the Internet was closed: the new phone's code opens.
-        import json
-
         _set_up()
         for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
             self._guess()
@@ -468,6 +465,64 @@ class PasswordKnownTest(_FromPlaces):
             "/api/auth/password",
             json={"current": PASSWORD, "new": "another one, longer!"},
         )
+        expect(auth.wrong_codes()).to_equal(auth.WRONG_CODES_BEFORE_CLOSING)
+
+    def _open_again(self, secret: str, password: str) -> Any:
+        with auth._attempts_lock:
+            auth._attempts.clear()
+            auth._internet_attempts.clear()
+        return self._from("198.51.100.9").post(
+            "/api/auth/login",
+            json={"password": password, "code": _code(secret, 30)},
+        )
+
+    def test_a_password_set_from_a_terminal_opens_the_internet_again(self) -> None:
+        # ``sudo mariner set-password`` while Mariner runs: the guesser no
+        # longer has it, and nobody need sign in at home besides.
+        secret = _set_up()
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess()
+        record = passwords.record_for("another one, longer!")
+        state.write(passwords.KEPT_AS, json.dumps(record).encode("ascii"))
+        expect(auth.wrong_codes()).to_equal(0)
+        opened = self._open_again(secret, "another one, longer!")
+        expect(opened.status_code).to_equal(200)
+
+    def test_so_does_it_after_a_restart(self) -> None:
+        secret = _set_up()
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess()
+        record = passwords.record_for("another one, longer!")
+        state.write(passwords.KEPT_AS, json.dumps(record).encode("ascii"))
+        # As a Mariner just started: nothing but what is kept.
+        auth._wrong_codes_seen = None
+        opened = self._open_again(secret, "another one, longer!")
+        expect(opened.status_code).to_equal(200)
+
+    def test_a_password_chosen_again_at_home_opens_the_internet_again(self) -> None:
+        # Lost, done away with from a terminal, and chosen in the page.
+        secret = _set_up()
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess()
+        auth.clear_password()
+        chosen = self._from(LOCAL).post(
+            "/api/auth/setup", json={"password": "another one, longer!"}
+        )
+        expect(chosen.status_code).to_equal(200)
+        opened = self._open_again(secret, "another one, longer!")
+        expect(opened.status_code).to_equal(200)
+
+    def test_changed_from_the_internet_it_stays_closed_after_a_restart(self) -> None:
+        secret = _set_up()
+        outside = self._from(INTERNET)
+        self._sign_in(outside, code=_code(secret, 30))
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess("198.51.100.9")
+        outside.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "another one, longer!"},
+        )
+        auth._wrong_codes_seen = None
         expect(auth.wrong_codes()).to_equal(auth.WRONG_CODES_BEFORE_CLOSING)
 
     def test_a_new_code_starts_from_nothing(self) -> None:

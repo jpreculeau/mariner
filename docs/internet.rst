@@ -75,8 +75,10 @@ Signing in from the Internet
   stranger is told what a wrong password is told; the journal of sign-ins
   says it as it is. After ten of them with no sign-in between, signing in
   from the Internet is closed (``403`` ``code_locked``) until somebody
-  signs in from the local network, or changes the password from there, or
-  sets up a new code from a terminal (``reset-code`` then ``set-code``).
+  signs in from the local network, or the password is replaced any way
+  but from the Internet (changed in the page at home, set from a terminal,
+  or chosen again after ``reset-password``), or a new code is set up from
+  a terminal (``reset-code`` then ``set-code``).
   Change the password in any case: somebody has it. A phone lost or
   changed: see :doc:`password-and-settings`.
 

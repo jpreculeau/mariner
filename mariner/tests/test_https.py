@@ -41,6 +41,17 @@ class PlainPortTest(TestCase):
             "https://192.168.1.20:5443/files?sort=name"
         )
 
+    def test_an_address_written_with_line_ends_is_sent_on_as_it_was_written(
+        self,
+    ) -> None:
+        # Not an error with its trace in the log, for whoever asks.
+        for asked in ("/a%0D%0Ab", "/a%0Ab?c=%0d%0a", "/caf%C3%A9%20x"):
+            response = self.client.get(asked, base_url="http://saturn.local:5050")
+            expect(response.status_code).to_equal(307)
+            expect(response.headers["Location"]).to_equal(
+                "https://saturn.local:5443" + asked
+            )
+
     def test_an_address_of_the_newer_kind_keeps_its_brackets(self) -> None:
         response = self.client.get("/", base_url="http://[::1]:5050")
         expect(response.headers["Location"]).to_equal("https://[::1]:5443/")
