@@ -33,7 +33,7 @@ export const fr: Record<TextKey, string> = {
   "signIn.code.hint": "Les six chiffres donnés par votre téléphone.",
   "signIn.code.missing": "Saisissez le code donné par votre téléphone.",
   "signIn.wrongEither":
-    "Ce n'est pas le mot de passe, ou pas le code du moment.",
+    "Ce n'est pas le mot de passe, ou pas le code du moment. Un code ne sert qu'une fois\u202f: s'il a déjà servi, attendez le suivant.",
   "internet.noCode.heading":
     "La connexion depuis Internet n'est pas configurée",
   "internet.noCode.text":
@@ -148,9 +148,9 @@ export const fr: Record<TextKey, string> = {
     "Saisissez le mot de passe pour configurer le code sur un autre téléphone. Les codes du téléphone actuel cesseront de fonctionner une fois le nouveau confirmé.",
   "settings.code.continue": "Continuer",
   "signIn.triedCodes.one":
-    "Le bon mot de passe a été envoyé {count} fois avec un mauvais code à usage unique depuis votre visite précédente\u202f: quelqu'un d'autre le connaît peut-être. Changez-le dans les réglages.",
+    "Le bon mot de passe a été envoyé {count} fois avec un mauvais code à usage unique depuis votre visite précédente. Si ce n'était pas vous (un code mal saisi, ou utilisé une seconde fois), quelqu'un d'autre connaît votre mot de passe\u202f: changez-le dans les réglages.",
   "signIn.triedCodes.many":
-    "Le bon mot de passe a été envoyé {count} fois avec un mauvais code à usage unique depuis votre visite précédente\u202f: quelqu'un d'autre le connaît peut-être. Changez-le dans les réglages.",
+    "Le bon mot de passe a été envoyé {count} fois avec un mauvais code à usage unique depuis votre visite précédente. Si ce n'était pas vous (un code mal saisi, ou utilisé une seconde fois), quelqu'un d'autre connaît votre mot de passe\u202f: changez-le dans les réglages.",
   "settings.code.password.missing": "Saisissez le mot de passe.",
   "error.password_not_text":
     "Ce mot de passe contient autre chose que du texte. Choisissez-en un autre.",

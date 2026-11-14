@@ -118,6 +118,37 @@ class JournalTest(_WithState):
         expect(told["wrong_passwords"]).to_equal(15)
         expect(told["wrong_codes"]).to_equal(9)
 
+    def test_a_wrong_one_minutes_before_is_no_slip(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("wrong_password", LOCAL, now=1000.0)
+        journal.note("signed_in", LOCAL, now=1301.0)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(1)
+
+    def test_a_wrong_one_within_the_minutes_before_is_a_slip(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("wrong_password", LOCAL, now=1000.0)
+        journal.note("signed_in", LOCAL, now=1300.0)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(0)
+
+    def test_slips_end_where_somebody_else_comes_between(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("wrong_password", LOCAL, now=100.0)
+        journal.note("wrong_password", "203.0.113.9", now=101.0)
+        journal.note("wrong_password", LOCAL, now=102.0)
+        journal.note("signed_in", LOCAL, now=103.0)
+        # The last is the owner's; the stranger's, and what came before it.
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(2)
+
+    def test_slips_end_where_a_wrong_code_comes_between(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        journal.note("wrong_password", LOCAL, now=100.0)
+        journal.note("wrong_code", LOCAL, now=101.0)
+        journal.note("wrong_password", LOCAL, now=102.0)
+        journal.note("signed_in", LOCAL, now=103.0)
+        expect(journal.since_the_visit_before()).to_equal(
+            {"wrong_passwords": 1, "wrong_codes": 1, "or_more": False}
+        )
+
     def test_more_than_a_few_just_before_are_not_all_slips(self) -> None:
         journal.note("signed_in", LOCAL, now=1.0)
         for sent in range(8):

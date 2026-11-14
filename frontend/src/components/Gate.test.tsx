@@ -1105,7 +1105,8 @@ describe("Gate", () => {
       type("Code à usage unique", "000000");
       fireEvent.click(screen.getByRole("button", { name: "Se connecter" }));
       expect(await screen.findByRole("alert")).toHaveTextContent(
-        "Ce n'est pas le mot de passe, ou pas le code du moment.",
+        // (The space before the colon is a narrow one, which is not compared.)
+        "s'il a déjà servi, attendez le suivant.",
       );
       // Neither field is marked: it may be either.
       expect(screen.getByLabelText("Mot de passe")).toHaveAttribute(
@@ -1237,7 +1238,7 @@ describe("Gate", () => {
       fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
       await waitFor(() =>
         expect(said).toHaveBeenCalledWith(
-          "The right password was sent 10 times with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+          "The right password was sent 10 times with a wrong one-time code since your previous visit. If that was not you mistyping a code, or using one a second time, somebody else knows your password: change it in Settings.",
         ),
       );
       expect(said).toHaveBeenCalledTimes(1);

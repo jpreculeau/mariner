@@ -69,13 +69,16 @@ Signing in from the Internet
   counts of its own: a stranger can keep you from signing in from outside
   for a while, never at home. These counts are forgotten when Mariner
   restarts.
-- **A right password with a wrong code is counted apart, and kept.** It
-  means somebody has the password and is guessing at the code. The
+- **A right password with a wrong code is counted apart, and kept.**
+  Unless it was you (a code mistyped, or used a second time: a code works
+  once), it means somebody has the password and is guessing at the code. The
   stranger is told what a wrong password is told; the journal of sign-ins
   says it as it is. After ten of them with no sign-in between, signing in
   from the Internet is closed (``403`` ``code_locked``) until somebody
-  signs in from the local network, or changes the password from there.
-  Change the password in any case: somebody has it.
+  signs in from the local network, or changes the password from there, or
+  sets up a new code from a terminal (``reset-code`` then ``set-code``).
+  Change the password in any case: somebody has it. A phone lost or
+  changed: see :doc:`password-and-settings`.
 
 Its name and its certificate
 ----------------------------

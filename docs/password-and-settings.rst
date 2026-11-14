@@ -92,7 +92,9 @@ where from: the local network or the Internet, and the address. Above the
 list, and in a message when you sign in, Mariner says how many wrong
 passwords were sent between your last two visits (not counting your own
 slips just before signing in), and, apart, how many times the right password
-came with a wrong code: that one means somebody else knows the password. What was typed is never kept.
+came with a wrong code. If that was not you (a code mistyped, or one used a
+second time: a code works once, and the next comes within half a minute), it
+means somebody else knows the password. What was typed is never kept.
 
 A few wrong passwords from the Internet are the lot of anything reachable
 from there. Many of them, or one from the local network that is not yours,

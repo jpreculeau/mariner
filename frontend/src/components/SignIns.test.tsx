@@ -115,7 +115,7 @@ describe("SignIns", () => {
     renderIt();
     expect(
       await screen.findByText(
-        "The right password was sent 4 times with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+        "The right password was sent 4 times with a wrong one-time code since your previous visit. If that was not you mistyping a code, or using one a second time, somebody else knows your password: change it in Settings.",
       ),
     ).toBeInTheDocument();
   });

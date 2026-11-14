@@ -32,7 +32,7 @@ export const en = {
   "signIn.code.hint": "The six digits your phone gives.",
   "signIn.code.missing": "Type the code your phone gives.",
   "signIn.wrongEither":
-    "This is not the password, or not the code of the moment.",
+    "This is not the password, or not the code of the moment. A code works once: if it has already served, wait for the next one.",
   "internet.noCode.heading": "Signing in from the Internet is not set up",
   "internet.noCode.text":
     "From the Internet, Mariner asks for a one-time code besides the password, and none is set up. Sign in from the local network and set it up in the settings.",
@@ -144,9 +144,9 @@ export const en = {
     "Type the password to set the code up on another phone. The codes of the phone in use will stop working once the new one is confirmed.",
   "settings.code.continue": "Continue",
   "signIn.triedCodes.one":
-    "The right password was sent {count} time with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+    "The right password was sent {count} time with a wrong one-time code since your previous visit. If that was not you mistyping a code, or using one a second time, somebody else knows your password: change it in Settings.",
   "signIn.triedCodes.many":
-    "The right password was sent {count} times with a wrong one-time code since your previous visit: somebody else may know your password. Change it in Settings.",
+    "The right password was sent {count} times with a wrong one-time code since your previous visit. If that was not you mistyping a code, or using one a second time, somebody else knows your password: change it in Settings.",
   "settings.code.password.missing": "Type the password.",
   "error.password_not_text":
     "This password holds what is not text. Choose another.",
