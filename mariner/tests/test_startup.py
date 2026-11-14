@@ -411,6 +411,13 @@ class QueueNoiseTest(TestCase):
         expect(quiet.filter(record("waitress.queue", 101.0))).to_equal(False)
         expect(quiet.filter(record("waitress.queue", 159.0))).to_equal(False)
         expect(quiet.filter(record("waitress.queue", 161.0))).to_equal(True)
+        # Nor one for each request sent without the page's token, which
+        # any stranger can send by the thousand.
+        expect(quiet.filter(record("flask_wtf.csrf", 200.0))).to_equal(True)
+        expect(quiet.filter(record("flask_wtf.csrf", 201.0))).to_equal(False)
+        expect(quiet.filter(record("flask_wtf.csrf", 261.0))).to_equal(True)
+        # Each of the two on its own count.
+        expect(quiet.filter(record("waitress.queue", 222.0))).to_equal(True)
         # Nothing else is held back.
         expect(quiet.filter(record("waitress", 101.0))).to_equal(True)
         expect(quiet.filter(record("mariner.server", 101.0))).to_equal(True)

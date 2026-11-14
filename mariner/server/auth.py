@@ -1090,6 +1090,12 @@ def change_password() -> Response:
     current_app.config["SECRET_KEY"] = state.new_session_key()
     logger.warning("The password was changed from %s", request.remote_addr)
     journal.note("password_changed", request.remote_addr)
+    if not _from_internet():
+        # Changed at home: whoever was guessing at the code no longer has
+        # the password, and its owner, away, must not find the Internet
+        # still closed. Not from the Internet, where the one who changes
+        # it may be the one who guessed.
+        _count_wrong_codes(to=0)
     # What the session came in with, it keeps: changed from outside, the
     # password does not sign its owner out.
     came_with = session.get(_WITH_CODE_AS)

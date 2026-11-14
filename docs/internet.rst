@@ -74,7 +74,8 @@ Signing in from the Internet
   stranger is told what a wrong password is told; the journal of sign-ins
   says it as it is. After ten of them with no sign-in between, signing in
   from the Internet is closed (``403`` ``code_locked``) until somebody
-  signs in from the local network. Then change the password.
+  signs in from the local network, or changes the password from there.
+  Change the password in any case: somebody has it.
 
 Its name and its certificate
 ----------------------------

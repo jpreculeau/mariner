@@ -131,23 +131,26 @@ class _OneLine(logging.Filter):
 
 
 class _NotAtEveryTask(logging.Filter):
-    """Let through, once a minute, the line the web server writes for
-    each request that waits its turn.
+    """Let through, once a minute each, the lines other programs write
+    for each request: the web server's for one that waits its turn, and
+    the one for a request sent without the page's token.
 
-    Under a crowd they come by the thousand, and push Mariner's own lines
-    out of a log that keeps only so much.
+    A stranger has them written by the thousand, which pushes Mariner's
+    own lines out of a log that keeps only so much.
     """
+
+    _BY_THE_THOUSAND = ("waitress.queue", "flask_wtf.csrf")
 
     def __init__(self) -> None:
         super().__init__()
-        self._said_at = float("-inf")
+        self._said_at: Dict[str, float] = {}
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.name != "waitress.queue":
+        if record.name not in self._BY_THE_THOUSAND:
             return True
-        if record.created - self._said_at < 60:
+        if record.created - self._said_at.get(record.name, float("-inf")) < 60:
             return False
-        self._said_at = record.created
+        self._said_at[record.name] = record.created
         return True
 
 

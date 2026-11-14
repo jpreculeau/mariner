@@ -435,6 +435,41 @@ class PasswordKnownTest(_FromPlaces):
         opened = self._sign_in(self._from("198.51.100.9"), code=_code(new))
         expect(opened.status_code).to_equal(200)
 
+    def test_changing_the_password_at_home_opens_the_internet_again(self) -> None:
+        # The owner hears of it and changes the password from a browser
+        # that was signed in already: the guesser no longer has it.
+        secret = _set_up()
+        home = self._from(LOCAL)
+        self._sign_in(home)
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess()
+        changed = home.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "another one, longer!"},
+        )
+        expect(changed.status_code).to_equal(200)
+        with auth._attempts_lock:
+            auth._attempts.clear()
+            auth._internet_attempts.clear()
+        away = self._from("198.51.100.9").post(
+            "/api/auth/login",
+            json={"password": "another one, longer!", "code": _code(secret, 30)},
+        )
+        expect(away.status_code).to_equal(200)
+
+    def test_changing_it_from_the_internet_does_not(self) -> None:
+        # Whoever is guessing may be the one who changes it.
+        secret = _set_up()
+        outside = self._from(INTERNET)
+        self._sign_in(outside, code=_code(secret, 30))
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess("198.51.100.9")
+        outside.post(
+            "/api/auth/password",
+            json={"current": PASSWORD, "new": "another one, longer!"},
+        )
+        expect(auth.wrong_codes()).to_equal(auth.WRONG_CODES_BEFORE_CLOSING)
+
     def test_a_new_code_starts_from_nothing(self) -> None:
         _set_up()
         for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
