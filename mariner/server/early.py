@@ -296,7 +296,7 @@ class _Channel(HTTPChannel):
         What serves a request waits here, when much is left to send, for
         the reader to take some of it. One that asks for much and reads
         nothing would hold it for good, and a few of them everything
-        Mariner has to serve with. Past ``load.STALLED_SECS`` without a
+        Mariner has to serve with. Past ``load.stalled_after`` without a
         byte taken, the reader is taken for gone: nothing more is written
         for it (see ``write_soon``) and the connection is closed at the
         next round (see ``_tidying``).

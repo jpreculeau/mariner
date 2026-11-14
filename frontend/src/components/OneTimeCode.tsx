@@ -294,6 +294,9 @@ export function OneTimeCode({ onChanged }: { onChanged?: () => void }) {
             }
             once(async () => {
               await api.removeCode(typed);
+              // The button pressed goes with the code: focus goes to the
+              // one that stays.
+              opener.current = "first";
               done(t("settings.code.removed"));
             });
           }}

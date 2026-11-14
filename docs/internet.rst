@@ -127,7 +127,8 @@ shutting you out at home, and from bringing it down:
   cut.
 
 Connections turned away are counted in the log, a line a minute at most.
-None of this applies to addresses of the local network, bar the last.
+Of all this, addresses of the local network know only the minute given to
+a reader that reads nothing.
 
 A small computer still has its limits: a flood wide enough fills the line
 itself, and then nothing answers from outside until it stops. Home is not

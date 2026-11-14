@@ -417,6 +417,24 @@ class PasswordKnownTest(_FromPlaces):
                 self._guess()
             expect(self._guess().get_json()["code"]).to_equal("code_locked")
 
+    def test_a_code_set_up_from_a_terminal_starts_from_nothing_too(self) -> None:
+        # ``mariner reset-code`` then ``set-code`` while Mariner runs,
+        # after the Internet was closed: the new phone's code opens.
+        import json
+
+        _set_up()
+        for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
+            self._guess()
+        new = totp.new_secret()
+        state.write(
+            totp.KEPT_AS, json.dumps({"secret": new, "last": 0}).encode("ascii")
+        )
+        with auth._attempts_lock:
+            auth._attempts.clear()
+            auth._internet_attempts.clear()
+        opened = self._sign_in(self._from("198.51.100.9"), code=_code(new))
+        expect(opened.status_code).to_equal(200)
+
     def test_a_new_code_starts_from_nothing(self) -> None:
         _set_up()
         for _ in range(auth.WRONG_CODES_BEFORE_CLOSING):
@@ -461,7 +479,6 @@ class OddBodiesTest(_FromPlaces):
         expect(journal.entries()[0]["what"]).to_equal("wrong_password")
 
     def test_a_new_password_that_is_no_text_is_not_taken(self) -> None:
-        answer = self._from(LOCAL).post("/api/auth/login", json={"password": PASSWORD})
         client = self._from(LOCAL)
         client.post("/api/auth/login", json={"password": PASSWORD})
         answer = client.post(

@@ -409,8 +409,11 @@ describe("Settings", () => {
         () => expect(toast.success).toHaveBeenCalledWith("Mariner is back."),
         { timeout: 6000 },
       );
-      // The button went with the notice it was in.
-      await waitFor(() => expect(document.activeElement).toBe(content));
+      // The button went with the notice it was in. Once the settings
+      // have been read again, which takes its time on a busy computer.
+      await waitFor(() => expect(document.activeElement).toBe(content), {
+        timeout: 6000,
+      });
     } finally {
       content.remove();
     }

@@ -22,6 +22,10 @@ logger: logging.Logger = logging.getLogger(__name__)
 KEPT_AS = "sign-ins"
 KEPT = 50
 _WRONG = "wrong_password"
+# How many wrong passwords, sent from where the owner then signs in and
+# within this long before, are taken for the owner's own.
+OWN_SLIPS = 3
+_SLIPS_WITHIN_SECS = 300
 # What a stranger can have noted as often as wished: kept apart from what
 # the owner looks for, so that it pushes none of it out.
 _NOISE = (_WRONG, "sign_in_closed")
@@ -39,8 +43,8 @@ WHATS = (
 )
 
 _lock = threading.Lock()
-# What is remembered, the oldest first; None until read. Wrong passwords
-# apart from the rest: sent by the hundred, from as many addresses, they
+# What is remembered, the oldest first; None until read. What a stranger can
+# have noted at will apart from the rest: sent by the hundred, they
 # must not push out the sign-in or the change an owner looks for.
 _events: Optional[List[Dict[str, Any]]] = None
 _wrong: List[Dict[str, Any]] = []
@@ -152,8 +156,11 @@ def since_the_visit_before() -> Dict[str, Any]:
     while the owner was away: wrong passwords, and wrong one-time codes
     sent with the right password, which say that the password is known.
 
-    Not what came from the same place just before that last sign-in: the
-    owner's own slips of the finger. ``or_more`` says that the wrong
+    Not the owner's own slips of the finger: a few wrong passwords from
+    the same place in the minutes before that last sign-in. A few, and
+    minutes: behind a router that shows one address for everybody,
+    strangers come from the same place as the owner. And never a wrong
+    code, which is no slip to pass over. ``or_more`` says that the wrong
     passwords counted are all that is remembered, of more that were sent.
     """
     with _lock:
@@ -165,7 +172,8 @@ def since_the_visit_before() -> Dict[str, Any]:
     passwords = codes = 0
     within = False
     where: Optional[str] = None
-    own_slips = True
+    signed_at = 0
+    slips_left = OWN_SLIPS
     for entry in listed:
         what = entry["what"]
         if what in ("signed_in", "password_chosen"):
@@ -173,26 +181,32 @@ def since_the_visit_before() -> Dict[str, Any]:
                 break
             within = True
             where = entry["from"]
+            signed_at = entry["at"]
             continue
-        if within and what == _WRONG and entry.get("n") == oldest:
+        if within and what in _NOISE and entry.get("n") == oldest:
             reached_the_oldest = True
         if not within:
             continue
         if what not in (_WRONG, "wrong_code"):
             continue
-        if own_slips and entry["from"] == where:
+        many = entry.get("count", 1)
+        if what != _WRONG:
+            slips_left = 0
+            codes += many
             continue
-        own_slips = False
-        if what == _WRONG:
-            passwords += entry.get("count", 1)
+        if (
+            slips_left
+            and entry["from"] == where
+            and signed_at - entry["at"] <= _SLIPS_WITHIN_SECS
+        ):
+            passed_over = min(slips_left, many)
+            slips_left -= passed_over
+            many -= passed_over
         else:
-            codes += entry.get("count", 1)
+            slips_left = 0
+        passwords += many
     return {
         "wrong_passwords": passwords,
         "wrong_codes": codes,
         "or_more": full and reached_the_oldest,
     }
-
-
-def wrong_since_the_visit_before() -> int:
-    return since_the_visit_before()["wrong_passwords"]

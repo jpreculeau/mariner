@@ -79,9 +79,7 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     wasIn.current &&
     !leftByItself.current;
 
-  // What was said while the page was not open no longer holds once it
-  // is: that Mariner is shut, say.
-  // How many wrong passwords the sign-in under way was told of.
+  // What the sign-in under way was told had been tried meanwhile.
   const tried = useRef<Tried>({ passwords: 0, codes: 0 });
   const { t } = useI18n();
   // As a reference: the effect below must not run again, and close the
@@ -93,6 +91,8 @@ export function AccessProvider({ children }: { children: ReactNode }) {
     const was = stood.current;
     stood.current = access;
     if (access === "in") {
+      // What was said while the page was not open no longer holds once
+      // it is: that Mariner is shut, say.
       toast.dismiss();
       const { passwords, codes, orMore } = tried.current;
       tried.current = { passwords: 0, codes: 0 };
@@ -107,7 +107,9 @@ export function AccessProvider({ children }: { children: ReactNode }) {
         );
       }
       if (passwords > 0) {
-        toast.error(
+        // The lot of anything reachable from the Internet: to know, and
+        // not said as loudly as a password that is known.
+        toast.notice(
           say.current(
             orMore
               ? "signIn.tried.more"

@@ -215,6 +215,44 @@ describe("OneTimeCode", () => {
     await waitFor(() => expect(document.activeElement).toBe(remove()));
   });
 
+  it("leaves focus on a button that stays once the code is removed", async () => {
+    // The one pressed goes with the code.
+    vi.spyOn(api, "removeCode").mockResolvedValue();
+    const access = {
+      access: "in",
+      retry,
+      failure: null,
+      signedOutUnasked: false,
+      fromInternet: false,
+      hostCommands: true,
+      choosePassword: vi.fn(),
+      signIn: vi.fn(),
+      signOut: vi.fn(),
+    } as unknown as AccessState;
+    const shown = render(
+      <AccessContext.Provider value={{ ...access, codeSet: true }}>
+        <OneTimeCode />
+      </AccessContext.Provider>,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove the one-time code" }),
+    );
+    type("Current password", "correct horse battery");
+    fireEvent.click(screen.getByRole("button", { name: "Remove it" }));
+    await waitFor(() => expect(retry).toHaveBeenCalled());
+    // The page learns that there is none any more.
+    shown.rerender(
+      <AccessContext.Provider value={{ ...access, codeSet: false }}>
+        <OneTimeCode />
+      </AccessContext.Provider>,
+    );
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Set up a one-time code" }),
+      ),
+    );
+  });
+
   it("tells the page that something changed, for the journal to be read again", async () => {
     vi.spyOn(api, "removeCode").mockResolvedValue();
     const changed = vi.fn();

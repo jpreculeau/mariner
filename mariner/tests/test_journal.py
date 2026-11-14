@@ -71,7 +71,9 @@ class JournalTest(_WithState):
         expect(whats.count("wrong_password")).to_equal(journal.KEPT)
         # And the count above the list still says that somebody tried.
         journal.note("signed_in", LOCAL, now=5000.0)
-        expect(journal.wrong_since_the_visit_before()).to_equal(journal.KEPT)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(
+            journal.KEPT
+        )
 
     def test_sign_in_being_closed_again_and_again_pushes_nothing_out(self) -> None:
         # A bot that keeps it closed for days: a line every ten minutes.
@@ -96,6 +98,42 @@ class JournalTest(_WithState):
         expect(journal.since_the_visit_before()).to_equal(
             {"wrong_passwords": 1, "wrong_codes": 0, "or_more": False}
         )
+
+    def test_a_slip_is_a_few_wrong_ones_just_before_and_never_a_wrong_code(
+        self,
+    ) -> None:
+        # Behind a router that shows one address for everybody, or a
+        # tunnel, strangers and the owner come from the same place: what
+        # was tried for hours is not the owner's slip of the finger.
+        router = "192.168.1.1"
+        journal.note("signed_in", LOCAL, now=1.0)
+        for sent in range(15):
+            journal.note("wrong_password", router, now=100.0 + sent * 600)
+        for sent in range(9):
+            journal.note("wrong_code", router, now=10000.0 + sent * 60)
+        journal.note("wrong_password", router, now=20000.0)
+        journal.note("signed_in", router, now=20010.0)
+        told = journal.since_the_visit_before()
+        # The one just before signing in, and no other.
+        expect(told["wrong_passwords"]).to_equal(15)
+        expect(told["wrong_codes"]).to_equal(9)
+
+    def test_more_than_a_few_just_before_are_not_all_slips(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        for sent in range(8):
+            journal.note("wrong_password", LOCAL, now=100.0 + sent)
+        journal.note("signed_in", LOCAL, now=110.0)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(
+            8 - journal.OWN_SLIPS
+        )
+
+    def test_more_is_said_when_the_oldest_line_kept_is_a_closing(self) -> None:
+        journal.note("signed_in", LOCAL, now=1.0)
+        for sent in range(journal.KEPT + 30):
+            what = "sign_in_closed" if sent % 2 == 0 else "wrong_password"
+            journal.note(what, f"203.0.{sent % 250}.{sent // 250 + 1}", now=10.0 + sent)
+        journal.note("signed_in", LOCAL, now=5000.0)
+        expect(journal.since_the_visit_before()["or_more"]).to_equal(True)
 
     def test_more_than_is_remembered_is_said_to_be_more(self) -> None:
         # From as many addresses: only the latest are kept, and the count
@@ -127,7 +165,7 @@ class JournalTest(_WithState):
         for sent in range(7):
             journal.note("wrong_password", INTERNET, now=10.0 + sent)
         journal.note("signed_in", LOCAL, now=50.0)
-        expect(journal.wrong_since_the_visit_before()).to_equal(7)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(7)
 
     def test_an_address_that_is_none_is_kept_as_it_is_read(self) -> None:
         # Whatever a header or a peer gives, nothing is kept that could
@@ -147,9 +185,9 @@ class JournalTest(_WithState):
         journal.note("sign_in_closed", INTERNET, now=5.0)
         journal.note("signed_in", LOCAL, now=6.0)
         # What happened while the owner was away.
-        expect(journal.wrong_since_the_visit_before()).to_equal(2)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(2)
         journal.note("signed_in", LOCAL, now=7.0)
-        expect(journal.wrong_since_the_visit_before()).to_equal(0)
+        expect(journal.since_the_visit_before()["wrong_passwords"]).to_equal(0)
 
     def test_a_file_that_cannot_be_read_is_an_empty_journal(self) -> None:
         state.write(journal.KEPT_AS, b"not json at all")

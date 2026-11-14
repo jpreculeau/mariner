@@ -1209,7 +1209,9 @@ describe("Gate", () => {
         signed_in: false,
       });
       vi.spyOn(api, "signIn").mockResolvedValue({ passwords: 3, codes: 0 });
-      const said = vi.spyOn(toast, "error");
+      // Told plainly, to be read and closed: not as something gone wrong.
+      const alarm = vi.spyOn(toast, "error");
+      const said = vi.spyOn(toast, "notice");
       renderGate();
       await screen.findByRole("heading", { name: "Sign in to Mariner" });
       type("Password", "correct horse battery");
@@ -1219,6 +1221,7 @@ describe("Gate", () => {
           "3 wrong passwords were sent since your previous visit. See Settings, Recent sign-ins.",
         ),
       );
+      expect(alarm).not.toHaveBeenCalled();
     });
 
     it("says it plainly when the password itself is known to somebody", async () => {
@@ -1250,7 +1253,7 @@ describe("Gate", () => {
         codes: 0,
         orMore: true,
       });
-      const said = vi.spyOn(toast, "error");
+      const said = vi.spyOn(toast, "notice");
       renderGate();
       await screen.findByRole("heading", { name: "Sign in to Mariner" });
       type("Password", "correct horse battery");

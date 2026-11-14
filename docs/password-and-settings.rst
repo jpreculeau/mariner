@@ -82,7 +82,8 @@ Recent sign-ins
 ---------------
 
 **Settings**, **Recent sign-ins** lists the latest things that happened at
-the door (up to fifty of each kind below): sign-ins, wrong passwords, a right password sent with a wrong code, the
+the door (up to fifty wrong passwords and closings, and up to fifty of
+all the rest): sign-ins, wrong passwords, a right password sent with a wrong code, the
 password or the one-time code being changed, sign-in being closed to the
 Internet. Wrong passwords sent one after the other from one place are one
 line, with how many; they are kept apart from the rest, so that a crowd of

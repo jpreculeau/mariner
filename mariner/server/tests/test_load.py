@@ -83,6 +83,19 @@ class DoorTest(TestCase):
         expect(self.door.remembered() <= load.KNOCKS_FROM_INTERNET).to_equal(True)
 
 
+class PatienceTest(TestCase):
+    def test_a_reader_from_the_internet_is_given_seconds_and_home_a_minute(
+        self,
+    ) -> None:
+        expect(load.stalled_after("203.0.113.5")).to_equal(
+            load.STALLED_FROM_INTERNET_SECS
+        )
+        expect(load.stalled_after("192.168.1.20")).to_equal(load.STALLED_SECS)
+        expect(load.STALLED_FROM_INTERNET_SECS <= 5).to_equal(True)
+        # In doubt, the shorter.
+        expect(load.stalled_after(None)).to_equal(load.STALLED_FROM_INTERNET_SECS)
+
+
 class RoomTest(TestCase):
     def test_the_internet_is_left_less_than_half_of_the_room(self) -> None:
         from mariner import server

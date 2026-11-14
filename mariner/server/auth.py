@@ -649,26 +649,42 @@ WRONG_CODES_BEFORE_CLOSING = 10
 _wrong_codes_seen: Optional[int] = None
 
 
-def wrong_codes() -> int:
-    if _wrong_codes_seen is not None:
+# Which code that count is of: nothing to the next one, set up from the
+# page or from a terminal.
+_wrong_codes_seen_of: Optional[str] = None
+
+
+def _wrong_codes_of(record: Mapping[str, Any]) -> int:
+    secret = _secret_in_force(record)
+    if (
+        _wrong_codes_seen is not None
+        and secret is not None
+        and _identity_of(secret) == _wrong_codes_seen_of
+    ):
         return _wrong_codes_seen
-    kept = _code_record().get("wrong")
+    kept = record.get("wrong")
     return kept if isinstance(kept, int) else 0
+
+
+def wrong_codes() -> int:
+    return _wrong_codes_of(_code_record())
 
 
 def _count_wrong_codes(to: Optional[int] = None) -> int:
     """One more wrong code with the right password; or *to* that many."""
-    global _wrong_codes_seen
+    global _wrong_codes_seen, _wrong_codes_seen_of
     with _code_lock:
         record = _code_record()
-        if _secret_in_force(record) is None:
+        secret = _secret_in_force(record)
+        if secret is None:
             _wrong_codes_seen = None
             return 0
         kept = record.get("wrong")
         kept_count = kept if isinstance(kept, int) else 0
-        was = kept_count if _wrong_codes_seen is None else _wrong_codes_seen
+        was = _wrong_codes_of(record)
         now = was + 1 if to is None else to
         _wrong_codes_seen = now
+        _wrong_codes_seen_of = _identity_of(secret)
         if now != kept_count:
             record["wrong"] = now
             try:

@@ -136,7 +136,8 @@ function pageLanguage(): Lang {
  *
  * A success passes by itself. An error stays until the reader closes it:
  * a refusal and what to do about it take longer to read than a message
- * stays, and it cannot be asked for again.
+ * stays, and it cannot be asked for again. So does a notice, which has
+ * something to say that is no error.
  */
 const toast = {
   /** Close every message: what they said no longer holds. */
@@ -144,24 +145,29 @@ const toast = {
     sonner.dismiss();
   },
   success: (message: string) => sonner.success(message),
-  error: (message: string) =>
-    sonner.error(message, {
-      duration: Infinity,
-      cancel: {
-        label: translate(pageLanguage(), "common.close"),
-        // On to the next message, if there is one, and else back to
-        // where focus was: the button pressed goes with its message.
-        onClick: (event: { currentTarget: Element }) => {
-          // Not when the reader is not in the messages: some browsers do
-          // not give focus to a button that is pressed.
-          if (!document.activeElement?.closest("[data-sonner-toaster]")) return;
-          const here = event.currentTarget.closest("[data-sonner-toast]");
-          const next = here?.nextElementSibling ?? here?.previousElementSibling;
-          if (next instanceof HTMLElement) next.focus();
-          else focusBackOutside();
-        },
-      },
-    }),
+  /** Something to know, that stays until closed: nothing went wrong. */
+  notice: (message: string) => sonner(message, untilClosed()),
+  error: (message: string) => sonner.error(message, untilClosed()),
 };
+
+/** What makes a message stay until its reader closes it. */
+const untilClosed = () =>
+  ({
+    duration: Infinity,
+    cancel: {
+      label: translate(pageLanguage(), "common.close"),
+      // On to the next message, if there is one, and else back to
+      // where focus was: the button pressed goes with its message.
+      onClick: (event: { currentTarget: Element }) => {
+        // Not when the reader is not in the messages: some browsers do
+        // not give focus to a button that is pressed.
+        if (!document.activeElement?.closest("[data-sonner-toaster]")) return;
+        const here = event.currentTarget.closest("[data-sonner-toast]");
+        const next = here?.nextElementSibling ?? here?.previousElementSibling;
+        if (next instanceof HTMLElement) next.focus();
+        else focusBackOutside();
+      },
+    },
+  }) as const;
 
 export { Toaster, toast };
